@@ -11,6 +11,18 @@ export type PipelineStage =
     | 'Closed Won'
     | 'Closed Lost'
 
+// User Roles
+export type UserRole = 'admin' | 'agent'
+
+// Profile Interface
+export interface Profile {
+    id: string
+    name: string
+    role: UserRole
+    created_at: string
+    email?: string // Derived from auth
+}
+
 // Case Interface
 export interface Case {
     id: string
@@ -104,4 +116,18 @@ export interface UpdateCaseInput {
     clawback_end_date?: string
     remarks?: string
     sales_assistant_data?: AssistantData
+}
+
+// User Management Inputs
+export interface CreateUserInput {
+    email: string
+    name: string
+    role: UserRole
+    password?: string
+}
+
+export interface UpdateUserInput {
+    id: string
+    name?: string
+    role?: UserRole
 }
