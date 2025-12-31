@@ -46,6 +46,36 @@ export interface Case {
     subsidy_provided?: string
     clawback_end_date?: string
     remarks?: string
+    sales_assistant_data?: AssistantData // stored as JSONB in DB
+    profiles?: {
+        id: string
+        name: string
+        role: string
+    }
+}
+
+// Sales Assistant Data Structure
+export interface AssistantData {
+    reality: {
+        interest_type: 'Fixed' | 'Floating' | ''
+        lock_in_expiry: string // Date string or 'Unknown'
+        is_expired: boolean
+        days_remaining?: number
+    }
+    penalties: {
+        subsidy_received: 'Yes' | 'No' | 'Not Sure' | ''
+        clawback_remaining: 'Yes' | 'No' | 'Not Sure' | ''
+    }
+    timeline: {
+        sell_plan: 'Within 2 Years' | '2-5 Years' | 'Long Term' | ''
+        income_changes: 'Yes' | 'No' | 'Unsure' | ''
+    }
+    preferences: {
+        rate_preference: 'Fixed' | 'Floating' | 'Unsure' | ''
+        payment_sensitivity: 'Stable' | 'Flexible' | ''
+    }
+    summary?: string
+    last_updated?: string
 }
 
 // Form data for creating a case
@@ -73,4 +103,5 @@ export interface UpdateCaseInput {
     subsidy_provided?: string
     clawback_end_date?: string
     remarks?: string
+    sales_assistant_data?: AssistantData
 }

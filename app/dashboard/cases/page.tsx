@@ -12,6 +12,10 @@ export default function CasesPage() {
     const [loading, setLoading] = useState(true)
     const [filterStage, setFilterStage] = useState<PipelineStage | 'all'>('all')
     const [user, setUser] = useState<any>(null)
+    const [userRole, setUserRole] = useState<string | null>(null)
+    const [profilesMap, setProfilesMap] = useState<Record<string, string>>({})
+    const [agentList, setAgentList] = useState<{ id: string, name: string }[]>([])
+    const [filterAgent, setFilterAgent] = useState<string>('all')
 
     const pipelineStages: PipelineStage[] = [
         'Touched Base',
@@ -25,7 +29,7 @@ export default function CasesPage() {
 
     useEffect(() => {
         loadCases()
-    }, [filterStage])
+    }, [filterStage, filterAgent])
 
     const loadCases = async () => {
         setLoading(true)
@@ -37,21 +41,59 @@ export default function CasesPage() {
         }
         setUser(user)
 
+        // Fetch user role
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+
+        setUserRole(profile?.role)
+
+        if (profile?.role === 'admin') {
+            try {
+                const res = await fetch('/api/admin/get-profiles')
+                if (res.ok) {
+                    const allProfiles = await res.json()
+                    if (Array.isArray(allProfiles)) {
+                        const map: Record<string, string> = {}
+                        allProfiles.forEach((p: any) => {
+                            map[p.id] = p.name
+                        })
+                        setProfilesMap(map)
+                        setAgentList(allProfiles)
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to fetch profiles via admin API', err)
+            }
+        }
+
         let query = supabase
             .from('cases')
-            .select('*')
-            .eq('created_by', user.id)
+            .select(`
+                *,
+                profiles (
+                    id,
+                    name,
+                    role
+                )
+            `)
             .order('updated_at', { ascending: false })
 
         if (filterStage !== 'all') {
             query = query.eq('stage', filterStage)
         }
 
+        if (filterAgent !== 'all') {
+            query = query.eq('created_by', filterAgent)
+        }
+
         const { data, error } = await query
 
         if (error) {
-            console.error('Error loading cases:', error)
-            alert('Failed to load cases')
+            console.error('Error loading cases:', JSON.stringify(error, null, 2))
+            alert('Failed to load cases: ' + (error.message || 'Unknown error'))
         } else {
             setCases(data || [])
         }
@@ -137,6 +179,27 @@ export default function CasesPage() {
                     ))}
                 </select>
 
+                {userRole === 'admin' && (
+                    <select
+                        value={filterAgent}
+                        onChange={(e) => setFilterAgent(e.target.value)}
+                        style={{
+                            padding: '8px 12px',
+                            borderRadius: '6px',
+                            border: '1px solid #cbd5e1',
+                            background: 'white',
+                            color: '#0f172a',
+                            fontSize: '14px',
+                            minWidth: '200px'
+                        }}
+                    >
+                        <option value="all">All Agents</option>
+                        {agentList.map(agent => (
+                            <option key={agent.id} value={agent.id}>{agent.name}</option>
+                        ))}
+                    </select>
+                )}
+
                 {/* Search Placeholder (Visual only for now) */}
                 <div style={{ marginLeft: 'auto', position: 'relative' }}>
                     <input
@@ -167,8 +230,11 @@ export default function CasesPage() {
                         <thead style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
                             <tr>
                                 <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Client Name</th>
+                                {userRole === 'admin' && (
+                                    <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Agent</th>
+                                )}
                                 <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Type</th>
-                                <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Loan Size</th>
+                                <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Loan Amount / Size</th>
                                 <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Stage</th>
                                 <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last Updated</th>
                                 <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Actions</th>
@@ -187,8 +253,18 @@ export default function CasesPage() {
                                         <td style={{ padding: '16px', fontWeight: '500', color: '#0f172a' }}>
                                             {caseItem.client_name || <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Unnamed</span>}
                                         </td>
+                                        {userRole === 'admin' && (
+                                            <td style={{ padding: '16px', color: '#475569' }}>
+                                                {caseItem.profiles?.name || profilesMap[caseItem.created_by] || 'Unknown Agent'}
+                                            </td>
+                                        )}
                                         <td style={{ padding: '16px', color: '#475569' }}>{caseItem.case_type}</td>
-                                        <td style={{ padding: '16px', color: '#475569', fontFamily: 'monospace' }}>{formatCurrency(caseItem.loan_size)}</td>
+                                        <td style={{ padding: '16px', color: '#475569', fontFamily: 'monospace' }}>
+                                            {(caseItem.case_type === 'Refinancing' || caseItem.case_type === 'Equity Loan')
+                                                ? formatCurrency(caseItem.existing_loan_amount)
+                                                : formatCurrency(caseItem.loan_size)
+                                            }
+                                        </td>
                                         <td style={{ padding: '16px' }}>
                                             <span
                                                 className="status-badge"

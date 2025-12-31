@@ -26,6 +26,7 @@ export default function CaseDetailPage() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [isEditing, setIsEditing] = useState(false)
+    const [userRole, setUserRole] = useState<string | null>(null)
 
     const pipelineStages: PipelineStage[] = [
         'Touched Base',
@@ -52,11 +53,20 @@ export default function CaseDetailPage() {
             return
         }
 
+        // Fetch user role
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+
+        setUserRole(profile?.role)
+
         const { data, error } = await supabase
             .from('cases')
             .select('*')
             .eq('id', caseId)
-            .eq('created_by', user.id)
+            .eq('id', caseId)
             .single()
 
         if (error) {
@@ -75,17 +85,45 @@ export default function CaseDetailPage() {
 
         setSaving(true)
 
-        const { error } = await supabase
-            .from('cases')
-            .update({
-                ...updates,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', caseId)
+        let updateError = null
 
-        if (error) {
-            console.error('Error updating case:', error)
-            alert('Failed to update case: ' + error.message)
+        if (userRole === 'admin') {
+            // Use Admin API to update
+            try {
+                const res = await fetch('/api/admin/update-case', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: caseId,
+                        updates: {
+                            ...updates,
+                            updated_at: new Date().toISOString()
+                        }
+                    })
+                })
+                if (!res.ok) {
+                    const data = await res.json()
+                    updateError = { message: data.error || 'Failed to update via API' }
+                }
+            } catch (err) {
+                updateError = { message: 'Network error calling Admin API' }
+            }
+        } else {
+            // Standard update for agents (RLS protected)
+            const { error } = await supabase
+                .from('cases')
+                .update({
+                    ...updates,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', caseId)
+
+            updateError = error
+        }
+
+        if (updateError) {
+            console.error('Error updating case:', updateError)
+            alert('Failed to update case: ' + updateError.message)
         } else {
             await loadCase()
             setIsEditing(false)
@@ -164,6 +202,16 @@ export default function CaseDetailPage() {
                     </div>
 
                     <div style={{ display: 'flex', gap: '12px' }}>
+                        {/* Sales Assistant Button - Refinancing Only */}
+                        {(caseData.case_type === 'Refinancing' || caseData.case_type === 'Equity Loan') && (
+                            <button
+                                onClick={() => router.push(`/dashboard/cases/${caseId}/assistant`)}
+                                className="btn-outline"
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #03a9e7', color: '#0369a1' }}
+                            >
+                                <Briefcase size={16} /> Sales Assistant
+                            </button>
+                        )}
                         {!isEditing ? (
                             <button className="btn-primary" onClick={() => setIsEditing(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <Edit2 size={16} /> Edit Details
@@ -277,40 +325,60 @@ export default function CaseDetailPage() {
                         {!isEditing && (caseData.property_price ? `$${caseData.property_price.toLocaleString()}` : '-')}
                     </GridField>
 
-                    <GridField label="Total Loan Size" isEditing={isEditing}>
-                        <div style={{ position: 'relative' }}>
-                            {isEditing && <span style={{ position: 'absolute', left: 10, top: 9, color: '#94a3b8' }}>$</span>}
-                            <input
-                                type="number"
-                                value={caseData.loan_size || ''}
-                                onChange={(e) => handleFieldChange('loan_size', e.target.value)}
-                                className="input-field-std"
-                                style={isEditing ? { paddingLeft: 24 } : {}}
-                            />
-                        </div>
-                        {!isEditing && (caseData.loan_size ? `$${caseData.loan_size.toLocaleString()}` : '-')}
-                    </GridField>
+                    {/* Conditional Fields based on Type */}
+                    {(caseData.case_type === 'Refinancing' || caseData.case_type === 'Equity Loan') ? (
+                        <>
+                            <GridField label="Existing Loan Amount" isEditing={isEditing}>
+                                <div style={{ position: 'relative' }}>
+                                    {isEditing && <span style={{ position: 'absolute', left: 10, top: 9, color: '#94a3b8' }}>$</span>}
+                                    <input
+                                        type="number"
+                                        value={caseData.existing_loan_amount || ''}
+                                        onChange={(e) => handleFieldChange('existing_loan_amount', e.target.value)}
+                                        className="input-field-std"
+                                        style={isEditing ? { paddingLeft: 24 } : {}}
+                                    />
+                                </div>
+                                {!isEditing && (caseData.existing_loan_amount ? `$${caseData.existing_loan_amount.toLocaleString()}` : '-')}
+                            </GridField>
 
-                    <GridField label="Current Bank" isEditing={isEditing}>
-                        <input
-                            type="text"
-                            value={caseData.current_bank || ''}
-                            onChange={(e) => handleFieldChange('current_bank', e.target.value)}
-                            placeholder="e.g. DBS"
-                            className="input-field-std"
-                        />
-                        {!isEditing && (caseData.current_bank || '-')}
-                    </GridField>
+                            <GridField label="Current Bank" isEditing={isEditing}>
+                                <input
+                                    type="text"
+                                    value={caseData.current_bank || ''}
+                                    onChange={(e) => handleFieldChange('current_bank', e.target.value)}
+                                    placeholder="e.g. DBS"
+                                    className="input-field-std"
+                                />
+                                {!isEditing && (caseData.current_bank || '-')}
+                            </GridField>
 
-                    <GridField label="Lock-in End Date" isEditing={isEditing}>
-                        <input
-                            type="date"
-                            value={caseData.lock_in_end_date || ''}
-                            onChange={(e) => handleFieldChange('lock_in_end_date', e.target.value)}
-                            className="input-field-std"
-                        />
-                        {!isEditing && (caseData.lock_in_end_date ? new Date(caseData.lock_in_end_date).toLocaleDateString() : '-')}
-                    </GridField>
+                            <GridField label="Lock-in End Date" isEditing={isEditing}>
+                                <input
+                                    type="date"
+                                    value={caseData.lock_in_end_date || ''}
+                                    onChange={(e) => handleFieldChange('lock_in_end_date', e.target.value)}
+                                    className="input-field-std"
+                                />
+                                {!isEditing && (caseData.lock_in_end_date ? new Date(caseData.lock_in_end_date).toLocaleDateString() : '-')}
+                            </GridField>
+                        </>
+                    ) : (
+                        /* Purchase Logic / Others */
+                        <GridField label="Loan Amount" isEditing={isEditing}>
+                            <div style={{ position: 'relative' }}>
+                                {isEditing && <span style={{ position: 'absolute', left: 10, top: 9, color: '#94a3b8' }}>$</span>}
+                                <input
+                                    type="number"
+                                    value={caseData.loan_size || ''}
+                                    onChange={(e) => handleFieldChange('loan_size', e.target.value)}
+                                    className="input-field-std"
+                                    style={isEditing ? { paddingLeft: 24 } : {}}
+                                />
+                            </div>
+                            {!isEditing && (caseData.loan_size ? `$${caseData.loan_size.toLocaleString()}` : '-')}
+                        </GridField>
+                    )}
                 </SectionCard>
 
                 {/* Closure Details */}

@@ -72,6 +72,7 @@ export default function DashboardLayout({
 
     if (role === 'admin') {
         navItems.push({ name: 'User Management', href: '/dashboard/users', icon: Users })
+        navItems.push({ name: 'Analytics', href: '/dashboard/analytics', icon: TrendingUp })
     }
 
     return (

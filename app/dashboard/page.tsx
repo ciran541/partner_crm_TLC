@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { Case } from '@/lib/types'
-import { Plus, Briefcase, TrendingUp, Clock, ChevronRight } from 'lucide-react'
+import { Plus, Briefcase, TrendingUp, Clock, ChevronRight, AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 export default function DashboardHome() {
@@ -11,7 +11,8 @@ export default function DashboardHome() {
     const [stats, setStats] = useState({
         totalCases: 0,
         activeCases: 0,
-        closedWon: 0
+        closedWon: 0,
+        upcomingLockIns: 0
     })
     const [recentCases, setRecentCases] = useState<Case[]>([])
     const [loading, setLoading] = useState(true)
@@ -33,14 +34,24 @@ export default function DashboardHome() {
         const { data: cases } = await supabase
             .from('cases')
             .select('*')
-            .eq('created_by', user.id)
             .order('updated_at', { ascending: false })
 
         if (cases) {
+            const now = new Date()
+            const ninetyDaysFromNow = new Date()
+            ninetyDaysFromNow.setDate(now.getDate() + 90)
+
+            const lockIns = cases.filter(c => {
+                if (!c.lock_in_end_date || c.stage === 'Closed Lost') return false
+                const d = new Date(c.lock_in_end_date)
+                return d >= now && d <= ninetyDaysFromNow
+            })
+
             setStats({
                 totalCases: cases.length,
                 activeCases: cases.filter(c => c.stage !== 'Closed Won' && c.stage !== 'Closed Lost').length,
-                closedWon: cases.filter(c => c.stage === 'Closed Won').length
+                closedWon: cases.filter(c => c.stage === 'Closed Won').length,
+                upcomingLockIns: lockIns.length
             })
             setRecentCases(cases.slice(0, 5)) // Top 5 recent
         }
@@ -87,6 +98,14 @@ export default function DashboardHome() {
                     icon={TrendingUp}
                     color="#10b981"
                 />
+                <div onClick={() => router.push('/dashboard/cases/lock-in-end')} style={{ cursor: 'pointer' }}>
+                    <StatsCard
+                        title="Upcoming Lock-ins"
+                        value={stats.upcomingLockIns}
+                        icon={AlertTriangle}
+                        color="#ef4444"
+                    />
+                </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '32px' }}>
