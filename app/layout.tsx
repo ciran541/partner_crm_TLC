@@ -20,7 +20,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Partner CRM - Manage Your Business Relationships",
   description: "A modern CRM platform for managing partner relationships, deals, and analytics",
-  manifest: "/manifest.json?v=2",
+  manifest: "/manifest.json?v=4",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -40,7 +40,7 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <meta name="theme-color" content="#052d4a" />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png?v=2" />
+        <link rel="apple-touch-icon" href="/TLC-Square-1.png" />
       </head>
       <body
         className={`${inter.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
@@ -51,7 +51,7 @@ export default function RootLayout({
             __html: `
               if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
-                  navigator.serviceWorker.register('/sw.js?v=2').then(function(registration) {
+                  navigator.serviceWorker.register('/sw.js?v=4').then(function(registration) {
                     console.log('ServiceWorker registration successful with scope: ', registration.scope);
                   }, function(err) {
                     console.log('ServiceWorker registration failed: ', err);
