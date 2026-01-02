@@ -133,146 +133,131 @@ export default function UserManagementPage() {
     if (loading) return <div style={{ padding: 40, color: '#052d4a' }}>Loading users...</div>
 
     return (
-        <div>
+        <div className="space-y-6">
             {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#052d4a', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <User size={28} color="#03a9e7" />
-                        User Management
+                    <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
+                        <User size={28} className="text-[#03a9e7]" />
+                        <span>User Management</span>
                     </h1>
-                    <p style={{ color: '#64748b', marginTop: 4 }}>Manage partner agents and administrators.</p>
+                    <p className="text-slate-500 text-sm mt-1">Manage partner agents and administrators.</p>
                 </div>
                 <button
                     onClick={() => setIsCreateOpen(true)}
-                    className="btn-primary"
-                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                    className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
                 >
                     <Plus size={18} />
-                    Add User
+                    <span>Add User</span>
                 </button>
             </div>
 
             {/* Toolbar */}
-            <div className="card" style={{ padding: '16px', marginBottom: '24px', display: 'flex', alignItems: 'center' }}>
-                <div style={{ position: 'relative', width: '300px' }}>
-                    <Search size={16} color="#94a3b8" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
+            <div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="relative flex-1 group">
+                    <Search size={16} className="text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 group-focus-within:text-[#03a9e7] transition-colors" />
                     <input
                         type="text"
                         placeholder="Search by name or email..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        style={{
-                            width: '100%',
-                            padding: '10px 12px 10px 36px',
-                            borderRadius: '6px',
-                            border: '1px solid #cbd5e1',
-                            fontSize: '14px',
-                            outline: 'none'
-                        }}
+                        className="w-full p-2.5 pl-10 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all"
                     />
                 </div>
-                <div style={{ marginLeft: 'auto', fontSize: '14px', color: '#64748b' }}>
-                    Total Users: <strong>{profiles.length}</strong>
+                <div className="text-sm text-slate-500 whitespace-nowrap">
+                    Total Users: <span className="font-bold text-slate-900">{profiles.length}</span>
                 </div>
             </div>
 
             {/* Users Table */}
-            <div className="card" style={{ overflow: 'hidden' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                    <thead style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                        <tr>
-                            <th style={thStyle}>Name</th>
-                            <th style={thStyle}>Email</th>
-                            <th style={thStyle}>Role</th>
-                            <th style={thStyle}>Created At</th>
-                            <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {filteredProfiles.map((p) => (
-                            <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                <td style={tdStyle}>
-                                    <div style={{ fontWeight: '500', color: p.name ? '#0f172a' : '#94a3b8' }}>
-                                        {p.name || 'Unnamed User'}
-                                    </div>
-                                </td>
-                                <td style={tdStyle}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#475569' }}>
-                                        <Mail size={14} /> {p.email}
-                                    </div>
-                                </td>
-                                <td style={tdStyle}>
-                                    <span style={{
-                                        display: 'inline-flex', alignItems: 'center', gap: 4,
-                                        padding: '4px 10px', borderRadius: '12px',
-                                        fontSize: '12px', fontWeight: '600',
-                                        background: p.role === 'admin' ? '#f0fdf4' : '#e0f2fe',
-                                        color: p.role === 'admin' ? '#15803d' : '#0369a1'
-                                    }}>
-                                        {p.role === 'admin' && <Shield size={12} />}
-                                        {p.role.toUpperCase()}
-                                    </span>
-                                </td>
-                                <td style={tdStyle}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#64748b' }}>
-                                        <Calendar size={14} />
-                                        {new Date(p.created_at).toLocaleDateString()}
-                                    </div>
-                                </td>
-                                <td style={{ ...tdStyle, textAlign: 'right' }}>
-                                    <button
-                                        onClick={() => {
-                                            setEditForm({ id: p.id, name: p.name || '', role: p.role })
-                                            setIsEditOpen(true)
-                                        }}
-                                        style={{
-                                            padding: '6px',
-                                            borderRadius: '4px',
-                                            border: '1px solid #cbd5e1',
-                                            background: 'white',
-                                            color: '#475569',
-                                            cursor: 'pointer'
-                                        }}
-                                        title="Edit User"
-                                    >
-                                        <Edit2 size={16} />
-                                    </button>
-                                </td>
+            <div className="card overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[700px]">
+                        <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200">
+                                <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Name</th>
+                                <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Email</th>
+                                <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Role</th>
+                                <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Created At</th>
+                                <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {filteredProfiles.map((p) => (
+                                <tr key={p.id} className="hover:bg-slate-50 transition-colors group">
+                                    <td className="p-4">
+                                        <div className={`font-semibold ${p.name ? 'text-slate-900' : 'text-slate-400 italic'}`}>
+                                            {p.name || 'Unnamed User'}
+                                        </div>
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="flex items-center gap-2 text-slate-600 text-sm">
+                                            <Mail size={14} className="text-slate-400" />
+                                            <span>{p.email}</span>
+                                        </div>
+                                    </td>
+                                    <td className="p-4">
+                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${p.role === 'admin'
+                                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                                : 'bg-sky-50 text-sky-700 border border-sky-100'
+                                            }`}>
+                                            {p.role === 'admin' && <Shield size={12} />}
+                                            {p.role}
+                                        </span>
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="flex items-center gap-2 text-slate-400 text-xs">
+                                            <Calendar size={14} />
+                                            <span>{new Date(p.created_at).toLocaleDateString()}</span>
+                                        </div>
+                                    </td>
+                                    <td className="p-4 text-right">
+                                        <button
+                                            onClick={() => {
+                                                setEditForm({ id: p.id, name: p.name || '', role: p.role })
+                                                setIsEditOpen(true)
+                                            }}
+                                            className="p-2 text-slate-400 hover:text-[#03a9e7] hover:bg-sky-50 rounded-lg transition-all"
+                                            title="Edit User"
+                                        >
+                                            <Edit2 size={16} />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {/* Create Modal */}
             {isCreateOpen && (
                 <Modal title="Add New User" onClose={() => setIsCreateOpen(false)}>
-                    <form onSubmit={handleCreateUser}>
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={labelStyle}>Full Name</label>
+                    <form onSubmit={handleCreateUser} className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Full Name</label>
                             <input
                                 required
                                 type="text"
-                                className="input-field-std"
+                                className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all text-sm"
                                 value={createForm.name}
                                 onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
                             />
                         </div>
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={labelStyle}>Email Address</label>
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email Address</label>
                             <input
                                 required
                                 type="email"
-                                className="input-field-std"
+                                className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all text-sm"
                                 value={createForm.email}
                                 onChange={e => setCreateForm({ ...createForm, email: e.target.value })}
                             />
                         </div>
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={labelStyle}>System Role</label>
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">System Role</label>
                             <select
-                                className="input-field-std"
+                                className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all text-sm bg-white"
                                 value={createForm.role}
                                 onChange={e => setCreateForm({ ...createForm, role: e.target.value as any })}
                             >
@@ -280,25 +265,24 @@ export default function UserManagementPage() {
                                 <option value="admin">Admin</option>
                             </select>
                         </div>
-                        <div style={{ marginBottom: 24 }}>
-                            <label style={labelStyle}>Temporary Password</label>
-                            <div style={{ position: 'relative' }}>
-                                <Lock size={16} style={{ position: 'absolute', left: 10, top: 10, color: '#94a3b8' }} />
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Temporary Password</label>
+                            <div className="relative">
+                                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                                 <input
                                     required
                                     type="text"
-                                    className="input-field-std"
-                                    style={{ paddingLeft: 32 }}
+                                    className="w-full p-2.5 pl-10 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all text-sm"
                                     value={createForm.password}
                                     onChange={e => setCreateForm({ ...createForm, password: e.target.value })}
                                     placeholder="Set a dedicated password"
                                 />
                             </div>
-                            <p style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>User can change this later (if feature built) or Admin can reset.</p>
+                            <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">User can change this later or Admin can reset.</p>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-                            <button type="button" onClick={() => setIsCreateOpen(false)} className="btn-outline">Cancel</button>
-                            <button type="submit" disabled={isSubmitting} className="btn-primary">
+                        <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                            <button type="button" onClick={() => setIsCreateOpen(false)} className="btn-outline px-6 py-2">Cancel</button>
+                            <button type="submit" disabled={isSubmitting} className="btn-primary px-6 py-2">
                                 {isSubmitting ? 'Creating...' : 'Create User'}
                             </button>
                         </div>
@@ -309,21 +293,21 @@ export default function UserManagementPage() {
             {/* Edit Modal */}
             {isEditOpen && (
                 <Modal title="Edit User" onClose={() => setIsEditOpen(false)}>
-                    <form onSubmit={handleEditUser}>
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={labelStyle}>Full Name</label>
+                    <form onSubmit={handleEditUser} className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Full Name</label>
                             <input
                                 required
                                 type="text"
-                                className="input-field-std"
+                                className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all text-sm"
                                 value={editForm.name || ''}
                                 onChange={e => setEditForm({ ...editForm, name: e.target.value })}
                             />
                         </div>
-                        <div style={{ marginBottom: 24 }}>
-                            <label style={labelStyle}>System Role</label>
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">System Role</label>
                             <select
-                                className="input-field-std"
+                                className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all text-sm bg-white"
                                 value={editForm.role}
                                 onChange={e => setEditForm({ ...editForm, role: e.target.value as any })}
                             >
@@ -331,55 +315,30 @@ export default function UserManagementPage() {
                                 <option value="admin">Admin</option>
                             </select>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-                            <button type="button" onClick={() => setIsEditOpen(false)} className="btn-outline">Cancel</button>
-                            <button type="submit" disabled={isSubmitting} className="btn-primary">
+                        <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                            <button type="button" onClick={() => setIsEditOpen(false)} className="btn-outline px-6 py-2">Cancel</button>
+                            <button type="submit" disabled={isSubmitting} className="btn-primary px-6 py-2">
                                 {isSubmitting ? 'Saving...' : 'Save Changes'}
                             </button>
                         </div>
                     </form>
                 </Modal>
             )}
-
-            <style jsx global>{`
-                .input-field-std {
-                    width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; fontSize: 14px; outline: none;
-                }
-                .input-field-std:focus { border-color: #03a9e7; }
-            `}</style>
         </div>
     )
 }
 
-// Helpers & Components
-
-const thStyle: React.CSSProperties = {
-    padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em'
-}
-
-const tdStyle: React.CSSProperties = {
-    padding: '16px', fontSize: '14px'
-}
-
-const labelStyle: React.CSSProperties = {
-    display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 600, color: '#475569'
-}
-
 function Modal({ title, children, onClose }: { title: string, children: React.ReactNode, onClose: () => void }) {
     return (
-        <div style={{
-            position: 'fixed', inset: 0, zIndex: 100,
-            background: 'rgba(5, 45, 74, 0.5)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}>
-            <div className="card" style={{ width: '400px', padding: 0, overflow: 'hidden', animation: 'fadeIn 0.2s' }}>
-                <div style={{ padding: '16px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#0f172a' }}>{title}</h3>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
+        <div className="fixed inset-0 z-[100] bg-[#052d4a]/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                    <h3 className="text-lg font-bold text-[#052d4a]">{title}</h3>
+                    <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded-full transition-colors text-slate-400">
                         <X size={20} />
                     </button>
                 </div>
-                <div style={{ padding: '24px' }}>
+                <div className="p-6">
                     {children}
                 </div>
             </div>

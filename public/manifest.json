@@ -1,0 +1,27 @@
+{
+    "name": "The Loan Connection Partner CRM",
+    "short_name": "TLC CRM",
+    "description": "Professional Partner CRM for The Loan Connection",
+    "start_url": "/dashboard",
+    "display": "standalone",
+    "background_color": "#052d4a",
+    "theme_color": "#052d4a",
+    "icons": [
+        {
+            "src": "/icons/icon-192x192.png?v=2",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "/icons/icon-512x512.png?v=2",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "/icons/icon-512x512.png?v=2",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

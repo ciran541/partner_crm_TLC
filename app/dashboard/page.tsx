@@ -61,25 +61,24 @@ export default function DashboardHome() {
     if (loading) return <div>Loading dashboard...</div>
 
     return (
-        <div>
+        <div className="space-y-8">
             {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#052d4a' }}>Dashboard</h1>
-                    <p style={{ color: '#64748b' }}>Welcome back, {user?.email?.split('@')[0]}</p>
+                    <h1 className="text-2xl font-bold text-[#052d4a]">Dashboard</h1>
+                    <p className="text-slate-500">Welcome back, {user?.email?.split('@')[0]}</p>
                 </div>
                 <button
                     onClick={() => router.push('/dashboard/cases/new')}
-                    className="btn-primary"
-                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                    className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
                 >
                     <Plus size={18} />
-                    New Case
+                    <span>New Case</span>
                 </button>
             </div>
 
             {/* Stats Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 <StatsCard
                     title="Total Cases"
                     value={stats.totalCases}
@@ -98,7 +97,7 @@ export default function DashboardHome() {
                     icon={TrendingUp}
                     color="#10b981"
                 />
-                <div onClick={() => router.push('/dashboard/cases/lock-in-end')} style={{ cursor: 'pointer' }}>
+                <div onClick={() => router.push('/dashboard/cases/lock-in-end')} className="cursor-pointer">
                     <StatsCard
                         title="Upcoming Lock-ins"
                         value={stats.upcomingLockIns}
@@ -108,56 +107,35 @@ export default function DashboardHome() {
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '32px' }}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Recent Cases Widget */}
-                <div className="card" style={{ padding: '24px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                        <h2 style={{ fontSize: '18px', fontWeight: 'bold', color: '#052d4a', margin: 0 }}>Recent Cases</h2>
-                        <a href="/dashboard/cases" style={{ fontSize: '14px', color: '#03a9e7', textDecoration: 'none', fontWeight: '500' }}>View All</a>
+                <div className="card p-6">
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-lg font-bold text-[#052d4a]">Recent Cases</h2>
+                        <a href="/dashboard/cases" className="text-sm font-medium text-[#03a9e7] hover:underline">View All</a>
                     </div>
 
                     {recentCases.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '32px 0', color: '#94a3b8' }}>
+                        <div className="text-center py-8 text-slate-400">
                             No recent activity.
                         </div>
                     ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div className="space-y-4">
                             {recentCases.map(c => (
                                 <div key={c.id}
                                     onClick={() => router.push(`/dashboard/cases/${c.id}`)}
-                                    style={{
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        alignItems: 'center',
-                                        padding: '12px',
-                                        borderRadius: '8px',
-                                        background: '#f8fafc',
-                                        cursor: 'pointer',
-                                        transition: 'background 0.2s'
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = '#f8fafc'}
+                                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors group"
                                 >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <div style={{
-                                            width: 40,
-                                            height: 40,
-                                            borderRadius: '50%',
-                                            background: '#e0f2fe',
-                                            color: '#0369a1',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            fontWeight: 'bold'
-                                        }}>
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-bold shrink-0">
                                             {c.client_name ? c.client_name[0].toUpperCase() : '?'}
                                         </div>
-                                        <div>
-                                            <div style={{ fontWeight: '600', color: '#0f172a' }}>{c.client_name || 'Unnamed Client'}</div>
-                                            <div style={{ fontSize: '12px', color: '#64748b' }}>{c.stage}</div>
+                                        <div className="min-w-0">
+                                            <div className="font-semibold text-slate-900 truncate">{c.client_name || 'Unnamed Client'}</div>
+                                            <div className="text-xs text-slate-500">{c.stage}</div>
                                         </div>
                                     </div>
-                                    <ChevronRight size={16} color="#cbd5e1" />
+                                    <ChevronRight size={16} className="text-slate-300 group-hover:text-slate-400 transition-colors" />
                                 </div>
                             ))}
                         </div>
@@ -165,22 +143,14 @@ export default function DashboardHome() {
                 </div>
 
                 {/* Quick Actions / Promo Widget */}
-                <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #052d4a 0%, #0284c7 100%)', color: 'white' }}>
-                    <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px' }}>Grow Your Business</h2>
-                    <p style={{ opacity: 0.9, marginBottom: '24px', lineHeight: 1.5 }}>
+                <div className="card p-8 bg-gradient-to-br from-[#052d4a] to-[#0284c7] text-white flex flex-col justify-center">
+                    <h2 className="text-xl font-bold mb-3">Grow Your Business</h2>
+                    <p className="text-white/80 mb-6 leading-relaxed">
                         Track your mortgage cases efficiently. Ensure you follow up with "Pending Signature" cases to close deals faster.
                     </p>
                     <button
                         onClick={() => router.push('/dashboard/cases')}
-                        style={{
-                            background: 'white',
-                            color: '#052d4a',
-                            padding: '10px 20px',
-                            borderRadius: '6px',
-                            border: 'none',
-                            fontWeight: '600',
-                            cursor: 'pointer'
-                        }}
+                        className="bg-white text-[#052d4a] px-6 py-2.5 rounded-lg font-bold hover:bg-slate-50 transition-colors self-start"
                     >
                         Go to Pipeline
                     </button>

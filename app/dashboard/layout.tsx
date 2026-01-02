@@ -76,68 +76,71 @@ export default function DashboardLayout({
     }
 
     return (
-        <div style={{ display: 'flex', minHeight: '100vh', background: '#f1f5f9' }}>
-            {/* Mobile Toggle */}
-            <button
-                className="md:hidden"
-                style={{ position: 'fixed', top: 10, left: 10, zIndex: 100, background: '#052d4a', color: 'white', padding: 8, borderRadius: 4, border: 'none' }}
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-            >
-                {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
+        <div className="flex min-h-screen bg-slate-50 relative">
+            {/* Mobile Toggle - Top Bar for Mobile */}
+            <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#052d4a] border-b border-white/10 flex items-center px-4 z-[60]">
+                <button
+                    onClick={() => setSidebarOpen(!sidebarOpen)}
+                    className="p-2 text-white hover:bg-white/10 rounded-lg transition-colors"
+                >
+                    {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+                </button>
+                <div className="ml-4 flex items-center gap-2">
+                    <img
+                        src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                        alt="Logo"
+                        className="w-8 h-8 rounded"
+                    />
+                    <span className="text-white font-bold text-sm">The Loan Connection</span>
+                </div>
+            </div>
+
+            {/* Backdrop for mobile */}
+            {sidebarOpen && (
+                <div
+                    className="md:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm transition-opacity"
+                    onClick={() => setSidebarOpen(false)}
+                />
+            )}
 
             {/* Sidebar */}
             <aside
-                className={`sidebar-container ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}
-                style={{
-                    width: 260,
-                    position: 'fixed',
-                    height: '100vh',
-                    transition: 'transform 0.3s ease',
-                    zIndex: 50,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    boxShadow: '4px 0 10px rgba(0,0,0,0.1)'
-                }}
+                className={`sidebar-container fixed inset-y-0 left-0 z-50 w-[260px] transform transition-transform duration-300 ease-in-out md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+                    }`}
             >
                 {/* Brand Header */}
-                <div style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div className="p-6 border-b border-white/10">
+                    <div className="flex items-center gap-3">
                         <img
                             src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
                             alt="The Loan Connection Logo"
-                            style={{ width: 40, height: 40, borderRadius: '4px' }}
+                            className="w-10 h-10 rounded"
                         />
-                        <h1 style={{ fontSize: '16px', fontWeight: '700', margin: 0, lineHeight: 1.2, color: 'white' }}>
+                        <h1 className="text-base font-bold text-white leading-tight">
                             The Loan Connection
                         </h1>
                     </div>
                 </div>
 
                 {/* Navigation */}
-                <nav style={{ flex: 1, padding: '24px 12px' }}>
-                    <p style={{
-                        fontSize: '11px',
-                        textTransform: 'uppercase',
-                        letterSpacing: '1px',
-                        color: '#64748b',
-                        marginBottom: '12px',
-                        paddingLeft: '12px',
-                        fontWeight: '600'
-                    }}>
+                <nav className="flex-1 px-3 py-6 overflow-y-auto">
+                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
                         Main Menu
                     </p>
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    <ul className="space-y-1">
                         {navItems.map((item) => {
                             const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href))
                             return (
-                                <li key={item.name} style={{ marginBottom: '4px' }}>
+                                <li key={item.name}>
                                     <a
                                         href={item.href}
                                         className={`sidebar-link ${isActive ? 'active' : ''}`}
+                                        onClick={() => {
+                                            if (window.innerWidth < 768) setSidebarOpen(false)
+                                        }}
                                     >
                                         <item.icon size={20} />
-                                        {item.name}
+                                        <span>{item.name}</span>
                                     </a>
                                 </li>
                             )
@@ -146,44 +149,24 @@ export default function DashboardLayout({
                 </nav>
 
                 {/* User Footer */}
-                <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.1)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                        <div style={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: '50%',
-                            background: '#03a9e7',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: 'white',
-                            fontSize: '14px',
-                            fontWeight: 'bold'
-                        }}>
+                <div className="p-5 border-t border-white/10 bg-black/10">
+                    <div className="flex items-center gap-3 mb-4">
+                        <div className="w-8 h-8 rounded-full bg-[#03a9e7] flex items-center justify-center text-white text-sm font-bold shrink-0">
                             {email ? email[0].toUpperCase() : 'U'}
                         </div>
-                        <div style={{ overflow: 'hidden' }}>
-                            <p style={{ fontSize: '14px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
+                        <div className="min-w-0">
+                            <p className="text-sm font-medium text-white truncate">
                                 {email?.split('@')[0]}
                             </p>
-                            <p style={{ fontSize: '11px', color: '#94a3b8' }}>
+                            <p className="text-[11px] text-slate-400">
                                 {role === 'admin' ? 'Administrator' : 'Partner Agent'}
                             </p>
                         </div>
                     </div>
                     <button
                         onClick={handleSignOut}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            background: 'transparent',
-                            border: 'none',
-                            color: '#ee3238',
-                            cursor: 'pointer',
-                            fontSize: '13px',
-                            padding: 0
-                        }}>
+                        className="flex items-center gap-2 text-[#ee3238] hover:text-[#ff4d4d] transition-colors text-xs font-medium"
+                    >
                         <LogOut size={16} />
                         Sign Out
                     </button>
@@ -191,18 +174,12 @@ export default function DashboardLayout({
             </aside>
 
             {/* Main Content Area */}
-            <main style={{
-                flex: 1,
-                marginLeft: sidebarOpen ? 260 : 0,
-                padding: '32px',
-                background: '#f1f5f9',
-                color: '#0f172a',
-                transition: 'margin 0.3s ease',
-                width: '100%',
-                maxWidth: '100vw'
-            }}>
-                <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-                    {children}
+            <main className={`flex-1 transition-all duration-300 ease-in-out min-w-0 ${sidebarOpen ? 'md:ml-[260px]' : 'ml-0'
+                }`}>
+                <div className="p-4 md:p-8 pt-20 md:pt-8 w-full">
+                    <div className="max-w-[1200px] mx-auto">
+                        {children}
+                    </div>
                 </div>
             </main>
         </div>
