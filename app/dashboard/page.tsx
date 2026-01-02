@@ -143,14 +143,22 @@ export default function DashboardHome() {
                 </div>
 
                 {/* Quick Actions / Promo Widget */}
-                <div className="card p-8 bg-gradient-to-br from-[#052d4a] to-[#0284c7] text-white flex flex-col justify-center">
-                    <h2 className="text-xl font-bold mb-3">Grow Your Business</h2>
-                    <p className="text-white/80 mb-6 leading-relaxed">
+                <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #052d4a 0%, #0284c7 100%)', color: 'white' }}>
+                    <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px' }}>Grow Your Business</h2>
+                    <p style={{ opacity: 0.9, marginBottom: '24px', lineHeight: 1.5 }}>
                         Track your mortgage cases efficiently. Ensure you follow up with "Pending Signature" cases to close deals faster.
                     </p>
                     <button
                         onClick={() => router.push('/dashboard/cases')}
-                        className="bg-white text-[#052d4a] px-6 py-2.5 rounded-lg font-bold hover:bg-slate-50 transition-colors self-start"
+                        style={{
+                            background: 'white',
+                            color: '#052d4a',
+                            padding: '10px 20px',
+                            borderRadius: '6px',
+                            border: 'none',
+                            fontWeight: '600',
+                            cursor: 'pointer'
+                        }}
                     >
                         Go to Pipeline
                     </button>
