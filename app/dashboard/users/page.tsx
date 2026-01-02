@@ -126,8 +126,8 @@ export default function UserManagementPage() {
     }
 
     const filteredProfiles = profiles.filter(p =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.email && p.email.toLowerCase().includes(searchQuery.toLowerCase()))
+        (p.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+        (p.email?.toLowerCase() || '').includes(searchQuery.toLowerCase())
     )
 
     if (loading) return <div style={{ padding: 40, color: '#052d4a' }}>Loading users...</div>
@@ -193,7 +193,9 @@ export default function UserManagementPage() {
                         {filteredProfiles.map((p) => (
                             <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                 <td style={tdStyle}>
-                                    <div style={{ fontWeight: '500', color: '#0f172a' }}>{p.name}</div>
+                                    <div style={{ fontWeight: '500', color: p.name ? '#0f172a' : '#94a3b8' }}>
+                                        {p.name || 'Unnamed User'}
+                                    </div>
                                 </td>
                                 <td style={tdStyle}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#475569' }}>
@@ -221,7 +223,7 @@ export default function UserManagementPage() {
                                 <td style={{ ...tdStyle, textAlign: 'right' }}>
                                     <button
                                         onClick={() => {
-                                            setEditForm({ id: p.id, name: p.name, role: p.role })
+                                            setEditForm({ id: p.id, name: p.name || '', role: p.role })
                                             setIsEditOpen(true)
                                         }}
                                         style={{
@@ -314,7 +316,7 @@ export default function UserManagementPage() {
                                 required
                                 type="text"
                                 className="input-field-std"
-                                value={editForm.name}
+                                value={editForm.name || ''}
                                 onChange={e => setEditForm({ ...editForm, name: e.target.value })}
                             />
                         </div>
