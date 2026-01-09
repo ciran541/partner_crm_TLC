@@ -165,6 +165,30 @@ export default function CaseDetailPage() {
         handleUpdate(updates)
     }
 
+    const [isClosedWonModalOpen, setIsClosedWonModalOpen] = useState(false)
+    const [prevStage, setPrevStage] = useState<PipelineStage | null>(null)
+
+    const handleStageChange = (newStage: string) => {
+        if (!caseData) return
+        const stage = newStage as PipelineStage
+        if (stage === 'Closed Won') {
+            setPrevStage(caseData.stage)
+            setIsClosedWonModalOpen(true)
+        } else {
+            handleFieldChange('stage', stage)
+        }
+    }
+
+    const handleClosedWonSubmit = (details: Partial<Case>) => {
+        if (!caseData) return
+        setCaseData({
+            ...caseData,
+            ...details,
+            stage: 'Closed Won'
+        })
+        setIsClosedWonModalOpen(false)
+    }
+
     if (loading) return <div style={{ padding: 20 }}>Loading...</div>
     if (!caseData) return <div style={{ padding: 20 }}>Case not found</div>
 
@@ -240,7 +264,7 @@ export default function CaseDetailPage() {
                         {isEditing ? (
                             <select
                                 value={caseData.stage}
-                                onChange={(e) => handleFieldChange('stage', e.target.value)}
+                                onChange={(e) => handleStageChange(e.target.value)}
                                 style={{
                                     background: 'rgba(255,255,255,0.1)',
                                     color: 'white',
@@ -418,6 +442,25 @@ export default function CaseDetailPage() {
                                 />
                                 {!isEditing && (caseData.closed_tenure || '-')}
                             </GridField>
+                            <GridField label="Subsidy Provided" isEditing={isEditing}>
+                                <input
+                                    type="text"
+                                    value={caseData.subsidy_provided || ''}
+                                    onChange={(e) => handleFieldChange('subsidy_provided', e.target.value)}
+                                    placeholder="e.g. $2,000"
+                                    className="input-field-std"
+                                />
+                                {!isEditing && (caseData.subsidy_provided || '-')}
+                            </GridField>
+                            <GridField label="Clawback End Date" isEditing={isEditing}>
+                                <input
+                                    type="date"
+                                    value={caseData.clawback_end_date || ''}
+                                    onChange={(e) => handleFieldChange('clawback_end_date', e.target.value)}
+                                    className="input-field-std"
+                                />
+                                {!isEditing && (caseData.clawback_end_date ? new Date(caseData.clawback_end_date).toLocaleDateString() : '-')}
+                            </GridField>
                             <GridField label="Remarks" isEditing={isEditing} fullWidth>
                                 <textarea
                                     value={caseData.remarks || ''}
@@ -432,6 +475,14 @@ export default function CaseDetailPage() {
                     </div>
                 )}
             </div>
+
+            {isClosedWonModalOpen && (
+                <ClosedWonModal
+                    initialData={caseData}
+                    onConfirm={handleClosedWonSubmit}
+                    onCancel={() => setIsClosedWonModalOpen(false)}
+                />
+            )}
 
             <style jsx global>{`
                 .input-field-std {
@@ -486,6 +537,128 @@ function GridField({ label, children, isEditing, fullWidth }: { label: string, c
                     {displayComponent}
                 </div>
             )}
+        </div>
+    )
+}
+function ClosedWonModal({ initialData, onConfirm, onCancel }: {
+    initialData: Partial<Case>,
+    onConfirm: (details: Partial<Case>) => void,
+    onCancel: () => void
+}) {
+    const [details, setDetails] = useState({
+        closed_package_details: initialData.closed_package_details || '',
+        closed_interest_rate: initialData.closed_interest_rate || '',
+        closed_tenure: initialData.closed_tenure || '',
+        subsidy_provided: initialData.subsidy_provided || '',
+        clawback_end_date: initialData.clawback_end_date || '',
+        remarks: initialData.remarks || '',
+    })
+
+    const handleChange = (field: string, value: any) => {
+        setDetails(prev => ({ ...prev, [field]: value }))
+    }
+
+    return (
+        <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(5, 45, 74, 0.7)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+            padding: '20px'
+        }}>
+            <div className="card" style={{ width: '100%', maxWidth: '600px', padding: '32px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', color: '#166534' }}>
+                    <div style={{ background: '#dcfce7', padding: '8px', borderRadius: '8px' }}>
+                        <CheckCircle2 size={24} />
+                    </div>
+                    <div>
+                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#052d4a' }}>Closed Won Details</h2>
+                        <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Please provide the final loan package information</p>
+                    </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                        <label className="label-text">Package Details</label>
+                        <input
+                            type="text"
+                            value={details.closed_package_details}
+                            onChange={(e) => handleChange('closed_package_details', e.target.value)}
+                            placeholder="e.g. 2-Year Fixed @ 3.5%"
+                            className="input-field-std"
+                            autoFocus
+                        />
+                    </div>
+                    <div>
+                        <label className="label-text">Interest Rate (%)</label>
+                        <input
+                            type="number"
+                            step="0.01"
+                            value={details.closed_interest_rate}
+                            onChange={(e) => handleChange('closed_interest_rate', e.target.value)}
+                            className="input-field-std"
+                        />
+                    </div>
+                    <div>
+                        <label className="label-text">Tenure (Years)</label>
+                        <input
+                            type="number"
+                            value={details.closed_tenure}
+                            onChange={(e) => handleChange('closed_tenure', e.target.value)}
+                            className="input-field-std"
+                        />
+                    </div>
+                    <div>
+                        <label className="label-text">Subsidy Provided</label>
+                        <input
+                            type="text"
+                            value={details.subsidy_provided}
+                            onChange={(e) => handleChange('subsidy_provided', e.target.value)}
+                            placeholder="e.g. $2,000"
+                            className="input-field-std"
+                        />
+                    </div>
+                    <div>
+                        <label className="label-text">Clawback End Date</label>
+                        <input
+                            type="date"
+                            value={details.clawback_end_date}
+                            onChange={(e) => handleChange('clawback_end_date', e.target.value)}
+                            className="input-field-std"
+                        />
+                    </div>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                        <label className="label-text">Remarks</label>
+                        <textarea
+                            value={details.remarks}
+                            onChange={(e) => handleChange('remarks', e.target.value)}
+                            rows={3}
+                            className="input-field-std"
+                            style={{ fontFamily: 'inherit' }}
+                        />
+                    </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '32px' }}>
+                    <button
+                        className="btn-outline"
+                        style={{ flex: 1, justifyContent: 'center' }}
+                        onClick={onCancel}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        className="btn-primary"
+                        style={{ flex: 2, justifyContent: 'center', background: '#166534', borderColor: '#166534' }}
+                        onClick={() => onConfirm({
+                            ...details,
+                            closed_interest_rate: details.closed_interest_rate ? parseFloat(details.closed_interest_rate as string) : undefined,
+                            closed_tenure: details.closed_tenure ? parseInt(details.closed_tenure as string) : undefined,
+                        })}
+                    >
+                        Save Closure Details
+                    </button>
+                </div>
+            </div>
         </div>
     )
 }
