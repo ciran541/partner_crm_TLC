@@ -33,7 +33,15 @@ export default function LandingPage() {
         <img
           src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
           alt="The Loan Connection Logo"
-          style={{ width: 120, height: 120, borderRadius: '16px', marginBottom: '32px', boxShadow: '0 20px 40px rgba(0,0,0,0.3)' }}
+          style={{
+            width: 120,
+            height: 120,
+            borderRadius: '16px',
+            marginBottom: '32px',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.3)',
+            display: 'block',
+            margin: '0 auto 32px auto'
+          }}
         />
 
         <h1 style={{
