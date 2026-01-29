@@ -11,7 +11,8 @@ import {
     Settings,
     Menu,
     X,
-    TrendingUp
+    TrendingUp,
+    Percent
 } from 'lucide-react'
 
 export default function DashboardLayout({
@@ -66,6 +67,7 @@ export default function DashboardLayout({
     const navItems = [
         { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
         { name: 'Cases', href: '/dashboard/cases', icon: Briefcase },
+        { name: 'Rates', href: '/dashboard/rates', icon: Percent },
         // Placeholder for future features matching the sidebar wish
         // { name: 'Analytics', href: '/dashboard/analytics', icon: TrendingUp },
     ]
@@ -176,8 +178,8 @@ export default function DashboardLayout({
             {/* Main Content Area */}
             <main className={`flex-1 transition-all duration-300 ease-in-out min-w-0 ${sidebarOpen ? 'md:ml-[260px]' : 'ml-0'
                 }`}>
-                <div className="p-4 md:p-8 pt-20 md:pt-8 w-full">
-                    <div className="max-w-[1200px] mx-auto">
+                <div className={`${pathname === '/dashboard/rates' ? 'h-screen overflow-hidden p-0' : 'p-4 md:p-8 pt-20 md:pt-8'} w-full`}>
+                    <div className={`${pathname === '/dashboard/rates' ? 'h-full flex flex-col' : 'max-w-[1200px] mx-auto'}`}>
                         {children}
                     </div>
                 </div>
