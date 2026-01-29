@@ -11,7 +11,7 @@ export default function RatesPage() {
                     <Percent size={28} className="text-[#03a9e7]" />
                     <span>Mortgage Package</span>
                 </h1>
-                <p className="text-slate-500 text-sm mt-1">View and manage live mortgage package.</p>
+                <p className="text-slate-500 text-sm mt-1">View and manage live mortgage packages.</p>
             </div>
 
             {/* Iframe Container - No borders or shadows, flush with edges */}
@@ -19,7 +19,7 @@ export default function RatesPage() {
                 <iframe
                     src="https://mortgage-package.vercel.app/dashboard"
                     className="absolute inset-0 w-full h-full border-0"
-                    title="Mortgage Rates Dashboard"
+                    title="Mortgage Package Dashboard"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                     allowFullScreen
                 />
