@@ -9,9 +9,9 @@ export default function RatesPage() {
             <div className="px-4 md:px-8 pt-20 md:pt-8 mb-4">
                 <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
                     <Percent size={28} className="text-[#03a9e7]" />
-                    <span>Mortgage Rates</span>
+                    <span>Mortgage Package</span>
                 </h1>
-                <p className="text-slate-500 text-sm mt-1">View and manage live mortgage rates.</p>
+                <p className="text-slate-500 text-sm mt-1">View and manage live mortgage package.</p>
             </div>
 
             {/* Iframe Container - No borders or shadows, flush with edges */}
