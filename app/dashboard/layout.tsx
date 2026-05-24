@@ -3,6 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter, usePathname } from 'next/navigation'
+import { canAccessInsurance, getSafeRoute } from '@/lib/permissions'
 import {
     LayoutDashboard,
     Briefcase,
@@ -42,11 +43,16 @@ export default function DashboardLayout({
 
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('role')
+                .select('role, app_type')
                 .eq('id', user.id)
                 .single()
 
-            setRole(profile?.role ?? 'agent')
+            if (!profile || !canAccessInsurance(profile.role, profile.app_type)) {
+                router.replace(getSafeRoute(profile?.role, profile?.app_type))
+                return
+            }
+
+            setRole(profile.role ?? 'agent')
             setLoading(false)
         }
 

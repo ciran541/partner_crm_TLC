@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/property/reminders/process",
+      "schedule": "0 1 * * *"
+    }
+  ]
+}

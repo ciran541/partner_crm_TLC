@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { getSafeRoute } from '@/lib/permissions'
 
 export default function RedirectPage() {
     const router = useRouter()
@@ -18,9 +19,19 @@ export default function RedirectPage() {
                 return
             }
 
-            // No role-based redirect anymore
-            // Everyone goes to dashboard
-            router.replace('/dashboard')
+            // Fetch profile to determine routing
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('role, app_type')
+                .eq('id', user.id)
+                .single()
+
+            if (!profile) {
+                router.replace('/insurance/dashboard')
+                return
+            }
+
+            router.replace(getSafeRoute(profile.role, profile.app_type))
         }
 
         redirectUser()

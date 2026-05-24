@@ -1,7 +1,12 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdminUser } from '@/lib/auth/requireAdmin'
 
 export async function POST(request: Request) {
+    // 🔒 Server-side admin guard — verifies caller is authenticated admin
+    const auth = await requireAdminUser()
+    if (!auth.authorized) return auth.response
+
     try {
         const { id, updates } = await request.json()
 
@@ -9,10 +14,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing case ID' }, { status: 400 })
         }
 
-        const supabaseAdmin = createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
-        )
+        const supabaseAdmin = createAdminClient()
 
         const { data, error } = await supabaseAdmin
             .from('cases')

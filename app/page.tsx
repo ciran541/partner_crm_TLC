@@ -1,7 +1,5 @@
-'use client'
-
 import Link from 'next/link'
-import { ArrowRight, LayoutDashboard, Lock } from 'lucide-react'
+import { ArrowRight, Lock, Briefcase } from 'lucide-react'
 
 export default function LandingPage() {
   return (
@@ -64,10 +62,10 @@ export default function LandingPage() {
           marginRight: 'auto',
           lineHeight: 1.6
         }}>
-          Manage your mortgage cases, track your pipeline, and close deals faster with our professional partner CRM.
+          Manage your mortgage cases, track your pipeline, and close deals faster with our professional partner platforms.
         </p>
 
-        <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'center' }}>
           <Link
             href="/login"
             style={{
@@ -86,11 +84,32 @@ export default function LandingPage() {
             }}
           >
             <Lock size={18} />
-            Partner Login
+            Insurance CRM Login
           </Link>
 
           <Link
-            href="/dashboard"
+            href="/property/login"
+            style={{
+              textDecoration: 'none',
+              background: '#059669',
+              color: 'white',
+              padding: '16px 32px',
+              borderRadius: '8px',
+              fontWeight: '600',
+              fontSize: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'transform 0.2s',
+              border: 'none'
+            }}
+          >
+            <Briefcase size={18} />
+            Property Portal Login
+          </Link>
+
+          <Link
+            href="/property/signup"
             style={{
               textDecoration: 'none',
               background: 'transparent',
@@ -106,8 +125,8 @@ export default function LandingPage() {
               transition: 'background 0.2s'
             }}
           >
-            <LayoutDashboard size={18} />
-            Go to Dashboard
+            <ArrowRight size={18} />
+            Property Agent Sign Up
           </Link>
         </div>
       </div>
