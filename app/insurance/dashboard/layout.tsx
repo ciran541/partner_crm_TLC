@@ -35,7 +35,7 @@ export default function DashboardLayout({
             } = await supabase.auth.getUser()
 
             if (!user) {
-                router.replace('/login')
+                router.replace('/insurance/login')
                 return
             }
 
