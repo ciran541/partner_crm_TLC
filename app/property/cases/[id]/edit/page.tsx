@@ -10,6 +10,7 @@ import CaseTypeSelector from '@/components/property/CaseTypeSelector'
 import BankDropdown from '@/components/property/BankDropdown'
 import { calculateCommission } from '@/lib/property/commission'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
+import { refreshCases } from '@/lib/property/useCases'
 import type { PropertyCaseType, PropertyCaseStatus } from '@/lib/types/property'
 
 interface FormState {
@@ -174,6 +175,7 @@ export default function EditCasePage() {
                 return
             }
 
+            refreshCases() // invalidate the shared cache so edits show up everywhere
             router.push(`/property/cases/${caseId}?updated=true`)
         } catch {
             setSubmitError('An unexpected error occurred. Please try again.')

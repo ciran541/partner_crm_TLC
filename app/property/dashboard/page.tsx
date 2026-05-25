@@ -1,6 +1,5 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
     Briefcase, BadgeCheck, Clock, ArrowRight, AlertCircle,
@@ -9,10 +8,11 @@ import {
 import StatsCard from '@/components/shared/StatsCard'
 import CommissionHero from '@/components/property/CommissionHero'
 import UrgencyBanner from '@/components/shared/UrgencyBanner'
-import Spinner from '@/components/shared/Spinner'
+import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
+import { useCases } from '@/lib/property/useCases'
 import type { PropertyCase, PropertyCaseStatus, PropertyCaseType } from '@/lib/types/property'
 
 const STATUS_CONFIG: Record<PropertyCaseStatus, { label: string; color: string; bg: string }> = {
@@ -66,17 +66,7 @@ function computeEarnings(cases: PropertyCase[]) {
 
 export default function PropertyDashboardPage() {
     const router = useRouter()
-    const [cases, setCases] = useState<PropertyCase[]>([])
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
-
-    useEffect(() => {
-        fetch('/api/property/cases?limit=100')
-            .then(r => r.json())
-            .then(json => setCases(json.data ?? []))
-            .catch(() => setError('Failed to load dashboard data.'))
-            .finally(() => setLoading(false))
-    }, [])
+    const { cases, loading, error } = useCases()
 
     const stats = computeStats(cases)
     const earnings = computeEarnings(cases)
@@ -105,8 +95,12 @@ export default function PropertyDashboardPage() {
             </div>
 
             {loading && (
-                <div className="card" style={{ padding: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Spinner size="md" color="#059669" label="Loading your dashboard…" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    <Skeleton height={150} radius={14} />
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }} className="lg:grid-cols-4">
+                        {[0, 1, 2, 3].map(i => <Skeleton key={i} height={92} radius={14} />)}
+                    </div>
+                    <Skeleton height={260} radius={14} />
                 </div>
             )}
 

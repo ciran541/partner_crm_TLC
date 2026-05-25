@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { DollarSign, AlertCircle, ArrowRight } from 'lucide-react'
-import Spinner from '@/components/shared/Spinner'
+import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
+import { useCases } from '@/lib/property/useCases'
 import type { PropertyCase, PropertyCaseType, PropertyCommissionStatus } from '@/lib/types/property'
 
 const CASE_TYPE_LABELS: Record<PropertyCaseType, string> = {
@@ -36,18 +37,8 @@ function countByStatus(cases: PropertyCase[], status: PropertyCommissionStatus):
 
 export default function PropertyEarningsPage() {
     const router = useRouter()
-    const [cases, setCases] = useState<PropertyCase[]>([])
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
+    const { cases, loading, error } = useCases()
     const [tab, setTab] = useState<Tab>('all')
-
-    useEffect(() => {
-        fetch('/api/property/cases?limit=200')
-            .then(r => r.json())
-            .then(json => setCases(json.data ?? []))
-            .catch(() => setError('Failed to load earnings data. Please refresh.'))
-            .finally(() => setLoading(false))
-    }, [])
 
     const withCommission = cases.filter(c => c.agent_commission_amount != null)
 
@@ -76,8 +67,12 @@ export default function PropertyEarningsPage() {
             </div>
 
             {loading && (
-                <div className="card" style={{ padding: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Spinner size="md" color="#059669" label="Loading earnings…" />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }} className="lg:grid-cols-[1.5fr_1fr]">
+                        <Skeleton height={140} radius={14} />
+                        <Skeleton height={140} radius={14} />
+                    </div>
+                    <Skeleton height={300} radius={14} />
                 </div>
             )}
 

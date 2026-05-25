@@ -11,15 +11,35 @@ interface Props {
     error?: string
 }
 
+// Banks are near-static — cache the list at module scope so reopening the
+// New/Edit case form doesn't refetch (and shows the dropdown instantly).
+let banksCache: Bank[] | null = null
+let banksInflight: Promise<Bank[]> | null = null
+
+function loadBanks(): Promise<Bank[]> {
+    if (banksCache) return Promise.resolve(banksCache)
+    if (banksInflight) return banksInflight
+    banksInflight = fetch('/api/property/banks')
+        .then(r => r.json())
+        .then(json => {
+            banksCache = json.data ?? []
+            return banksCache!
+        })
+        .finally(() => { banksInflight = null })
+    return banksInflight
+}
+
 export default function BankDropdown({ value, onChange, error }: Props) {
-    const [banks, setBanks] = useState<Bank[]>([])
-    const [loading, setLoading] = useState(true)
+    const [banks, setBanks] = useState<Bank[]>(banksCache ?? [])
+    const [loading, setLoading] = useState(!banksCache)
 
     useEffect(() => {
-        fetch('/api/property/banks')
-            .then(r => r.json())
-            .then(json => setBanks(json.data ?? []))
-            .finally(() => setLoading(false))
+        if (banksCache) return
+        let active = true
+        loadBanks()
+            .then(data => { if (active) setBanks(data) })
+            .finally(() => { if (active) setLoading(false) })
+        return () => { active = false }
     }, [])
 
     return (

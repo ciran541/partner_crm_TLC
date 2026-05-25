@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
-import { isAdmin } from '@/lib/permissions'
 import { calculateCommission } from '@/lib/property/commission'
 import { projectAtLockinMaturity } from '@/lib/property/amortization'
 
@@ -25,15 +24,7 @@ export async function GET(
         return NextResponse.json({ error: 'Case not found' }, { status: 404 })
     }
 
-    const { data: profile } = await admin
-        .from('profiles')
-        .select('role')
-        .eq('id', auth.userId)
-        .single()
-
-    const userIsAdmin = profile ? isAdmin(profile.role as 'admin' | 'super_admin' | 'agent') : false
-
-    if (!userIsAdmin && (caseData as { agent_id: string }).agent_id !== auth.userId) {
+    if (!auth.isAdmin && (caseData as { agent_id: string }).agent_id !== auth.userId) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

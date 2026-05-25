@@ -1,15 +1,19 @@
 import { NextResponse } from 'next/server'
 import { getServerUser } from './getUser'
-import { canAccessProperty } from '@/lib/permissions'
+import { canAccessProperty, isAdmin } from '@/lib/permissions'
+import type { UserRole } from '@/lib/types/shared'
 
 type PropertyGuardResult =
-    | { authorized: true; userId: string }
+    | { authorized: true; userId: string; role: UserRole; isAdmin: boolean }
     | { authorized: false; response: NextResponse }
 
 /**
  * API route guard: verifies the caller is authenticated and can access
  * the property platform (property agents + admins).
  * Mirrors the pattern of requireAdminUser() in requireAdmin.ts.
+ *
+ * Returns the caller's role/isAdmin (already fetched during auth) so routes
+ * don't have to re-query the profiles table just to check privileges.
  */
 export async function requirePropertyUser(): Promise<PropertyGuardResult> {
     const { user, profile } = await getServerUser()
@@ -28,5 +32,10 @@ export async function requirePropertyUser(): Promise<PropertyGuardResult> {
         }
     }
 
-    return { authorized: true, userId: user.id }
+    return {
+        authorized: true,
+        userId: user.id,
+        role: profile.role,
+        isAdmin: isAdmin(profile.role),
+    }
 }

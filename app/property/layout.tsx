@@ -1,9 +1,11 @@
 'use client'
 
 import { ReactNode, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter, usePathname } from 'next/navigation'
 import { canAccessProperty, getSafeRoute } from '@/lib/permissions'
+import { clearCasesCache } from '@/lib/property/useCases'
 import {
     LayoutDashboard,
     Briefcase,
@@ -12,7 +14,6 @@ import {
     User,
     LogOut,
 } from 'lucide-react'
-import Spinner from '@/components/shared/Spinner'
 
 const navItems = [
     { name: 'Dashboard', href: '/property/dashboard', icon: LayoutDashboard },
@@ -26,75 +27,68 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
     const router = useRouter()
     const pathname = usePathname()
     const [email, setEmail] = useState<string | null>(null)
-    const [loading, setLoading] = useState(true)
 
     const isAuthPage = pathname === '/property/login' || pathname === '/property/signup'
 
+    // Instant shell: read the email/initials from the LOCAL session (no network
+    // round-trip) so the chrome renders immediately instead of behind a spinner.
     useEffect(() => {
-        if (isAuthPage) {
-            const checkAlreadyLogged = async () => {
-                const { data: { user } } = await supabase.auth.getUser()
+        if (isAuthPage) return
+        let active = true
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (active) setEmail(session?.user?.email ?? null)
+        })
+        return () => { active = false }
+    }, [isAuthPage])
+
+    // Authoritative auth check — runs ONCE per property session (no `pathname`
+    // dependency, so it doesn't re-fire on every tab switch). Middleware already
+    // bounces unauthenticated users, so this never blocks first paint; it only
+    // redirects wrong-domain (e.g. insurance) or disabled accounts.
+    useEffect(() => {
+        let active = true
+        const run = async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!active) return
+
+            if (isAuthPage) {
                 if (user) {
-                    const { data: profile } = await supabase.from('profiles').select('role, app_type').eq('id', user.id).single()
-                    if (profile && canAccessProperty(profile.role, profile.app_type)) {
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('role, app_type')
+                        .eq('id', user.id)
+                        .single()
+                    if (active && profile && canAccessProperty(profile.role, profile.app_type)) {
                         router.replace(getSafeRoute(profile.role, profile.app_type))
-                        return
                     }
                 }
-                setLoading(false)
-            }
-            checkAlreadyLogged()
-            return
-        }
-
-        const loadUser = async () => {
-            const { data: { user } } = await supabase.auth.getUser()
-
-            if (!user) {
-                router.replace('/property/login')
                 return
             }
+
+            if (!user) return // middleware handles the redirect to /property/login
 
             const { data: profile } = await supabase
                 .from('profiles')
                 .select('role, app_type, status')
                 .eq('id', user.id)
                 .single()
+            if (!active) return
 
             if (!profile || !canAccessProperty(profile.role, profile.app_type)) {
                 router.replace(profile ? getSafeRoute(profile.role, profile.app_type) : '/property/login')
-                return
-            }
-
-            if (profile.status === 'disabled') {
+            } else if (profile.status === 'disabled') {
                 await supabase.auth.signOut()
                 router.replace('/property/login?error=account_disabled')
-                return
             }
-
-            setEmail(user.email ?? null)
-            setLoading(false)
         }
-
-        loadUser()
-    }, [isAuthPage, pathname, router])
+        run()
+        return () => { active = false }
+    }, [isAuthPage, router])
 
     const handleSignOut = async () => {
+        clearCasesCache()
         await supabase.auth.signOut()
         router.push('/property/login')
-    }
-
-    if (loading) {
-        return (
-            <div style={{
-                display: 'flex', justifyContent: 'center', alignItems: 'center',
-                height: '100dvh', flexDirection: 'column', gap: 14,
-                background: '#f8fafc',
-            }}>
-                <Spinner size="lg" color="#059669" />
-                <p style={{ fontSize: 14, fontWeight: 500, color: '#64748b' }}>Loading…</p>
-            </div>
-        )
     }
 
     if (isAuthPage) {
@@ -132,9 +126,10 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                     {navItems.map((item) => {
                         const isActive = pathname?.startsWith(item.href)
                         return (
-                            <a
+                            <Link
                                 key={item.name}
                                 href={item.href}
+                                prefetch
                                 className={`sidebar-link${isActive ? ' active' : ''}`}
                                 style={isActive ? {
                                     borderLeftColor: '#34d399',
@@ -143,7 +138,7 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                             >
                                 <item.icon size={18} />
                                 {item.name}
-                            </a>
+                            </Link>
                         )
                     })}
                 </nav>
@@ -194,9 +189,10 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                 {navItems.map((item) => {
                     const isActive = pathname?.startsWith(item.href)
                     return (
-                        <a
+                        <Link
                             key={item.name}
                             href={item.href}
+                            prefetch
                             className="pressable"
                             style={{
                                 flex: 1,
@@ -215,7 +211,7 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                         >
                             <item.icon size={23} strokeWidth={isActive ? 2.4 : 2} />
                             <span>{item.name}</span>
-                        </a>
+                        </Link>
                     )
                 })}
             </nav>

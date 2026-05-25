@@ -17,5 +17,9 @@ export async function GET() {
         return NextResponse.json({ error: 'Failed to fetch banks' }, { status: 500 })
     }
 
-    return NextResponse.json({ data: data ?? [] })
+    // Banks change rarely — let the browser reuse the response for a few minutes.
+    return NextResponse.json(
+        { data: data ?? [] },
+        { headers: { 'Cache-Control': 'private, max-age=300' } }
+    )
 }

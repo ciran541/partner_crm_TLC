@@ -1,15 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Briefcase, Plus, AlertCircle, ArrowRight, ChevronDown } from 'lucide-react'
 import FilterPills from '@/components/shared/FilterPills'
 import UrgencyBanner from '@/components/shared/UrgencyBanner'
 import EmptyState from '@/components/shared/EmptyState'
-import Spinner from '@/components/shared/Spinner'
+import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import type { PropertyCase, PropertyCaseStatus, PropertyCaseType } from '@/lib/types/property'
+import { useCases } from '@/lib/property/useCases'
+import type { PropertyCaseStatus, PropertyCaseType } from '@/lib/types/property'
 
 const STATUS_CONFIG: Record<PropertyCaseStatus, { label: string; color: string; bg: string }> = {
     draft: { label: 'Draft', color: '#64748b', bg: '#f1f5f9' },
@@ -41,17 +42,6 @@ const STATUS_PILL_OPTIONS = [
     { value: 'opportunity_due', label: 'Opportunity Due' },
 ]
 
-interface CaseWithAgent extends Omit<PropertyCase, 'banks'> {
-    banks?: { id: string; name: string } | null
-    agent_name?: string | null
-}
-
-interface ApiResponse {
-    data: CaseWithAgent[]
-    count: number
-    is_admin: boolean
-}
-
 function StatusBadge({ status }: { status: PropertyCaseStatus }) {
     const cfg = STATUS_CONFIG[status]
     return (
@@ -64,31 +54,20 @@ function StatusBadge({ status }: { status: PropertyCaseStatus }) {
     )
 }
 
-export default function PropertyCasesPage() {
+function PropertyCasesContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
-    const [resp, setResp] = useState<ApiResponse | null>(null)
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
+    const { cases: allCases, isAdmin, loading, error } = useCases()
     const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '')
     const [typeFilter, setTypeFilter] = useState('')
 
-    useEffect(() => {
-        setLoading(true)
-        const params = new URLSearchParams({ limit: '200' })
-        if (statusFilter) params.set('status', statusFilter)
-        if (typeFilter) params.set('case_type', typeFilter)
-
-        fetch(`/api/property/cases?${params}`)
-            .then(r => r.json())
-            .then(json => setResp(json))
-            .catch(() => setError('Failed to load cases. Please refresh.'))
-            .finally(() => setLoading(false))
-    }, [statusFilter, typeFilter])
-
-    const cases = resp?.data ?? []
-    const isAdmin = resp?.is_admin ?? false
-    const opportunityDueCount = cases.filter(c => c.status === 'opportunity_due').length
+    // Filter in memory — the full list is already loaded, so changing a filter
+    // is instant and never triggers a network request.
+    const cases = allCases.filter(c =>
+        (!statusFilter || c.status === statusFilter) &&
+        (!typeFilter || c.case_type === typeFilter)
+    )
+    const opportunityDueCount = allCases.filter(c => c.status === 'opportunity_due').length
 
     const showUrgency = statusFilter === '' && opportunityDueCount > 0
 
@@ -99,7 +78,7 @@ export default function PropertyCasesPage() {
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <h1 className="ios-page-title">Cases</h1>
-                        {resp && (
+                        {!loading && (
                             <span style={{
                                 fontSize: 12, fontWeight: 700, padding: '2px 8px',
                                 borderRadius: 9999, background: '#f1f5f9', color: '#64748b',
@@ -174,8 +153,8 @@ export default function PropertyCasesPage() {
             )}
 
             {loading && (
-                <div className="card" style={{ padding: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Spinner size="md" color="#059669" label="Loading cases…" />
+                <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={48} radius={10} />)}
                 </div>
             )}
 
@@ -322,5 +301,17 @@ export default function PropertyCasesPage() {
                 </>
             )}
         </div>
+    )
+}
+
+export default function PropertyCasesPage() {
+    return (
+        <Suspense fallback={
+            <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={48} radius={10} />)}
+            </div>
+        }>
+            <PropertyCasesContent />
+        </Suspense>
     )
 }

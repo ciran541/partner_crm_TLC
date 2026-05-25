@@ -3,7 +3,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 import { calculateCommission } from '@/lib/property/commission'
 import { projectAtLockinMaturity } from '@/lib/property/amortization'
-import { isAdmin } from '@/lib/permissions'
 import type { CreatePropertyCaseInput } from '@/lib/types/property'
 
 export async function GET(request: Request) {
@@ -18,14 +17,7 @@ export async function GET(request: Request) {
     const offset = (page - 1) * limit
 
     const admin = createAdminClient()
-
-    const { data: profile } = await admin
-        .from('profiles')
-        .select('role')
-        .eq('id', auth.userId)
-        .single()
-
-    const userIsAdmin = profile ? isAdmin(profile.role as 'admin' | 'super_admin' | 'agent') : false
+    const userIsAdmin = auth.isAdmin
 
     let query = admin
         .from('property_cases')
@@ -73,17 +65,11 @@ export async function POST(request: Request) {
     const auth = await requirePropertyUser()
     if (!auth.authorized) return auth.response
 
-    const admin = createAdminClient()
-
-    const { data: profile } = await admin
-        .from('profiles')
-        .select('role')
-        .eq('id', auth.userId)
-        .single()
-
-    if (!profile || isAdmin(profile.role as 'admin' | 'super_admin' | 'agent')) {
+    if (auth.isAdmin) {
         return NextResponse.json({ error: 'Only agents can submit cases' }, { status: 403 })
     }
+
+    const admin = createAdminClient()
 
     let body: CreatePropertyCaseInput
     try {

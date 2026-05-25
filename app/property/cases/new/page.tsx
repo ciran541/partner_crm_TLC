@@ -14,6 +14,7 @@ import Spinner from '@/components/shared/Spinner'
 import { calculateCommission } from '@/lib/property/commission'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { supabase } from '@/lib/supabase/client'
+import { refreshCases } from '@/lib/property/useCases'
 import type { PropertyCaseType } from '@/lib/types/property'
 
 interface FormState {
@@ -279,6 +280,7 @@ export default function NewCasePage() {
                 }
             }
 
+            refreshCases() // invalidate the shared cache so the new case shows up everywhere
             router.push(`/property/cases/${caseId}?submitted=true`)
         } catch {
             setSubmitError('An unexpected error occurred. Please try again.')
