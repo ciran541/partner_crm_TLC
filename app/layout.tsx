@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
 
@@ -31,6 +31,13 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#052d4a",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -39,7 +46,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <meta name="theme-color" content="#052d4a" />
         <link rel="apple-touch-icon" href="/icons/icon-192x192.png?v=3" />
       </head>
       <body

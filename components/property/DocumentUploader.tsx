@@ -68,7 +68,7 @@ export default function DocumentUploader({ onFileSelect, selectedFile }: Props) 
                 onDragOver={e => { e.preventDefault(); setDragOver(true) }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
-                className={`w-full flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-dashed transition-colors
+                className={`pressable w-full flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-dashed
                     ${dragOver
                         ? 'border-emerald-400 bg-emerald-50'
                         : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white'

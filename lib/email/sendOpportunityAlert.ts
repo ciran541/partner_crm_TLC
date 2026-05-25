@@ -7,31 +7,32 @@ const FROM = process.env.RESEND_FROM_EMAIL ?? 'TLC <noreply@tlcmortgage.sg>'
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://property.tlcmortgage.sg'
 
 interface OpportunityAlertParams {
-    agentEmail: string
-    agentName: string
-    clientName: string
-    caseId: string
-    projectedAgentIncome?: number | null
-    lockinConfirmedDate?: string | null
+  agentEmail: string
+  agentName: string
+  clientName: string
+  caseId: string
+  projectedAgentIncome?: number | null
+  lockinConfirmedDate?: string | null
 }
 
 export async function sendOpportunityAlert(params: OpportunityAlertParams): Promise<void> {
-    const { agentEmail, agentName, clientName, caseId, projectedAgentIncome, lockinConfirmedDate } = params
+  const { agentEmail, agentName, clientName, caseId, projectedAgentIncome, lockinConfirmedDate } = params
 
-    const caseUrl = `${APP_URL}/property/cases/${caseId}`
-    const incomeText = projectedAgentIncome
-        ? `Based on the projected remaining balance, your estimated refinancing commission is <strong>${formatCurrency(projectedAgentIncome)}</strong>.`
-        : 'This is a great opportunity to re-engage your client for a refinancing.'
+  const caseUrl = `${APP_URL}/property/cases/${caseId}`
+  const incomeText = projectedAgentIncome
+    ? `Based on the projected remaining balance, your estimated refinancing commission is <strong>${formatCurrency(projectedAgentIncome)}</strong>.`
+    : 'This is a great opportunity to re-engage your client for a refinancing.'
 
-    const lockInText = lockinConfirmedDate
-        ? `Their lock-in period ends on <strong>${new Date(lockinConfirmedDate).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>.`
-        : 'Their lock-in period is approaching its end.'
+  const lockInText = lockinConfirmedDate
+    ? `Their lock-in period ends on <strong>${new Date(lockinConfirmedDate).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>.`
+    : 'Their lock-in period is approaching its end.'
 
-    await resend.emails.send({
-        from: FROM,
-        to: agentEmail,
-        subject: `Action Required: ${clientName}'s lock-in is expiring soon`,
-        html: `
+
+  await resend.emails.send({
+    from: FROM,
+    to: agentEmail,
+    subject: `Action Required: ${clientName}'s lock-in is expiring soon`,
+    html: `
 <!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
@@ -96,5 +97,5 @@ export async function sendOpportunityAlert(params: OpportunityAlertParams): Prom
   </table>
 </body>
 </html>`,
-    })
+  })
 }

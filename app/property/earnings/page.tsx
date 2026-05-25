@@ -71,7 +71,7 @@ export default function PropertyEarningsPage() {
         <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
             {/* Header */}
             <div>
-                <h1 className="page-title">Earnings</h1>
+                <h1 className="ios-page-title">Earnings</h1>
                 <p className="page-subtitle">Your commission breakdown across all submitted cases.</p>
             </div>
 
@@ -136,7 +136,7 @@ export default function PropertyEarningsPage() {
                     ) : (
                         <div className="card" style={{ overflow: 'hidden' }}>
                             {/* Tabs */}
-                            <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4, overflowX: 'auto' }}>
+                            <div className="scroll-x" style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4 }}>
                                 {tabs.map(t => {
                                     const active = tab === t.key
                                     return (
@@ -243,11 +243,11 @@ export default function PropertyEarningsPage() {
                                                 <button
                                                     key={c.id}
                                                     onClick={() => router.push(`/property/cases/${c.id}`)}
+                                                    className="pressable"
                                                     style={{
                                                         width: '100%', padding: '16px', textAlign: 'left',
                                                         background: 'none', border: 'none', cursor: 'pointer',
                                                         borderBottom: '1px solid #f8fafc',
-                                                        transition: 'background 0.15s',
                                                     }}
                                                     onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
                                                     onMouseLeave={e => (e.currentTarget.style.background = 'none')}

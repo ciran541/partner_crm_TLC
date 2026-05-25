@@ -58,7 +58,7 @@ export default function PropertyNotificationsPage() {
         <div className="space-y-6 max-w-2xl">
             <div className="flex items-start justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
+                    <h1 className="text-[28px] md:text-2xl font-extrabold tracking-tight text-[#052d4a] flex items-center gap-2">
                         <Bell size={26} color="#059669" />
                         Notifications
                         {!loading && unreadCount > 0 && (
@@ -114,7 +114,7 @@ export default function PropertyNotificationsPage() {
                             <button
                                 key={`${n.id}-${i}`}
                                 onClick={() => router.push(`/property/cases/${n.case_id}`)}
-                                className="w-full flex items-start gap-4 px-4 py-4 hover:bg-slate-50 transition-colors text-left"
+                                className="pressable w-full flex items-start gap-4 px-4 py-4 hover:bg-slate-50 text-left"
                             >
                                 {/* Icon */}
                                 <div

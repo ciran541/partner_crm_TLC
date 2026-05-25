@@ -225,6 +225,7 @@ function CaseDetailContent() {
                             )}
                             <button
                                 onClick={() => router.push('/property/cases/new')}
+                                className="pressable"
                                 style={{
                                     marginTop: 16, display: 'inline-flex', alignItems: 'center', gap: 8,
                                     padding: '10px 18px', borderRadius: 9, background: 'white',
@@ -365,11 +366,11 @@ function CaseDetailContent() {
                                 href={doc.file_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                className="pressable"
                                 style={{
                                     display: 'flex', alignItems: 'center', gap: 12,
                                     padding: '12px 14px', borderRadius: 10,
                                     border: '1px solid #e2e8f0', textDecoration: 'none',
-                                    transition: 'all 0.15s',
                                 }}
                                 onMouseEnter={e => {
                                     e.currentTarget.style.borderColor = '#34d399'

@@ -45,12 +45,75 @@
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   background: var(--bg-page);
   color: var(--text-dark);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: none;
+}
+
+/* ─── iOS-native foundation ───────────────────────────────── */
+
+/* Prevent iOS Safari from auto-zooming when a sub-16px input is
+   focused. Inline fontSize:14 styles are overridden with !important. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Reusable press feedback for inline-styled tappable cards/rows/buttons.
+   Hover is gated to real pointers so touch devices don't get sticky states. */
+.pressable {
+  touch-action: manipulation;
+  transition: transform 0.12s ease, opacity 0.12s ease, background 0.15s ease;
+}
+
+.pressable:active {
+  transform: scale(0.97);
+  opacity: 0.9;
+}
+
+/* Frosted translucent surface (iOS nav bars). */
+.ios-blur {
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+/* Top bar: clears the status bar / notch. */
+.ios-topbar {
+  padding-top: env(safe-area-inset-top);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Bottom tab bar: clears the home indicator. */
+.ios-tabbar {
+  padding-bottom: env(safe-area-inset-bottom);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Horizontal scroll strip with momentum and no scrollbar. */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.scroll-x::-webkit-scrollbar {
+  display: none;
 }
 
 /* ─── Sidebar ─────────────────────────────────────────────── */
@@ -95,8 +158,10 @@ body {
   transition: box-shadow 0.2s ease;
 }
 
-.card:hover {
-  box-shadow: var(--shadow-md);
+@media (hover: hover) {
+  .card:hover {
+    box-shadow: var(--shadow-md);
+  }
 }
 
 .card-flat {
@@ -221,6 +286,35 @@ body {
   font-size: 15px;
 }
 
+/* Touch press feedback for all buttons (iOS-style depress). */
+.btn-primary,
+.btn-secondary,
+.btn-emerald,
+.btn-outline,
+.btn-ghost {
+  touch-action: manipulation;
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.btn-emerald:active,
+.btn-outline:active,
+.btn-ghost:active {
+  transform: scale(0.97);
+  opacity: 0.9;
+}
+
+/* Cards behave as tappable controls when rendered as a button/link. */
+button.card,
+a.card {
+  touch-action: manipulation;
+}
+
+button.card:active,
+a.card:active {
+  transform: scale(0.985);
+}
+
 /* ─── Status Badge ────────────────────────────────────────── */
 
 .status-badge {
@@ -240,6 +334,21 @@ body {
   font-weight: 700;
   color: var(--primary);
   line-height: 1.2;
+}
+
+/* iOS large title — big & bold on mobile, settles to normal on desktop. */
+.ios-page-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--primary);
+  line-height: 1.15;
+}
+
+@media (min-width: 768px) {
+  .ios-page-title {
+    font-size: 24px;
+  }
 }
 
 .page-subtitle {

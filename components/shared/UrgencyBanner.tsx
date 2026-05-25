@@ -52,6 +52,7 @@ export default function UrgencyBanner({
       </span>
       <button
         onClick={onAction}
+        className="pressable"
         style={{
           display: 'inline-flex',
           alignItems: 'center',

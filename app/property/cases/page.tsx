@@ -98,7 +98,7 @@ export default function PropertyCasesPage() {
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <h1 className="page-title">Cases</h1>
+                        <h1 className="ios-page-title">Cases</h1>
                         {resp && (
                             <span style={{
                                 fontSize: 12, fontWeight: 700, padding: '2px 8px',
@@ -127,6 +127,7 @@ export default function PropertyCasesPage() {
                     value={statusFilter}
                     onChange={setStatusFilter}
                     accentColor="#059669"
+                    scrollable
                 />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ position: 'relative' }}>

@@ -37,7 +37,7 @@ export default function StatsCard({
 
   return (
     <div
-      className="card"
+      className={onClick ? 'card pressable' : 'card'}
       style={{
         padding: '22px 24px',
         cursor: onClick ? 'pointer' : 'default',

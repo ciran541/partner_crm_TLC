@@ -291,6 +291,7 @@ export default function NewCasePage() {
         <div style={{ maxWidth: 640, margin: '0 auto' }}>
             <button
                 onClick={() => router.push('/property/cases')}
+                className="pressable"
                 style={{
                     display: 'flex', alignItems: 'center', gap: 6, fontSize: 13,
                     color: '#94a3b8', background: 'none', border: 'none',

@@ -12,6 +12,7 @@ interface FilterPillsProps {
   onChange: (value: string) => void;
   accentColor?: string;
   accentTextColor?: string;
+  scrollable?: boolean;
 }
 
 export default function FilterPills({
@@ -20,20 +21,30 @@ export default function FilterPills({
   onChange,
   accentColor = '#059669',
   accentTextColor = 'white',
+  scrollable = false,
 }: FilterPillsProps) {
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+    <div
+      className={scrollable ? 'scroll-x' : undefined}
+      style={{
+        display: 'flex',
+        flexWrap: scrollable ? 'nowrap' : 'wrap',
+        gap: 8,
+        paddingBottom: scrollable ? 2 : undefined,
+      }}
+    >
       {options.map((opt) => {
         const active = value === opt.value;
         return (
           <button
             key={opt.value}
             onClick={() => onChange(opt.value)}
+            className="pressable"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 5,
-              padding: '6px 14px',
+              padding: '7px 14px',
               borderRadius: 9999,
               fontSize: 13,
               fontWeight: 600,
@@ -41,8 +52,8 @@ export default function FilterPills({
               background: active ? accentColor : 'white',
               color: active ? accentTextColor : '#475569',
               cursor: 'pointer',
-              transition: 'all 0.15s ease',
               whiteSpace: 'nowrap',
+              flexShrink: 0,
             }}
           >
             {opt.label}

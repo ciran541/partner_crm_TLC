@@ -49,6 +49,7 @@ export default function InlineAlert({ type, message, onDismiss }: InlineAlertPro
       {onDismiss && (
         <button
           onClick={onDismiss}
+          className="pressable"
           style={{ background: 'none', border: 'none', cursor: 'pointer', color: text, padding: 2, opacity: 0.7, display: 'flex' }}
         >
           <X size={14} />

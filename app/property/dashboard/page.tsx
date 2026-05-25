@@ -91,7 +91,7 @@ export default function PropertyDashboardPage() {
             {/* Page header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
                 <div>
-                    <h1 style={{ fontSize: 24, fontWeight: 700, color: '#052d4a', lineHeight: 1.2 }}>{greeting}</h1>
+                    <h1 className="ios-page-title">{greeting}</h1>
                     <p style={{ fontSize: 14, color: '#64748b', marginTop: 4 }}>Here&apos;s your case and earnings overview.</p>
                 </div>
                 <button
@@ -203,12 +203,12 @@ export default function PropertyDashboardPage() {
                                             <button
                                                 key={c.id}
                                                 onClick={() => router.push(`/property/cases/${c.id}`)}
+                                                className="pressable"
                                                 style={{
                                                     display: 'flex', alignItems: 'center', gap: 12,
                                                     padding: '10px 12px', borderRadius: 10,
                                                     background: 'none', border: 'none', cursor: 'pointer',
                                                     textAlign: 'left', width: '100%',
-                                                    transition: 'background 0.15s',
                                                 }}
                                                 onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
                                                 onMouseLeave={e => (e.currentTarget.style.background = 'none')}
@@ -265,12 +265,12 @@ export default function PropertyDashboardPage() {
                                 </div>
                                 <button
                                     onClick={() => router.push('/property/cases/new')}
+                                    className="pressable"
                                     style={{
                                         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                                        width: '100%', padding: '10px 0', borderRadius: 9,
+                                        width: '100%', padding: '12px 0', borderRadius: 9,
                                         background: 'white', color: '#065f46',
                                         fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
-                                        transition: 'background 0.15s',
                                     }}
                                     onMouseEnter={e => (e.currentTarget.style.background = '#ecfdf5')}
                                     onMouseLeave={e => (e.currentTarget.style.background = 'white')}

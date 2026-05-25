@@ -341,12 +341,12 @@ export default function PropertySignup() {
     return (
         <div
             style={{
-                minHeight: '100vh',
+                minHeight: '100dvh',
                 background: 'linear-gradient(135deg, #f8fafc 0%, #ecfdf5 100%)',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
-                padding: '48px 16px',
+                padding: 'calc(48px + env(safe-area-inset-top)) 16px calc(48px + env(safe-area-inset-bottom))',
             }}
         >
             <div style={{ maxWidth: 440, width: '100%', margin: '0 auto' }}>
@@ -432,12 +432,13 @@ export default function PropertySignup() {
                                         key={key}
                                         type="button"
                                         onClick={() => setActiveModal(key)}
+                                        className="pressable"
                                         style={{
                                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                             padding: '12px 14px', borderRadius: 10,
                                             border: `1px solid ${accepted ? '#a7f3d0' : '#e2e8f0'}`,
                                             background: accepted ? '#f0fdf4' : 'white',
-                                            cursor: 'pointer', transition: 'all 0.15s',
+                                            cursor: 'pointer',
                                         }}
                                     >
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

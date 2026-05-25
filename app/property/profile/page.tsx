@@ -1,8 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { User, Shield, Phone, Building2, BadgeCheck, Mail, Calendar, Edit2, X, Check, AlertCircle } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { User, Shield, Phone, Building2, BadgeCheck, Mail, Calendar, Edit2, X, Check, AlertCircle, LogOut } from 'lucide-react'
 import { formatDate } from '@/lib/utils/formatDate'
+import { supabase } from '@/lib/supabaseClient'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 
@@ -34,6 +36,7 @@ interface FieldErrors {
 }
 
 export default function PropertyProfilePage() {
+    const router = useRouter()
     const [profile, setProfile] = useState<ProfileData | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -54,6 +57,11 @@ export default function PropertyProfilePage() {
     useEffect(() => {
         fetchProfile()
     }, [])
+
+    async function handleSignOut() {
+        await supabase.auth.signOut()
+        router.push('/property/login')
+    }
 
     async function fetchProfile() {
         setLoading(true)
@@ -285,6 +293,16 @@ export default function PropertyProfilePage() {
                     <InfoRow icon={Calendar} label="Joined" value={profile?.joined_at ? formatDate(profile.joined_at) : null} placeholder="—" />
                 </div>
             </div>
+
+            {/* Sign Out */}
+            <button
+                onClick={handleSignOut}
+                className="card pressable w-full flex items-center justify-center gap-2 font-semibold"
+                style={{ padding: '14px', color: '#dc2626', cursor: 'pointer' }}
+            >
+                <LogOut size={16} />
+                Sign Out
+            </button>
         </div>
     )
 }
@@ -292,7 +310,7 @@ export default function PropertyProfilePage() {
 function PageHeader() {
     return (
         <div>
-            <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
+            <h1 className="text-[28px] md:text-2xl font-extrabold tracking-tight text-[#052d4a] flex items-center gap-2">
                 <User size={26} color="#059669" />
                 Profile
             </h1>

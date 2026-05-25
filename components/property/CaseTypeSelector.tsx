@@ -32,7 +32,7 @@ export default function CaseTypeSelector({ value, onChange, error }: Props) {
                             key={type}
                             type="button"
                             onClick={() => onChange(type)}
-                            className={`p-4 rounded-xl border-2 text-left transition-all ${
+                            className={`pressable p-4 rounded-xl border-2 text-left transition-all ${
                                 selected
                                     ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500/20'
                                     : 'border-slate-200 bg-white hover:border-slate-300'

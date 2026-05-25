@@ -216,7 +216,7 @@ export default function EditCasePage() {
                     <ChevronLeft size={14} />
                     Back to Case
                 </button>
-                <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
+                <h1 className="text-[28px] md:text-2xl font-extrabold tracking-tight text-[#052d4a] flex items-center gap-2">
                     <Briefcase size={26} color="#059669" />
                     Edit Case
                 </h1>

@@ -50,12 +50,12 @@ export default function PropertyLogin() {
     return (
         <div
             style={{
-                minHeight: '100vh',
+                minHeight: '100dvh',
                 background: 'linear-gradient(135deg, #f8fafc 0%, #ecfdf5 100%)',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
-                padding: '48px 16px',
+                padding: 'calc(48px + env(safe-area-inset-top)) 16px calc(48px + env(safe-area-inset-bottom))',
             }}
         >
             <div style={{ maxWidth: 440, width: '100%', margin: '0 auto' }}>
