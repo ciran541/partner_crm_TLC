@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
 import { CreateUserInput } from '@/lib/types/shared'
+import { syncProfileToSheets } from '@/lib/services/sheets-sync'
 
 export async function POST(request: Request) {
     // 🔒 Server-side admin guard — verifies caller is authenticated admin
@@ -46,6 +47,21 @@ export async function POST(request: Request) {
         if (profileError) {
             return NextResponse.json({ error: 'Profile Error: ' + profileError.message }, { status: 500 })
         }
+
+        syncProfileToSheets({
+            id: authUser.user.id,
+            email: authUser.user.email ?? null,
+            full_name: null,
+            name,
+            role,
+            mobile: null,
+            cea_registration_no: null,
+            agency_name: null,
+            app_type: app_type ?? 'insurance',
+            status: 'active',
+            joined_at: authUser.user.created_at ?? null,
+            created_at: authUser.user.created_at ?? null,
+        })
 
         return NextResponse.json({ success: true, user: authUser.user })
     } catch (error: any) {

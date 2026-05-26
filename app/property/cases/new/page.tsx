@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
     Briefcase, User, Building2, FileText, StickyNote,
@@ -12,9 +12,14 @@ import DocumentUploader from '@/components/property/DocumentUploader'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
 import { calculateCommission } from '@/lib/property/commission'
+import { projectAtLockinMaturity } from '@/lib/property/amortization'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { supabase } from '@/lib/supabase/client'
 import { refreshCases } from '@/lib/property/useCases'
+import {
+    BANKER_DATA, RESIDENTIAL_PROPERTY_TYPES, COMMERCIAL_PROPERTY_TYPES,
+    FLOATING_RATE_TYPES, type CaseCategory, type FloatingRateType,
+} from '@/lib/property/bankerData'
 import type { PropertyCaseType } from '@/lib/types/property'
 
 interface FormState {
@@ -22,12 +27,22 @@ interface FormState {
     client_name: string
     client_mobile: string
     client_email: string
-    property_address: string
+    // Step 3 fields
     bank_id: string
-    interest_rate: string
-    balance_tenure_months: string
+    case_category: CaseCategory | ''
+    banker_name: string
+    property_type: string
     outstanding_loan_amount: string
+    balance_tenure_months: string
     subsidy_amount: string
+    lock_in_period: string
+    free_conversion: string
+    package_type: 'fixed' | 'floating' | ''
+    fixed_years: string
+    floating_rate_type: FloatingRateType
+    year_rates: string[]
+    letter_of_offer_date: string
+    followup_preference: 'self' | 'tlc' | ''
     notes: string
 }
 
@@ -35,13 +50,24 @@ interface FieldErrors { [key: string]: string | undefined }
 
 const INITIAL_FORM: FormState = {
     case_type: null,
-    client_name: '', client_mobile: '', client_email: '', property_address: '',
-    bank_id: '', interest_rate: '', balance_tenure_months: '',
-    outstanding_loan_amount: '', subsidy_amount: '',
+    client_name: '', client_mobile: '', client_email: '',
+    bank_id: '',
+    case_category: '',
+    banker_name: '',
+    property_type: '',
+    outstanding_loan_amount: '', balance_tenure_months: '', subsidy_amount: '',
+    lock_in_period: '', free_conversion: '',
+    package_type: '', fixed_years: '',
+    floating_rate_type: '1MSORA',
+    year_rates: [],
+    letter_of_offer_date: '',
+    followup_preference: '',
     notes: '',
 }
 
 const STEP_LABELS = ['Case Type', 'Client Info', 'Mortgage', 'Submit']
+
+// ── Shared UI primitives ──────────────────────────────────────────────────────
 
 function StepBar({ current }: { current: number }) {
     return (
@@ -122,7 +148,7 @@ function Field({ label, required = false, error, children }: {
     )
 }
 
-function Input({ value, onChange, placeholder, type = 'text', hasError = false }: {
+function TextInput({ value, onChange, placeholder, type = 'text', hasError = false }: {
     value: string; onChange: (v: string) => void; placeholder?: string; type?: string; hasError?: boolean
 }) {
     return (
@@ -149,34 +175,74 @@ function Input({ value, onChange, placeholder, type = 'text', hasError = false }
     )
 }
 
-function NavRow({ onBack, onNext, nextLabel = 'Next', loading = false }: {
-    onBack?: () => void; onNext?: () => void; nextLabel?: string; loading?: boolean
-}) {
+const selectStyle: React.CSSProperties = {
+    width: '100%', padding: '12px 14px', fontSize: 14,
+    borderRadius: 10, border: '1px solid #d1d5db',
+    background: 'white', outline: 'none', color: '#0f172a',
+    appearance: 'auto', cursor: 'pointer',
+}
+
+function SectionDivider({ label }: { label: string }) {
     return (
-        <div style={{ display: 'flex', justifyContent: onBack ? 'space-between' : 'flex-end', alignItems: 'center', marginTop: 32 }}>
-            {onBack && (
-                <button type="button" onClick={onBack} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <ChevronLeft size={15} /> Back
-                </button>
-            )}
-            {onNext && (
-                <button type="button" onClick={onNext} className="btn-emerald" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    {nextLabel} <ChevronRight size={15} />
-                </button>
-            )}
-            {!onNext && (
-                <button
-                    type="submit"
-                    disabled={loading}
-                    className="btn-emerald btn-lg"
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: loading ? 0.7 : 1 }}
-                >
-                    {loading ? <Spinner size="sm" color="white" label="Submitting…" /> : <><Check size={16} /> Submit Case</>}
-                </button>
-            )}
+        <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 20, marginTop: 20 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>
+                {label}
+            </p>
         </div>
     )
 }
+
+function PillToggle({ options, value, onChange }: {
+    options: { value: string; label: string }[]
+    value: string
+    onChange: (v: string) => void
+}) {
+    return (
+        <div style={{ display: 'flex', gap: 8 }}>
+            {options.map(opt => (
+                <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => onChange(opt.value)}
+                    style={{
+                        padding: '8px 20px', fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer',
+                        border: `1.5px solid ${value === opt.value ? '#059669' : '#e2e8f0'}`,
+                        background: value === opt.value ? '#059669' : 'white',
+                        color: value === opt.value ? 'white' : '#64748b',
+                        transition: 'all 0.15s',
+                    }}
+                >
+                    {opt.label}
+                </button>
+            ))}
+        </div>
+    )
+}
+
+function YearPills({ max, value, onChange }: { max: number; value: string; onChange: (v: string) => void }) {
+    return (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {Array.from({ length: max }, (_, i) => String(i + 1)).map(yr => (
+                <button
+                    key={yr}
+                    type="button"
+                    onClick={() => onChange(yr)}
+                    style={{
+                        width: 40, height: 36, fontSize: 13, fontWeight: 600, borderRadius: 8, cursor: 'pointer',
+                        border: `1.5px solid ${value === yr ? '#059669' : '#e2e8f0'}`,
+                        background: value === yr ? '#059669' : 'white',
+                        color: value === yr ? 'white' : '#64748b',
+                        transition: 'all 0.15s',
+                    }}
+                >
+                    {yr}
+                </button>
+            ))}
+        </div>
+    )
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function NewCasePage() {
     const router = useRouter()
@@ -186,14 +252,141 @@ export default function NewCasePage() {
     const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
     const [submitError, setSubmitError] = useState<string | null>(null)
     const [submitting, setSubmitting] = useState(false)
+    const [banks, setBanks] = useState<{ id: string; name: string }[]>([])
+
+    useEffect(() => {
+        fetch('/api/property/banks')
+            .then(r => r.json())
+            .then(d => setBanks(Array.isArray(d) ? d : (d.data ?? [])))
+            .catch(() => {})
+    }, [])
 
     function set<K extends keyof FormState>(key: K, value: FormState[K]) {
         setForm(f => ({ ...f, [key]: value }))
         setFieldErrors(e => ({ ...e, [key as string]: undefined }))
     }
 
+    function setYearRate(index: number, value: string) {
+        setForm(f => {
+            const next = [...f.year_rates]
+            next[index] = value
+            return { ...f, year_rates: next }
+        })
+    }
+
+    // ── Step 3 derived values ─────────────────────────────────────────────────
+    const bankName = banks.find(b => b.id === form.bank_id)?.name ?? ''
+    const lockInNum = parseInt(form.lock_in_period) || 0
+    const fixedYearsNum = parseInt(form.fixed_years) || 0
     const loanAmount = parseFloat(form.outstanding_loan_amount) || 0
+    const tenureMonths = parseInt(form.balance_tenure_months) || 0
     const commissionPreview = loanAmount > 0 ? calculateCommission(loanAmount) : null
+
+    // Future refinancing projection (used in Step 4)
+    const isFullyFixed = form.package_type === 'fixed' && fixedYearsNum === lockInNum && lockInNum > 0
+    const hasFloating = lockInNum > 0 && !isFullyFixed
+    const avgFixedRate = isFullyFixed && form.year_rates.length > 0
+        ? form.year_rates.reduce((s, r) => s + (parseFloat(r) || 0), 0) / form.year_rates.length
+        : 2.5
+    const futureProjection = loanAmount > 0 && lockInNum > 0 && tenureMonths > lockInNum * 12
+        ? projectAtLockinMaturity({
+            outstandingLoanAmount: loanAmount,
+            annualInterestRate: hasFloating ? 2.5 : avgFixedRate,
+            balanceTenureMonths: tenureMonths,
+            lockinMaturityMonths: lockInNum * 12,
+        })
+        : null
+
+    const maxYears = form.case_category === 'commercial' ? 3 : 5
+    const lockInOptions = Array.from({ length: maxYears }, (_, i) => String(i + 1))
+
+    const bankerList: string[] = (form.case_category && bankName)
+        ? (BANKER_DATA[bankName]?.[form.case_category as CaseCategory] ?? [])
+        : []
+
+    const propertyTypes = form.case_category === 'commercial'
+        ? COMMERCIAL_PROPERTY_TYPES
+        : RESIDENTIAL_PROPERTY_TYPES
+
+    // Progressive reveal flags
+    const showCaseCategory = !!form.bank_id
+    const showBanker = showCaseCategory && !!form.case_category
+    const showPropertyType = showBanker && !!form.banker_name
+    const showLoanFields = showPropertyType && !!form.property_type
+    const showPackage = showLoanFields && !!form.outstanding_loan_amount && !!form.balance_tenure_months && lockInNum > 0
+    const showYearRates = showPackage && (
+        form.package_type === 'floating' ||
+        (form.package_type === 'fixed' && fixedYearsNum > 0)
+    )
+    const allYearRatesFilled = form.year_rates.length === lockInNum && lockInNum > 0 && form.year_rates.every(r => r.trim() !== '')
+    const showLetterOfOffer = showYearRates && allYearRatesFilled
+    const step3Complete = showLetterOfOffer // Next button enabled once LOO section visible
+
+    // ── Handlers ──────────────────────────────────────────────────────────────
+
+    function handleBankChange(id: string) {
+        setForm(f => ({
+            ...f,
+            bank_id: id,
+            case_category: '', banker_name: '', property_type: '',
+            lock_in_period: '', free_conversion: '', package_type: '', fixed_years: '', year_rates: [],
+        }))
+    }
+
+    function handleCategoryChange(cat: string) {
+        setForm(f => ({
+            ...f,
+            case_category: cat as CaseCategory,
+            banker_name: '', property_type: '',
+            lock_in_period: '', free_conversion: '', package_type: '', fixed_years: '', year_rates: [],
+        }))
+    }
+
+    function handleBankerChange(name: string) {
+        setForm(f => ({
+            ...f,
+            banker_name: name,
+            property_type: '',
+            lock_in_period: '', free_conversion: '', package_type: '', fixed_years: '', year_rates: [],
+        }))
+    }
+
+    function handlePropertyTypeChange(pt: string) {
+        setForm(f => ({
+            ...f,
+            property_type: pt,
+            lock_in_period: '', free_conversion: '', package_type: '', fixed_years: '', year_rates: [],
+        }))
+    }
+
+    function handleLockInChange(val: string) {
+        const n = parseInt(val) || 0
+        setForm(f => ({
+            ...f,
+            lock_in_period: val,
+            package_type: '', fixed_years: '',
+            year_rates: Array(n).fill(''),
+        }))
+    }
+
+    function handlePackageTypeChange(pt: string) {
+        setForm(f => ({
+            ...f,
+            package_type: pt as 'fixed' | 'floating',
+            fixed_years: '',
+            year_rates: pt === 'floating' ? Array(lockInNum).fill('') : Array(lockInNum).fill(''),
+        }))
+    }
+
+    function handleFixedYearsChange(fy: string) {
+        setForm(f => ({ ...f, fixed_years: fy, year_rates: Array(lockInNum).fill('') }))
+    }
+
+    function handleFloatingRateTypeChange(rt: FloatingRateType) {
+        setForm(f => ({ ...f, floating_rate_type: rt }))
+    }
+
+    // ── Validation ────────────────────────────────────────────────────────────
 
     function validateStep(s: number): boolean {
         const errors: FieldErrors = {}
@@ -201,7 +394,7 @@ export default function NewCasePage() {
         if (s === 1) {
             if (!form.client_name.trim()) errors.client_name = 'Client name is required'
             if (!form.client_mobile.trim()) errors.client_mobile = 'Mobile number is required'
-            if (!form.property_address.trim()) errors.property_address = 'Property address is required'
+            if (!form.client_email.trim()) errors.client_email = 'Email is required'
         }
         setFieldErrors(errors)
         return Object.keys(errors).length === 0
@@ -217,23 +410,38 @@ export default function NewCasePage() {
         setStep(s => s - 1)
     }
 
+    // ── Submit ────────────────────────────────────────────────────────────────
+
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault()
+        if (!form.followup_preference) {
+            setSubmitError('Please select a follow-up preference before submitting.')
+            return
+        }
         setSubmitting(true)
         setSubmitError(null)
 
         try {
-            const payload = {
+            const payload: Record<string, unknown> = {
                 case_type: form.case_type!,
                 client_name: form.client_name.trim(),
                 client_mobile: form.client_mobile.trim(),
-                ...(form.client_email.trim() && { client_email: form.client_email.trim() }),
-                property_address: form.property_address.trim(),
+                client_email: form.client_email.trim(),
                 ...(form.bank_id && { bank_id: form.bank_id }),
-                ...(form.interest_rate && { interest_rate: parseFloat(form.interest_rate) }),
-                ...(form.balance_tenure_months && { balance_tenure_months: parseInt(form.balance_tenure_months, 10) }),
+                ...(form.case_category && { case_category: form.case_category }),
+                ...(form.banker_name && { banker_name: form.banker_name }),
+                ...(form.property_type && { property_type: form.property_type }),
                 ...(form.outstanding_loan_amount && { outstanding_loan_amount: parseFloat(form.outstanding_loan_amount) }),
+                ...(form.balance_tenure_months && { balance_tenure_months: parseInt(form.balance_tenure_months, 10) }),
                 ...(form.subsidy_amount && { subsidy_amount: parseFloat(form.subsidy_amount) }),
+                ...(form.lock_in_period && { lock_in_period: parseInt(form.lock_in_period, 10) }),
+                ...(form.free_conversion && { free_conversion: parseInt(form.free_conversion, 10) }),
+                ...(form.package_type && { package_type: form.package_type }),
+                ...(form.fixed_years && { fixed_years: parseInt(form.fixed_years, 10) }),
+                ...(form.floating_rate_type && { floating_rate_type: form.floating_rate_type }),
+                ...(form.year_rates.length > 0 && { year_rates: form.year_rates }),
+                ...(form.letter_of_offer_date && { letter_of_offer_date: form.letter_of_offer_date }),
+                ...(form.followup_preference && { followup_preference: form.followup_preference }),
                 ...(form.notes.trim() && { notes: form.notes.trim() }),
             }
 
@@ -267,11 +475,7 @@ export default function NewCasePage() {
                             await fetch(`/api/property/cases/${caseId}/documents`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    file_url: path,
-                                    file_name: selectedFile.name,
-                                    file_type: selectedFile.type,
-                                }),
+                                body: JSON.stringify({ file_url: path, file_name: selectedFile.name, file_type: selectedFile.type }),
                             })
                         }
                     }
@@ -280,7 +484,7 @@ export default function NewCasePage() {
                 }
             }
 
-            refreshCases() // invalidate the shared cache so the new case shows up everywhere
+            refreshCases()
             router.push(`/property/cases/${caseId}?submitted=true`)
         } catch {
             setSubmitError('An unexpected error occurred. Please try again.')
@@ -289,11 +493,12 @@ export default function NewCasePage() {
         }
     }
 
+    // ── Render ────────────────────────────────────────────────────────────────
+
     return (
         <div style={{ maxWidth: 640, margin: '0 auto' }}>
             <button
                 onClick={() => router.push('/property/cases')}
-                className="pressable"
                 style={{
                     display: 'flex', alignItems: 'center', gap: 6, fontSize: 13,
                     color: '#94a3b8', background: 'none', border: 'none',
@@ -339,7 +544,11 @@ export default function NewCasePage() {
                                 <AlertCircle size={11} />{fieldErrors.case_type}
                             </p>
                         )}
-                        <NavRow onNext={handleNext} nextLabel="Next" />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
+                            <button type="button" onClick={handleNext} className="btn-emerald" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                Next <ChevronRight size={15} />
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -350,86 +559,256 @@ export default function NewCasePage() {
                             title="Client Information" subtitle="Who is the mortgage for?" />
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
                             <Field label="Full Name" required error={fieldErrors.client_name}>
-                                <Input value={form.client_name} onChange={v => set('client_name', v)} placeholder="Jane Tan" hasError={!!fieldErrors.client_name} />
+                                <TextInput value={form.client_name} onChange={v => set('client_name', v)} placeholder="Jane Tan" hasError={!!fieldErrors.client_name} />
                             </Field>
                             <Field label="Mobile Number" required error={fieldErrors.client_mobile}>
-                                <Input value={form.client_mobile} onChange={v => set('client_mobile', v)} placeholder="+65 9123 4567" hasError={!!fieldErrors.client_mobile} />
+                                <TextInput value={form.client_mobile} onChange={v => set('client_mobile', v)} placeholder="+65 9123 4567" hasError={!!fieldErrors.client_mobile} />
                             </Field>
-                            <Field label="Email (optional)">
-                                <Input value={form.client_email} onChange={v => set('client_email', v)} placeholder="jane@email.com" type="email" />
-                            </Field>
-                            <Field label="Property Address" required error={fieldErrors.property_address}>
-                                <Input value={form.property_address} onChange={v => set('property_address', v)} placeholder="123 Orchard Road, Singapore" hasError={!!fieldErrors.property_address} />
+                            <Field label="Email" required error={fieldErrors.client_email}>
+                                <TextInput value={form.client_email} onChange={v => set('client_email', v)} placeholder="jane@email.com" type="email" hasError={!!fieldErrors.client_email} />
                             </Field>
                         </div>
-                        <NavRow onBack={handleBack} onNext={handleNext} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 28 }}>
+                            <button type="button" onClick={handleBack} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <ChevronLeft size={15} /> Back
+                            </button>
+                            <button type="button" onClick={handleNext} className="btn-emerald" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                Next <ChevronRight size={15} />
+                            </button>
+                        </div>
                     </div>
                 )}
 
-                {/* ── Step 3: Mortgage Details ── */}
+                {/* ── Step 3: Mortgage Details (Progressive Reveal) ── */}
                 {step === 2 && (
                     <div className="card" style={{ padding: 28 }}>
                         <StepHeading step={3} icon={Building2} iconBg="#fef3c7" iconColor="#d97706"
-                            title="Mortgage Details" subtitle="All fields are optional — fill what you know." />
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                            <Field label="Bank">
-                                <BankDropdown value={form.bank_id} onChange={v => set('bank_id', v)} />
-                            </Field>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                                <Field label="Interest Rate (% p.a.)">
-                                    <Input value={form.interest_rate} onChange={v => set('interest_rate', v)} placeholder="3.15" type="number" />
-                                </Field>
-                                <Field label="Balance Tenure (months)">
-                                    <Input value={form.balance_tenure_months} onChange={v => set('balance_tenure_months', v)} placeholder="240" type="number" />
-                                </Field>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                                <Field label="Outstanding Loan (S$)">
-                                    <Input value={form.outstanding_loan_amount} onChange={v => set('outstanding_loan_amount', v)} placeholder="500000" type="number" />
-                                </Field>
-                                <Field label="Subsidy Amount (S$)">
-                                    <Input value={form.subsidy_amount} onChange={v => set('subsidy_amount', v)} placeholder="2000" type="number" />
-                                </Field>
-                            </div>
-                        </div>
+                            title="Mortgage Details"
+                            subtitle="Each section opens as you complete the previous one." />
 
-                        {commissionPreview && (
-                            <div style={{
-                                marginTop: 24, borderRadius: 12,
-                                background: 'linear-gradient(135deg, #059669 0%, #065f46 100%)',
-                                padding: '20px 24px',
-                            }}>
-                                <p style={{ fontSize: 10, fontWeight: 700, color: '#a7f3d0', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 14 }}>
-                                    Estimated Commission
-                                </p>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 32px', alignItems: 'flex-end' }}>
-                                    <div>
-                                        <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 4 }}>Your Share (90%)</p>
-                                        <p style={{ fontSize: 28, fontWeight: 800, color: 'white', letterSpacing: '-0.03em', lineHeight: 1 }}>
-                                            {formatCurrency(commissionPreview.agent)}
-                                        </p>
-                                    </div>
-                                    <div>
-                                        <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 4 }}>Gross</p>
-                                        <p style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.85)', lineHeight: 1 }}>
-                                            {formatCurrency(commissionPreview.gross)}
-                                        </p>
-                                    </div>
-                                    <div>
-                                        <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 4 }}>TLC (10%)</p>
-                                        <p style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.6)', lineHeight: 1 }}>
-                                            {formatCurrency(commissionPreview.tlc)}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-                                    <CheckCircle2 size={13} color="#a7f3d0" />
-                                    <span style={{ fontSize: 12, color: '#a7f3d0' }}>Estimate based on outstanding loan amount</span>
-                                </div>
-                            </div>
+                        {/* Section A — Bank */}
+                        <Field label="Bank" required>
+                            <BankDropdown value={form.bank_id} onChange={handleBankChange} />
+                        </Field>
+
+                        {/* Section B — Case Category */}
+                        {showCaseCategory && (
+                            <>
+                                <SectionDivider label="Case Type" />
+                                <PillToggle
+                                    options={[{ value: 'residential', label: 'Residential' }, { value: 'commercial', label: 'Commercial' }]}
+                                    value={form.case_category}
+                                    onChange={handleCategoryChange}
+                                />
+                            </>
                         )}
 
-                        <NavRow onBack={handleBack} onNext={handleNext} />
+                        {/* Section C — Banker */}
+                        {showBanker && (
+                            <>
+                                <SectionDivider label="Banker" />
+                                {bankerList.length === 0 ? (
+                                    <p style={{ fontSize: 13, color: '#94a3b8', fontStyle: 'italic' }}>
+                                        No bankers listed for this bank / category combination.
+                                    </p>
+                                ) : (
+                                    <select
+                                        value={form.banker_name}
+                                        onChange={e => handleBankerChange(e.target.value)}
+                                        style={selectStyle}
+                                    >
+                                        <option value="">Select banker</option>
+                                        {bankerList.map(name => (
+                                            <option key={name} value={name}>{name}</option>
+                                        ))}
+                                    </select>
+                                )}
+                            </>
+                        )}
+
+                        {/* Section D — Property Type */}
+                        {showPropertyType && (
+                            <>
+                                <SectionDivider label="Property Type" />
+                                <select
+                                    value={form.property_type}
+                                    onChange={e => handlePropertyTypeChange(e.target.value)}
+                                    style={selectStyle}
+                                >
+                                    <option value="">Select property type</option>
+                                    {propertyTypes.map(pt => (
+                                        <option key={pt} value={pt}>{pt}</option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
+
+                        {/* Section E — Loan Fields */}
+                        {showLoanFields && (
+                            <>
+                                <SectionDivider label="Loan Details" />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                                    <Field label="Loan Amount (S$)" required>
+                                        <TextInput value={form.outstanding_loan_amount} onChange={v => set('outstanding_loan_amount', v)} placeholder="500000" type="number" />
+                                    </Field>
+                                    <Field label="Tenure (months)" required>
+                                        <TextInput value={form.balance_tenure_months} onChange={v => set('balance_tenure_months', v)} placeholder="240" type="number" />
+                                    </Field>
+                                    <Field label="Subsidy Provided (S$)">
+                                        <TextInput value={form.subsidy_amount} onChange={v => set('subsidy_amount', v)} placeholder="e.g. 2000" type="number" />
+                                    </Field>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                        <Field label="Lock-in Period" required>
+                                            <select value={form.lock_in_period} onChange={e => handleLockInChange(e.target.value)} style={selectStyle}>
+                                                <option value="">Select years</option>
+                                                {lockInOptions.map(y => (
+                                                    <option key={y} value={y}>{y} {parseInt(y) === 1 ? 'year' : 'years'}</option>
+                                                ))}
+                                            </select>
+                                        </Field>
+                                        <Field label="Free Conversion">
+                                            <select value={form.free_conversion} onChange={e => set('free_conversion', e.target.value)} style={selectStyle}>
+                                                <option value="">Select years</option>
+                                                {lockInOptions.map(y => (
+                                                    <option key={y} value={y}>{y} {parseInt(y) === 1 ? 'year' : 'years'}</option>
+                                                ))}
+                                            </select>
+                                        </Field>
+                                    </div>
+                                </div>
+
+                                {commissionPreview && (
+                                    <div style={{
+                                        marginTop: 20, borderRadius: 12,
+                                        background: 'linear-gradient(135deg, #059669 0%, #065f46 100%)',
+                                        padding: '18px 22px',
+                                    }}>
+                                        <p style={{ fontSize: 10, fontWeight: 700, color: '#a7f3d0', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 12 }}>
+                                            Estimated Commission
+                                        </p>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 28px', alignItems: 'flex-end' }}>
+                                            <div>
+                                                <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 3 }}>Your Share (90%)</p>
+                                                <p style={{ fontSize: 26, fontWeight: 800, color: 'white', letterSpacing: '-0.03em', lineHeight: 1 }}>
+                                                    {formatCurrency(commissionPreview.agent)}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 3 }}>Gross</p>
+                                                <p style={{ fontSize: 17, fontWeight: 700, color: 'rgba(255,255,255,0.85)', lineHeight: 1 }}>
+                                                    {formatCurrency(commissionPreview.gross)}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+                                            <CheckCircle2 size={12} color="#a7f3d0" />
+                                            <span style={{ fontSize: 11, color: '#a7f3d0' }}>Estimate based on loan amount</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {/* Section F — Package Details */}
+                        {showPackage && (
+                            <>
+                                <SectionDivider label="Package Details" />
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                                    <div>
+                                        <p style={{ fontSize: 12, color: '#64748b', marginBottom: 8, fontWeight: 500 }}>Package Type</p>
+                                        <PillToggle
+                                            options={[{ value: 'fixed', label: 'Fixed' }, { value: 'floating', label: 'Floating' }]}
+                                            value={form.package_type}
+                                            onChange={handlePackageTypeChange}
+                                        />
+                                    </div>
+
+                                    {form.package_type === 'fixed' && (
+                                        <div>
+                                            <p style={{ fontSize: 12, color: '#64748b', marginBottom: 8, fontWeight: 500 }}>
+                                                Fixed for how many years?
+                                            </p>
+                                            <YearPills max={lockInNum} value={form.fixed_years} onChange={handleFixedYearsChange} />
+                                        </div>
+                                    )}
+
+                                    {/* Year-by-year rate rows */}
+                                    {showYearRates && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                            <p style={{ fontSize: 12, color: '#64748b', fontWeight: 500 }}>Interest Rates by Year</p>
+                                            {Array.from({ length: lockInNum }, (_, i) => {
+                                                const isFixed = i < fixedYearsNum
+                                                return (
+                                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                                        <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', width: 44, flexShrink: 0 }}>
+                                                            Yr {i + 1}
+                                                        </span>
+                                                        <div style={{ position: 'relative', flex: 1 }}>
+                                                            <input
+                                                                type="number"
+                                                                value={form.year_rates[i] ?? ''}
+                                                                onChange={e => setYearRate(i, e.target.value)}
+                                                                placeholder="0.00"
+                                                                style={{
+                                                                    width: '100%', padding: '10px 14px', paddingRight: 36,
+                                                                    fontSize: 14, borderRadius: 8,
+                                                                    border: '1px solid #d1d5db', outline: 'none', color: '#0f172a',
+                                                                }}
+                                                                onFocus={e => { e.target.style.borderColor = '#059669'; e.target.style.boxShadow = '0 0 0 3px rgba(5,150,105,0.12)' }}
+                                                                onBlur={e => { e.target.style.borderColor = '#d1d5db'; e.target.style.boxShadow = 'none' }}
+                                                            />
+                                                            <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: '#94a3b8', fontWeight: 600 }}>%</span>
+                                                        </div>
+                                                        {isFixed ? (
+                                                            <span style={{ fontSize: 12, fontWeight: 700, color: '#052d4a', width: 100, flexShrink: 0 }}>Fixed</span>
+                                                        ) : (
+                                                            <select
+                                                                value={form.floating_rate_type}
+                                                                onChange={e => handleFloatingRateTypeChange(e.target.value as FloatingRateType)}
+                                                                style={{ ...selectStyle, width: 110, flexShrink: 0, padding: '10px 10px', fontSize: 12 }}
+                                                            >
+                                                                {FLOATING_RATE_TYPES.map(rt => (
+                                                                    <option key={rt} value={rt}>{rt}</option>
+                                                                ))}
+                                                            </select>
+                                                        )}
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+
+                        {/* Section G — Date of Letter of Offer */}
+                        {showLetterOfOffer && (
+                            <>
+                                <SectionDivider label="Letter of Offer" />
+                                <Field label="Date of Letter of Offer">
+                                    <input
+                                        type="date"
+                                        value={form.letter_of_offer_date}
+                                        onChange={e => set('letter_of_offer_date', e.target.value)}
+                                        style={{ ...selectStyle }}
+                                        onFocus={e => { e.target.style.borderColor = '#059669'; e.target.style.boxShadow = '0 0 0 3px rgba(5,150,105,0.12)' }}
+                                        onBlur={e => { e.target.style.borderColor = '#d1d5db'; e.target.style.boxShadow = 'none' }}
+                                    />
+                                </Field>
+                            </>
+                        )}
+
+                        {/* Nav */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 32 }}>
+                            <button type="button" onClick={handleBack} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <ChevronLeft size={15} /> Back
+                            </button>
+                            {step3Complete && (
+                                <button type="button" onClick={handleNext} className="btn-emerald" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    Next <ChevronRight size={15} />
+                                </button>
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -437,26 +816,204 @@ export default function NewCasePage() {
                 {step === 3 && (
                     <div className="card" style={{ padding: 28 }}>
                         <StepHeading step={4} icon={FileText} iconBg="#f5f3ff" iconColor="#7c3aed"
-                            title="Review & Submit" subtitle="Check your details, attach a document, then submit." />
+                            title="Review & Submit" subtitle="Confirm your details, choose your follow-up preference, then submit." />
 
-                        {/* Summary of previous steps */}
-                        <div style={{ background: '#f8fafc', borderRadius: 10, padding: '14px 18px', marginBottom: 24 }}>
-                            <p style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>Summary</p>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                                <SummaryRow label="Case Type" value={form.case_type ?? '—'} />
-                                <SummaryRow label="Client" value={form.client_name || '—'} />
-                                <SummaryRow label="Mobile" value={form.client_mobile || '—'} />
-                                {form.property_address && <SummaryRow label="Property" value={form.property_address} />}
-                                {form.outstanding_loan_amount && (
-                                    <SummaryRow label="Loan Amount" value={`S$${parseInt(form.outstanding_loan_amount).toLocaleString()}`} />
+                        {/* ── Client Details ── */}
+                        <SummarySection title="Client Details">
+                            <SummaryRow label="Name" value={form.client_name || '—'} />
+                            <SummaryRow label="Mobile" value={form.client_mobile || '—'} />
+                            <SummaryRow label="Email" value={form.client_email || '—'} />
+                        </SummarySection>
+
+                        {/* ── Bank & Banker Details ── */}
+                        <SummarySection title="Bank & Banker Details">
+                            <SummaryRow label="Case Type (Step 1)" value={form.case_type ? form.case_type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : '—'} />
+                            {bankName && <SummaryRow label="Bank" value={bankName} />}
+                            {form.case_category && <SummaryRow label="Category" value={form.case_category === 'residential' ? 'Residential' : 'Commercial'} />}
+                            {form.banker_name && <SummaryRow label="Banker" value={form.banker_name} />}
+                            {form.property_type && <SummaryRow label="Property Type" value={form.property_type} />}
+                        </SummarySection>
+
+                        {/* ── Package Details ── */}
+                        <SummarySection title="Package Details">
+                            {form.outstanding_loan_amount && (
+                                <SummaryRow label="Loan Amount" value={`S$${parseInt(form.outstanding_loan_amount).toLocaleString()}`} />
+                            )}
+                            {form.balance_tenure_months && <SummaryRow label="Tenure" value={`${form.balance_tenure_months} months`} />}
+                            {form.subsidy_amount && <SummaryRow label="Subsidy" value={`S$${parseInt(form.subsidy_amount).toLocaleString()}`} />}
+                            {form.lock_in_period && <SummaryRow label="Lock-in Period" value={`${form.lock_in_period} ${form.lock_in_period === '1' ? 'year' : 'years'}`} />}
+                            {form.free_conversion && <SummaryRow label="Free Conversion" value={`${form.free_conversion} ${form.free_conversion === '1' ? 'year' : 'years'}`} />}
+                            {form.package_type && (
+                                <SummaryRow label="Package Type" value={form.package_type === 'fixed' ? `Fixed (${form.fixed_years} yr fixed)` : 'Floating'} />
+                            )}
+                            {form.year_rates.length > 0 && form.year_rates.map((r, i) => {
+                                const isFixed = i < fixedYearsNum
+                                return (
+                                    <SummaryRow
+                                        key={i}
+                                        label={`Year ${i + 1}`}
+                                        value={isFixed ? `${r}% Fixed` : `${r}% + ${form.floating_rate_type}`}
+                                    />
+                                )
+                            })}
+                            {form.letter_of_offer_date && (
+                                <SummaryRow label="Letter of Offer" value={new Date(form.letter_of_offer_date).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })} />
+                            )}
+                        </SummarySection>
+
+                        {/* ── Current Commission ── */}
+                        {commissionPreview && (
+                            <div style={{
+                                marginTop: 4, marginBottom: 20,
+                                borderRadius: 12,
+                                background: 'linear-gradient(135deg, #059669 0%, #065f46 100%)',
+                                padding: '20px 24px',
+                            }}>
+                                <p style={{ fontSize: 10, fontWeight: 700, color: '#a7f3d0', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 14 }}>
+                                    Indicative Commission Payable
+                                </p>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 32px', alignItems: 'flex-end', marginBottom: 14 }}>
+                                    <div>
+                                        <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 3 }}>Your Share (90%)</p>
+                                        <p style={{ fontSize: 28, fontWeight: 800, color: 'white', letterSpacing: '-0.03em', lineHeight: 1 }}>
+                                            {formatCurrency(commissionPreview.agent)}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 3 }}>Gross (0.15% × loan)</p>
+                                        <p style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.85)', lineHeight: 1 }}>
+                                            {formatCurrency(commissionPreview.gross)}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p style={{ fontSize: 10, color: '#6ee7b7', marginBottom: 3 }}>TLC (10%)</p>
+                                        <p style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.6)', lineHeight: 1 }}>
+                                            {formatCurrency(commissionPreview.tlc)}
+                                        </p>
+                                    </div>
+                                </div>
+                                <p style={{ fontSize: 12, color: '#a7f3d0', fontStyle: 'italic' }}>
+                                    If the bank will be paying a different % of revenue, highlight to us in the notes below.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* ── Future Potential Commission ── */}
+                        {futureProjection && (
+                            <div style={{
+                                marginBottom: 20, borderRadius: 12,
+                                border: '1.5px solid #e0f2fe',
+                                background: '#f0f9ff',
+                                padding: '20px 24px',
+                            }}>
+                                <p style={{ fontSize: 10, fontWeight: 700, color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 14 }}>
+                                    Future Potential Commission (Refinancing)
+                                </p>
+                                {hasFloating && (
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 14, padding: '10px 12px', background: '#fff7ed', borderRadius: 8, border: '1px solid #fed7aa' }}>
+                                        <span style={{ fontSize: 14 }}>⚠️</span>
+                                        <p style={{ fontSize: 12, color: '#9a3412', lineHeight: 1.5 }}>
+                                            As this package includes a floating rate, we use <strong>2.5% p.a.</strong> as a rough example to derive the estimated outstanding loan after lock-in.
+                                        </p>
+                                    </div>
                                 )}
-                                {commissionPreview && (
-                                    <SummaryRow label="Est. Commission" value={formatCurrency(commissionPreview.agent)} highlight />
+                                {!hasFloating && (
+                                    <p style={{ fontSize: 12, color: '#0369a1', marginBottom: 14 }}>
+                                        Based on your {form.lock_in_period}-year fixed package at an average of {avgFixedRate.toFixed(2)}% p.a.
+                                    </p>
                                 )}
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 32px', alignItems: 'flex-end', marginBottom: 12 }}>
+                                    <div>
+                                        <p style={{ fontSize: 11, color: '#0369a1', marginBottom: 3 }}>Est. Remaining Balance</p>
+                                        <p style={{ fontSize: 22, fontWeight: 800, color: '#0c4a6e', letterSpacing: '-0.02em', lineHeight: 1 }}>
+                                            {formatCurrency(futureProjection.projectedRemainingBalance)}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p style={{ fontSize: 11, color: '#0369a1', marginBottom: 3 }}>Gross Commission (0.15%)</p>
+                                        <p style={{ fontSize: 17, fontWeight: 700, color: '#0c4a6e', lineHeight: 1 }}>
+                                            {formatCurrency(futureProjection.projectedGrossCommission)}
+                                        </p>
+                                    </div>
+                                </div>
+                                {form.followup_preference && (
+                                    <div style={{ borderTop: '1px solid #bae6fd', paddingTop: 12, marginTop: 4 }}>
+                                        <p style={{ fontSize: 11, color: '#0369a1', marginBottom: 4 }}>Your Share ({form.followup_preference === 'self' ? '90%' : '30%'})</p>
+                                        <p style={{ fontSize: 20, fontWeight: 800, color: '#059669', letterSpacing: '-0.02em' }}>
+                                            {formatCurrency(futureProjection.projectedGrossCommission * (form.followup_preference === 'self' ? 0.9 : 0.3))}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* ── Follow-up Preference ── */}
+                        <div style={{ marginBottom: 24 }}>
+                            <p style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>Follow-up Preference</p>
+                            <p style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>
+                                How would you like to handle client follow-up at the end of the lock-in period?
+                            </p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {[
+                                    {
+                                        value: 'self',
+                                        title: 'I will follow up with this client myself',
+                                        subtitle: 'TLC will send me a reminder at the end of the lock-in period.',
+                                        split: '90% to you / 10% to TLC',
+                                        splitColor: '#059669',
+                                    },
+                                    {
+                                        value: 'tlc',
+                                        title: 'I will inform the client that TLC will be following up',
+                                        subtitle: 'TLC will contact the client directly at the end of the lock-in period.',
+                                        split: '30% to you / 70% to TLC',
+                                        splitColor: '#0284c7',
+                                    },
+                                ].map(opt => {
+                                    const selected = form.followup_preference === opt.value
+                                    return (
+                                        <button
+                                            key={opt.value}
+                                            type="button"
+                                            onClick={() => set('followup_preference', opt.value as 'self' | 'tlc')}
+                                            style={{
+                                                textAlign: 'left', padding: '16px 18px', borderRadius: 10, cursor: 'pointer',
+                                                border: `2px solid ${selected ? '#059669' : '#e2e8f0'}`,
+                                                background: selected ? '#f0fdf4' : 'white',
+                                                transition: 'all 0.15s', display: 'block', width: '100%',
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                                                <div style={{ flex: 1 }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                                        <div style={{
+                                                            width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
+                                                            border: `2px solid ${selected ? '#059669' : '#d1d5db'}`,
+                                                            background: selected ? '#059669' : 'white',
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        }}>
+                                                            {selected && <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'white' }} />}
+                                                        </div>
+                                                        <p style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>{opt.title}</p>
+                                                    </div>
+                                                    <p style={{ fontSize: 12, color: '#64748b', paddingLeft: 24 }}>{opt.subtitle}</p>
+                                                </div>
+                                                <span style={{
+                                                    fontSize: 11, fontWeight: 700, color: opt.splitColor,
+                                                    background: selected ? (opt.value === 'self' ? '#dcfce7' : '#e0f2fe') : '#f8fafc',
+                                                    border: `1px solid ${selected ? opt.splitColor + '40' : '#e2e8f0'}`,
+                                                    padding: '3px 10px', borderRadius: 20, whiteSpace: 'nowrap', flexShrink: 0,
+                                                }}>
+                                                    {opt.split}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    )
+                                })}
                             </div>
                         </div>
 
-                        {/* Document upload */}
+                        {/* ── Document upload ── */}
                         <div style={{ marginBottom: 24 }}>
                             <p style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
                                 Document <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 400 }}>(optional)</span>
@@ -465,7 +1022,7 @@ export default function NewCasePage() {
                             <DocumentUploader onFileSelect={setSelectedFile} selectedFile={selectedFile} />
                         </div>
 
-                        {/* Notes */}
+                        {/* ── Notes ── */}
                         <div style={{ marginBottom: 8 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
                                 <StickyNote size={14} color="#94a3b8" />
@@ -483,8 +1040,7 @@ export default function NewCasePage() {
                                     width: '100%', padding: '12px 14px', fontSize: 14,
                                     borderRadius: 10, border: '1px solid #d1d5db',
                                     background: 'white', outline: 'none', resize: 'none',
-                                    color: '#0f172a', transition: 'border-color 0.15s',
-                                    fontFamily: 'inherit',
+                                    color: '#0f172a', fontFamily: 'inherit',
                                 }}
                                 onFocus={e => { e.target.style.borderColor = '#059669'; e.target.style.boxShadow = '0 0 0 3px rgba(5,150,105,0.12)' }}
                                 onBlur={e => { e.target.style.borderColor = '#d1d5db'; e.target.style.boxShadow = 'none' }}
@@ -492,7 +1048,19 @@ export default function NewCasePage() {
                             <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 5, textAlign: 'right' }}>{form.notes.length}/500</p>
                         </div>
 
-                        <NavRow onBack={handleBack} loading={submitting} />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 24 }}>
+                            <button type="button" onClick={handleBack} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <ChevronLeft size={15} /> Back
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={submitting || !form.followup_preference}
+                                className="btn-emerald btn-lg"
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: (submitting || !form.followup_preference) ? 0.5 : 1 }}
+                            >
+                                {submitting ? <Spinner size="sm" color="white" label="Submitting…" /> : <><Check size={16} /> Submit Case</>}
+                            </button>
+                        </div>
                         <p style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', marginTop: 14 }}>
                             Our team will review your case within 1–2 business days.
                         </p>
@@ -503,10 +1071,23 @@ export default function NewCasePage() {
     )
 }
 
+function SummarySection({ title, children }: { title: string; children: React.ReactNode }) {
+    return (
+        <div style={{ marginBottom: 20 }}>
+            <p style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+                {title}
+            </p>
+            <div style={{ background: '#f8fafc', borderRadius: 10, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {children}
+            </div>
+        </div>
+    )
+}
+
 function SummaryRow({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
     return (
         <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-            <span style={{ fontSize: 12, color: '#64748b', minWidth: 110 }}>{label}</span>
+            <span style={{ fontSize: 12, color: '#64748b', minWidth: 130 }}>{label}</span>
             <span style={{ fontSize: 12, fontWeight: highlight ? 700 : 600, color: highlight ? '#059669' : '#0f172a' }}>{value}</span>
         </div>
     )

@@ -54,7 +54,8 @@ export interface PropertyCase {
     outstanding_loan_amount?: number
     subsidy_amount?: number
 
-    // Lock-in (confirmed by admin only)
+    // Lock-in
+    lock_in_period?: number | null
     lockin_confirmed_date?: string
 
     // Commission
@@ -74,6 +75,11 @@ export interface PropertyCase {
     actual_recurring_agent_income?: number
     actual_recurring_tlc_income?: number
     recurring_converted: boolean
+
+    // Follow-up
+    followup_preference?: 'self' | 'tlc' | null
+    follow_up_date?: string | null
+    followup_completed_at?: string | null
 
     // Ops
     is_duplicate: boolean

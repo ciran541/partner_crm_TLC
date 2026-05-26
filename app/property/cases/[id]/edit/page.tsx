@@ -18,7 +18,6 @@ interface FormState {
     client_name: string
     client_mobile: string
     client_email: string
-    property_address: string
     bank_id: string
     interest_rate: string
     balance_tenure_months: string
@@ -107,7 +106,6 @@ export default function EditCasePage() {
                     client_name: c.client_name ?? '',
                     client_mobile: c.client_mobile ?? '',
                     client_email: c.client_email ?? '',
-                    property_address: c.property_address ?? '',
                     bank_id: c.bank_id ?? '',
                     interest_rate: c.interest_rate != null ? String(c.interest_rate) : '',
                     balance_tenure_months: c.balance_tenure_months != null ? String(c.balance_tenure_months) : '',
@@ -134,7 +132,6 @@ export default function EditCasePage() {
         if (!form.case_type) errors.case_type = 'Please select a case type'
         if (!form.client_name.trim()) errors.client_name = 'Client name is required'
         if (!form.client_mobile.trim()) errors.client_mobile = 'Client mobile is required'
-        if (!form.property_address.trim()) errors.property_address = 'Property address is required'
         setFieldErrors(errors)
         return Object.keys(errors).length === 0
     }
@@ -152,7 +149,6 @@ export default function EditCasePage() {
                 client_name: form.client_name.trim(),
                 client_mobile: form.client_mobile.trim(),
                 client_email: form.client_email.trim() || null,
-                property_address: form.property_address.trim(),
                 bank_id: form.bank_id || null,
                 interest_rate: form.interest_rate ? parseFloat(form.interest_rate) : null,
                 balance_tenure_months: form.balance_tenure_months ? parseInt(form.balance_tenure_months, 10) : null,
@@ -260,9 +256,6 @@ export default function EditCasePage() {
                         </Field>
                         <Field label="Email (optional)">
                             <Input value={form.client_email} onChange={v => set('client_email', v)} placeholder="jane@email.com" type="email" />
-                        </Field>
-                        <Field label="Property Address" required error={fieldErrors.property_address}>
-                            <Input value={form.property_address} onChange={v => set('property_address', v)} placeholder="123 Orchard Road, Singapore" hasError={!!fieldErrors.property_address} />
                         </Field>
                     </div>
                 </div>

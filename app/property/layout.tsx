@@ -13,11 +13,13 @@ import {
     Bell,
     User,
     LogOut,
+    Clock,
 } from 'lucide-react'
 
 const navItems = [
     { name: 'Dashboard', href: '/property/dashboard', icon: LayoutDashboard },
     { name: 'Cases', href: '/property/cases', icon: Briefcase },
+    { name: 'Follow Up', href: '/property/followup', icon: Clock },
     { name: 'Earnings', href: '/property/earnings', icon: DollarSign },
     { name: 'Notifications', href: '/property/notifications', icon: Bell },
     { name: 'Profile', href: '/property/profile', icon: User },

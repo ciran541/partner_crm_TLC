@@ -3,7 +3,8 @@ import { formatCurrency } from '@/lib/utils/formatCurrency'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-const FROM = process.env.RESEND_FROM_EMAIL ?? 'TLC <noreply@tlcmortgage.sg>'
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? 'noreply@tlcmortgage.sg'
+const FROM = `The Loan Connection <${FROM_EMAIL}>`
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://property.tlcmortgage.sg'
 
 interface OpportunityAlertParams {

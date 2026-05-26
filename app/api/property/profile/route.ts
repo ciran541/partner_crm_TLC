@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 import type { UpdatePropertyProfileInput } from '@/lib/types/property'
+import { syncProfileToSheets } from '@/lib/services/sheets-sync'
 
 export async function GET() {
     const auth = await requirePropertyUser()
@@ -73,6 +74,21 @@ export async function POST(request: Request) {
     }
 
     const { data: authUser } = await admin.auth.admin.getUserById(auth.userId)
+
+    syncProfileToSheets({
+        id: updated.id,
+        email: authUser?.user?.email ?? null,
+        full_name: updated.full_name ?? null,
+        name: updated.name ?? null,
+        role: updated.role,
+        mobile: updated.mobile ?? null,
+        cea_registration_no: updated.cea_registration_no ?? null,
+        agency_name: updated.agency_name ?? null,
+        app_type: updated.app_type,
+        status: updated.status,
+        joined_at: updated.joined_at ?? null,
+        created_at: updated.created_at ?? null,
+    })
 
     return NextResponse.json({
         data: {

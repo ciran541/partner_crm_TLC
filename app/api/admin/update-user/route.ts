@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
 import { UpdateUserInput } from '@/lib/types/shared'
+import { syncProfileToSheets } from '@/lib/services/sheets-sync'
 
 export async function POST(request: Request) {
     // 🔒 Server-side admin guard — verifies caller is authenticated admin
@@ -37,6 +38,31 @@ export async function POST(request: Request) {
         if (name || role) {
             await supabaseAdmin.auth.admin.updateUserById(id, {
                 user_metadata: { name, role },
+            })
+        }
+
+        const [{ data: profile }, { data: authUser }] = await Promise.all([
+            supabaseAdmin.from('profiles')
+                .select('id, name, role, full_name, mobile, cea_registration_no, agency_name, app_type, status, joined_at, created_at')
+                .eq('id', id)
+                .single(),
+            supabaseAdmin.auth.admin.getUserById(id),
+        ])
+
+        if (profile) {
+            syncProfileToSheets({
+                id: profile.id,
+                email: authUser.user?.email ?? null,
+                full_name: profile.full_name ?? null,
+                name: profile.name ?? null,
+                role: profile.role,
+                mobile: profile.mobile ?? null,
+                cea_registration_no: profile.cea_registration_no ?? null,
+                agency_name: profile.agency_name ?? null,
+                app_type: profile.app_type,
+                status: profile.status,
+                joined_at: profile.joined_at ?? null,
+                created_at: profile.created_at ?? null,
             })
         }
 

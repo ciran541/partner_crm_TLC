@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 import { isAdmin } from '@/lib/permissions'
+import { syncDocumentToDrive } from '@/lib/services/drive-sync'
 
 export async function POST(
     request: Request,
@@ -15,7 +16,7 @@ export async function POST(
 
     const { data: caseData } = await admin
         .from('property_cases')
-        .select('agent_id')
+        .select('agent_id, client_name')
         .eq('id', caseId)
         .single()
 
@@ -56,6 +57,20 @@ export async function POST(
     if (error || !doc) {
         console.error('Document insert error:', error)
         return NextResponse.json({ error: 'Failed to save document' }, { status: 500 })
+    }
+
+    const { data: signed } = await admin.storage
+        .from('property-documents')
+        .createSignedUrl(file_url, 3600)
+
+    if (signed?.signedUrl) {
+        syncDocumentToDrive({
+            signedUrl: signed.signedUrl,
+            file_name,
+            file_type,
+            case_id: caseId,
+            client_name: (caseData as { client_name: string }).client_name,
+        })
     }
 
     return NextResponse.json({ data: doc }, { status: 201 })

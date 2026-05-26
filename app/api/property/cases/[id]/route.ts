@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 import { calculateCommission } from '@/lib/property/commission'
 import { projectAtLockinMaturity } from '@/lib/property/amortization'
+import { syncCaseToSheets } from '@/lib/services/sheets-sync'
 
 export async function GET(
     _request: Request,
@@ -148,6 +149,49 @@ export async function PATCH(
         actor_id: auth.userId,
         action: 'agent_edit',
         new_value: update,
+    })
+
+    const { data: agentProfile } = await admin
+        .from('profiles')
+        .select('full_name, name')
+        .eq('id', auth.userId)
+        .single()
+
+    const u = updated as Record<string, unknown>
+    syncCaseToSheets({
+        id: u.id as string,
+        agent_id: u.agent_id as string,
+        agent_name: agentProfile?.full_name ?? agentProfile?.name ?? null,
+        case_type: u.case_type as string,
+        status: u.status as string,
+        client_name: u.client_name as string,
+        client_mobile: u.client_mobile as string,
+        client_email: (u.client_email as string | null) ?? null,
+        property_address: (u.property_address as string | null) ?? '',
+        bank_name: (u.banks as { name: string } | null)?.name ?? null,
+        interest_rate: (u.interest_rate as number | null) ?? null,
+        balance_tenure_months: (u.balance_tenure_months as number | null) ?? null,
+        outstanding_loan_amount: (u.outstanding_loan_amount as number | null) ?? null,
+        subsidy_amount: (u.subsidy_amount as number | null) ?? null,
+        lockin_estimated_date: (u.lockin_estimated_date as string | null) ?? null,
+        lockin_confirmed_date: (u.lockin_confirmed_date as string | null) ?? null,
+        gross_commission_amount: (u.gross_commission_amount as number | null) ?? null,
+        agent_commission_amount: (u.agent_commission_amount as number | null) ?? null,
+        tlc_commission_amount: (u.tlc_commission_amount as number | null) ?? null,
+        commission_status: (u.commission_status as string) ?? 'pending',
+        projected_remaining_balance: (u.projected_remaining_balance as number | null) ?? null,
+        projected_gross_commission: (u.projected_gross_commission as number | null) ?? null,
+        projected_agent_income: (u.projected_agent_income as number | null) ?? null,
+        projected_tlc_income: (u.projected_tlc_income as number | null) ?? null,
+        actual_recurring_gross: (u.actual_recurring_gross as number | null) ?? null,
+        actual_recurring_agent_income: (u.actual_recurring_agent_income as number | null) ?? null,
+        actual_recurring_tlc_income: (u.actual_recurring_tlc_income as number | null) ?? null,
+        recurring_converted: (u.recurring_converted as boolean) ?? false,
+        is_duplicate: (u.is_duplicate as boolean) ?? false,
+        duplicate_reason: (u.duplicate_reason as string | null) ?? null,
+        notes: (u.notes as string | null) ?? null,
+        created_at: u.created_at as string,
+        updated_at: u.updated_at as string,
     })
 
     return NextResponse.json({ data: updated })

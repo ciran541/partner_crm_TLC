@@ -199,7 +199,6 @@ export default function PropertyEarningsPage() {
                                                         >
                                                             <td className="table-td">
                                                                 <p style={{ fontWeight: 600, color: '#0f172a' }}>{c.client_name}</p>
-                                                                <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{c.property_address}</p>
                                                             </td>
                                                             <td className="table-td" style={{ color: '#475569' }}>{CASE_TYPE_LABELS[c.case_type]}</td>
                                                             <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>

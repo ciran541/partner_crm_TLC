@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import {
     ArrowLeft, AlertCircle, Check, User, Phone, Mail,
-    MapPin, Building2, Percent, BadgeCheck, Calendar,
+    Building2, Percent, BadgeCheck, Calendar,
     FileText, DollarSign, TrendingUp, Activity, Pencil, Plus,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
@@ -299,7 +299,6 @@ function CaseDetailContent() {
                     <InfoRow icon={User} label="Full Name" value={caseData.client_name} />
                     <InfoRow icon={Phone} label="Mobile" value={caseData.client_mobile} />
                     {caseData.client_email && <InfoRow icon={Mail} label="Email" value={caseData.client_email} />}
-                    <InfoRow icon={MapPin} label="Property Address" value={caseData.property_address} />
                 </div>
             </Section>
 
@@ -328,7 +327,7 @@ function CaseDetailContent() {
                 {hasProjection && (
                     <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #f1f5f9' }}>
                         <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <TrendingUp size={12} /> Projected at Lock-in Maturity (24 months)
+                            <TrendingUp size={12} /> Projected at Lock-in Maturity{caseData.lock_in_period ? ` (${caseData.lock_in_period}yr lock-in)` : ''}
                         </p>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
                             {[

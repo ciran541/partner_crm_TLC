@@ -4,6 +4,7 @@ import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 import { calculateCommission } from '@/lib/property/commission'
 import { projectAtLockinMaturity } from '@/lib/property/amortization'
 import type { CreatePropertyCaseInput } from '@/lib/types/property'
+import { syncCaseToSheets } from '@/lib/services/sheets-sync'
 
 export async function GET(request: Request) {
     const auth = await requirePropertyUser()
@@ -82,17 +83,25 @@ export async function POST(request: Request) {
         case_type, client_name, client_mobile, client_email,
         property_address, bank_id, interest_rate, balance_tenure_months,
         outstanding_loan_amount, subsidy_amount, notes,
-    } = body
+        followup_preference, letter_of_offer_date, lock_in_period,
+    } = body as Record<string, unknown> & typeof body
+
+    const year_rates = (body as any).year_rates as string[] | undefined
 
     const errors: Record<string, string> = {}
     if (!case_type) errors.case_type = 'Case type is required'
     if (!client_name?.trim()) errors.client_name = 'Client name is required'
     if (!client_mobile?.trim()) errors.client_mobile = 'Client mobile is required'
-    if (!property_address?.trim()) errors.property_address = 'Property address is required'
 
     if (Object.keys(errors).length > 0) {
         return NextResponse.json({ error: 'Validation failed', fields: errors }, { status: 400 })
     }
+
+    // Derive a single interest rate: prefer explicit value, fall back to first year rate
+    const derived_interest_rate: number | undefined =
+        interest_rate != null
+            ? Number(interest_rate)
+            : (year_rates && year_rates.length > 0 ? parseFloat(year_rates[0]) || undefined : undefined)
 
     const commissionData: Record<string, number> = {}
     if (outstanding_loan_amount) {
@@ -102,17 +111,29 @@ export async function POST(request: Request) {
         commissionData.tlc_commission_amount = c.tlc
     }
 
+    const lockInPeriodNum = lock_in_period ? Number(lock_in_period) : undefined
+
     const projectionData: Record<string, number> = {}
-    if (outstanding_loan_amount && interest_rate && balance_tenure_months) {
+    if (outstanding_loan_amount && derived_interest_rate && balance_tenure_months) {
         const p = projectAtLockinMaturity({
             outstandingLoanAmount: outstanding_loan_amount,
-            annualInterestRate: interest_rate,
+            annualInterestRate: derived_interest_rate,
             balanceTenureMonths: balance_tenure_months,
+            ...(lockInPeriodNum ? { lockinMaturityMonths: lockInPeriodNum * 12 } : {}),
         })
         projectionData.projected_remaining_balance = p.projectedRemainingBalance
         projectionData.projected_gross_commission = p.projectedGrossCommission
         projectionData.projected_agent_income = p.projectedAgentIncome
         projectionData.projected_tlc_income = p.projectedTlcIncome
+    }
+
+    // Compute follow-up date: LOO + lock_in_years − 2 months
+    let follow_up_date: string | null = null
+    if (letter_of_offer_date && lock_in_period) {
+        const d = new Date(letter_of_offer_date as string)
+        d.setFullYear(d.getFullYear() + Number(lock_in_period))
+        d.setMonth(d.getMonth() - 2)
+        follow_up_date = d.toISOString().split('T')[0]
     }
 
     const { data: newCase, error: insertError } = await admin
@@ -124,13 +145,16 @@ export async function POST(request: Request) {
             client_name: client_name.trim(),
             client_mobile: client_mobile.trim(),
             client_email: client_email?.trim() || null,
-            property_address: property_address.trim(),
+            property_address: property_address?.trim() || null,
             bank_id: bank_id || null,
-            interest_rate: interest_rate ?? null,
+            interest_rate: derived_interest_rate ?? null,
+            lock_in_period: lockInPeriodNum ?? null,
             balance_tenure_months: balance_tenure_months ?? null,
             outstanding_loan_amount: outstanding_loan_amount ?? null,
             subsidy_amount: subsidy_amount ?? null,
             notes: notes?.trim() || null,
+            followup_preference: (followup_preference as string) || null,
+            follow_up_date,
             ...commissionData,
             ...projectionData,
         })
@@ -147,6 +171,49 @@ export async function POST(request: Request) {
         actor_id: auth.userId,
         action: 'case_submitted',
         new_value: { status: 'submitted', case_type },
+    })
+
+    const { data: agentProfile } = await admin
+        .from('profiles')
+        .select('full_name, name')
+        .eq('id', auth.userId)
+        .single()
+
+    const c = newCase as Record<string, unknown>
+    syncCaseToSheets({
+        id: newCase.id,
+        agent_id: newCase.agent_id,
+        agent_name: agentProfile?.full_name ?? agentProfile?.name ?? null,
+        case_type: newCase.case_type,
+        status: newCase.status,
+        client_name: newCase.client_name,
+        client_mobile: newCase.client_mobile,
+        client_email: (c.client_email as string | null) ?? null,
+        property_address: (c.property_address as string | null) ?? '',
+        bank_name: (newCase.banks as { name: string } | null)?.name ?? null,
+        interest_rate: (c.interest_rate as number | null) ?? null,
+        balance_tenure_months: (c.balance_tenure_months as number | null) ?? null,
+        outstanding_loan_amount: (c.outstanding_loan_amount as number | null) ?? null,
+        subsidy_amount: (c.subsidy_amount as number | null) ?? null,
+        lockin_estimated_date: (c.lockin_estimated_date as string | null) ?? null,
+        lockin_confirmed_date: (c.lockin_confirmed_date as string | null) ?? null,
+        gross_commission_amount: (c.gross_commission_amount as number | null) ?? null,
+        agent_commission_amount: (c.agent_commission_amount as number | null) ?? null,
+        tlc_commission_amount: (c.tlc_commission_amount as number | null) ?? null,
+        commission_status: (c.commission_status as string) ?? 'pending',
+        projected_remaining_balance: (c.projected_remaining_balance as number | null) ?? null,
+        projected_gross_commission: (c.projected_gross_commission as number | null) ?? null,
+        projected_agent_income: (c.projected_agent_income as number | null) ?? null,
+        projected_tlc_income: (c.projected_tlc_income as number | null) ?? null,
+        actual_recurring_gross: (c.actual_recurring_gross as number | null) ?? null,
+        actual_recurring_agent_income: (c.actual_recurring_agent_income as number | null) ?? null,
+        actual_recurring_tlc_income: (c.actual_recurring_tlc_income as number | null) ?? null,
+        recurring_converted: (c.recurring_converted as boolean) ?? false,
+        is_duplicate: (c.is_duplicate as boolean) ?? false,
+        duplicate_reason: (c.duplicate_reason as string | null) ?? null,
+        notes: (c.notes as string | null) ?? null,
+        created_at: newCase.created_at,
+        updated_at: newCase.updated_at,
     })
 
     return NextResponse.json({ data: newCase }, { status: 201 })
