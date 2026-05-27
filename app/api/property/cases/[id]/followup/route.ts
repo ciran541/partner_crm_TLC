@@ -4,12 +4,12 @@ import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 
 export async function PATCH(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     const auth = await requirePropertyUser()
     if (!auth.authorized) return auth.response
 
-    const { id } = params
+    const { id } = await params
     const admin = createAdminClient()
 
     // Verify the agent owns this case
