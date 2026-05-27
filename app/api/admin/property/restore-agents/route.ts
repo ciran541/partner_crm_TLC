@@ -94,11 +94,12 @@ export async function POST(request: Request) {
             }
 
             // Re-map all cases from old ID to new ID
-            const { count: casesUpdated } = await admin
+            const { data: remappedCases } = await admin
                 .from('property_cases')
                 .update({ agent_id: newId })
                 .eq('agent_id', agent.old_id)
-                .select('id', { count: 'exact', head: true })
+                .select('id')
+            const casesUpdated = remappedCases?.length ?? 0
 
             // Upsert profile with new ID — restores all saved details
             await admin.from('profiles').upsert({
