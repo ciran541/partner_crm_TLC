@@ -31,6 +31,10 @@ export default function AdminUsersPage() {
 
     const [editForm, setEditForm] = useState<UpdateUserInput>({ id: '', name: '', role: 'agent' })
 
+    const [isResetOpen, setIsResetOpen] = useState(false)
+    const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null)
+    const [resetPassword, setResetPassword] = useState('')
+
     useEffect(() => {
         checkAdminAndLoad()
     }, [])
@@ -81,6 +85,31 @@ export default function AdminUsersPage() {
                 setCreateForm({ email: '', name: '', role: 'agent', app_type: 'insurance', password: '' })
                 setPageAlert({ type: 'success', message: 'User created successfully.' })
                 loadProfiles()
+            }
+        } catch {
+            setPageAlert({ type: 'error', message: 'An unexpected error occurred.' })
+        }
+        setIsSubmitting(false)
+    }
+
+    const handleResetPassword = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!resetTarget) return
+        setIsSubmitting(true)
+        try {
+            const res = await fetch('/api/admin/reset-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: resetTarget.id, password: resetPassword }),
+            })
+            const data = await res.json()
+            if (!res.ok) {
+                setPageAlert({ type: 'error', message: data.error || 'Failed to reset password.' })
+            } else {
+                setIsResetOpen(false)
+                setResetPassword('')
+                setResetTarget(null)
+                setPageAlert({ type: 'success', message: `Password reset for ${resetTarget.name}.` })
             }
         } catch {
             setPageAlert({ type: 'error', message: 'An unexpected error occurred.' })
@@ -235,16 +264,29 @@ export default function AdminUsersPage() {
                                         </div>
                                     </td>
                                     <td className="p-4 text-right">
-                                        <button
-                                            onClick={() => {
-                                                setEditForm({ id: p.id, name: p.name || '', role: p.role })
-                                                setIsEditOpen(true)
-                                            }}
-                                            className="p-2 text-slate-400 hover:text-[#8b5cf6] hover:bg-purple-50 rounded-lg transition-all"
-                                            title="Edit User"
-                                        >
-                                            <Edit2 size={16} />
-                                        </button>
+                                        <div className="flex items-center justify-end gap-1">
+                                            <button
+                                                onClick={() => {
+                                                    setResetTarget({ id: p.id, name: p.name || p.email || 'User' })
+                                                    setResetPassword('')
+                                                    setIsResetOpen(true)
+                                                }}
+                                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                                                title="Reset Password"
+                                            >
+                                                <Lock size={16} />
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    setEditForm({ id: p.id, name: p.name || '', role: p.role })
+                                                    setIsEditOpen(true)
+                                                }}
+                                                className="p-2 text-slate-400 hover:text-[#8b5cf6] hover:bg-purple-50 rounded-lg transition-all"
+                                                title="Edit User"
+                                            >
+                                                <Edit2 size={16} />
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
@@ -305,6 +347,38 @@ export default function AdminUsersPage() {
                             <button type="button" onClick={() => setIsCreateOpen(false)} className="btn-ghost px-6 py-2">Cancel</button>
                             <button type="submit" disabled={isSubmitting} className="btn-primary px-6 py-2 flex items-center gap-2">
                                 {isSubmitting ? <Spinner size="sm" color="white" label="Creating…" /> : 'Create User'}
+                            </button>
+                        </div>
+                    </form>
+                </Modal>
+            )}
+
+            {/* Reset Password Modal */}
+            {isResetOpen && resetTarget && (
+                <Modal title="Reset Password" onClose={() => { setIsResetOpen(false); setResetPassword('') }}>
+                    <form onSubmit={handleResetPassword} className="space-y-4">
+                        <p className="text-sm text-slate-600">
+                            Set a new temporary password for <span className="font-semibold text-slate-900">{resetTarget.name}</span>. Share it with them securely — they should change it after logging in.
+                        </p>
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">New Password</label>
+                            <div className="relative">
+                                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    required
+                                    type="text"
+                                    minLength={6}
+                                    className="w-full p-2.5 pl-10 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-amber-400/20 text-sm"
+                                    value={resetPassword}
+                                    onChange={e => setResetPassword(e.target.value)}
+                                    placeholder="Min. 6 characters"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                            <button type="button" onClick={() => { setIsResetOpen(false); setResetPassword('') }} className="btn-ghost px-6 py-2">Cancel</button>
+                            <button type="submit" disabled={isSubmitting} className="px-6 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold flex items-center gap-2 transition-colors">
+                                {isSubmitting ? <Spinner size="sm" color="white" label="Resetting…" /> : 'Reset Password'}
                             </button>
                         </div>
                     </form>

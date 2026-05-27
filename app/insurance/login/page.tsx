@@ -120,7 +120,12 @@ export default function InsuranceLogin() {
                         </div>
 
                         <div>
-                            <label className="form-label">Password</label>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                <label className="form-label" style={{ margin: 0 }}>Password</label>
+                                <Link href="/insurance/forgot-password" style={{ fontSize: 13, color: '#03a9e7', fontWeight: 500, textDecoration: 'none' }}>
+                                    Forgot password?
+                                </Link>
+                            </div>
                             <div style={{ position: 'relative' }}>
                                 <Lock
                                     size={16}

@@ -12,7 +12,7 @@
 | All property cases (34 fields) | Google Sheets → "Property Cases" tab | Automated via `restoreToApp()` |
 | Agent profiles | Google Sheets → "Agent Profiles" tab | Automated via `restoreAgents()` |
 | Uploaded documents (PDFs) | Google Drive → `Property CRM Backup/Cases/` | Manual re-upload |
-| Database schema | `supabase/schema/full_current_schema.sql` | Run in SQL Editor |
+| Database schema | `supabase/migrations/` folder in this repo | `supabase db push` |
 | Activity logs | ❌ Not backed up | Audit trail only — not restorable |
 | Reminders | ❌ Not backed up | Regenerate from lock-in dates |
 
@@ -25,7 +25,7 @@ Before starting, confirm you have access to:
 - [ ] Google account that owns the Apps Script Web App and the backup Google Sheet
 - [ ] The `APPS_SCRIPT_SECRET` value (stored in Vercel environment variables or `.env.local`)
 - [ ] The Apps Script Web App URL (`GOOGLE_APPS_SCRIPT_URL`)
-- [ ] This repository (for the schema SQL file)
+- [ ] This repository (cloned locally, with Supabase CLI installed)
 - [ ] Vercel account (to update environment variables after creating new Supabase project)
 
 ---
@@ -36,19 +36,25 @@ Before starting, confirm you have access to:
 2. Choose a region close to your users
 3. Save the **database password** somewhere safe
 4. Wait for the project to finish provisioning (~2 minutes)
-5. Copy the new **Project URL** and **anon key** from Settings → API
+5. Copy the new **Project Reference ID** from Settings → General
 
 ---
 
 ## Step 2 — Restore the Database Schema
 
-1. In the new Supabase project, open **SQL Editor**
-2. Open `supabase/schema/full_current_schema.sql` from this repository
-3. Copy the entire file contents
-4. Paste into SQL Editor → click **Run**
-5. If prompted about RLS: click **"Run without RLS"** (the script sets up RLS separately)
+The entire schema is tracked as migration files in `supabase/migrations/`. One command recreates all tables, enums, and foreign keys on the new project.
 
-This creates all tables, enums, foreign keys, indexes, and RLS policies — the full structure of the original database.
+```bash
+# Link your local repo to the new Supabase project
+npx supabase link --project-ref <new-project-ref>
+
+# Apply all migrations — recreates the full DB structure
+npx supabase db push
+```
+
+That's it. All tables, columns, enums, and foreign keys are created automatically in the correct order.
+
+> **No Docker required.** `supabase db push` connects directly via the connection pooler — no local Supabase stack needed.
 
 ---
 
@@ -60,8 +66,8 @@ Update these values everywhere they are used:
 Go to Vercel → Your Project → Settings → Environment Variables and update:
 
 ```
-NEXT_PUBLIC_SUPABASE_URL        ← new project URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY   ← new anon key
+NEXT_PUBLIC_SUPABASE_URL        ← new project URL (Settings → API)
+NEXT_PUBLIC_SUPABASE_ANON_KEY   ← new anon key (Settings → API)
 SUPABASE_SERVICE_ROLE_KEY       ← new service role key (Settings → API → service_role)
 ```
 
@@ -172,29 +178,38 @@ Run through this checklist to confirm everything is working:
 | Step | Time |
 |------|------|
 | New Supabase project | ~5 minutes |
-| Schema restore | ~2 minutes |
+| Schema restore (`supabase db push`) | ~1 minute |
 | Env vars + redeploy | ~5 minutes |
 | Case restore (100 cases) | ~1 minute |
 | Agent re-registration | depends on agents |
 | Agent UUID re-map | ~1 minute |
 | Document re-upload | varies |
-| **Total (excluding agents)** | **~15 minutes** |
+| **Total (excluding agents)** | **~13 minutes** |
 
 ---
 
-## Keeping the Schema Backup Current
+## Making DB Changes Going Forward
 
-The file `supabase/schema/full_current_schema.sql` must be updated whenever the database structure changes (new columns, new tables, new enums).
+**Always use migrations — never change the DB directly in Supabase SQL Editor.**
 
-**When to update it:**
-- After running any migration that adds/removes columns or tables
-- After adding new enum values in Supabase
+```bash
+# 1. Create a new migration file
+npx supabase migration new describe_your_change
 
-**How to update it:**
-1. Open Supabase SQL Editor on the live project
-2. Run the introspection queries used to generate the original file (see git history of `full_current_schema.sql`)
-3. Replace the file contents with the new output
-4. Commit to the repository
+# 2. Write your SQL in the generated file
+#    supabase/migrations/<timestamp>_describe_your_change.sql
+
+# 3. Push it to the live DB
+npx supabase db push
+
+# 4. Commit the migration file to git
+git add supabase/migrations/
+git commit -m "add migration: describe your change"
+```
+
+This keeps the `supabase/migrations/` folder and the live DB permanently in sync. Any future DB restore is just `supabase link` + `supabase db push`.
+
+> If you ever make a change directly in SQL Editor by mistake, run `npm run sync-schema` to capture the current state, then manually create a migration file from the diff so the repo stays accurate.
 
 ---
 
@@ -205,5 +220,5 @@ The file `supabase/schema/full_current_schema.sql` must be updated whenever the 
 | Backup Google Sheet | Check `GOOGLE_APPS_SCRIPT_URL` env var for the script, then open the parent spreadsheet |
 | Google Drive backup | Google Drive → `Property CRM Backup/` |
 | Apps Script | Google Sheet → Extensions → Apps Script |
-| Schema file | `supabase/schema/full_current_schema.sql` |
+| Migration files | `supabase/migrations/` |
 | Restore endpoints | `app/api/admin/property/restore-from-sheets/route.ts`, `app/api/admin/property/restore-agents/route.ts` |

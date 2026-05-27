@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { User, Shield, Phone, Building2, BadgeCheck, Mail, Calendar, Edit2, X, Check, AlertCircle, LogOut } from 'lucide-react'
+import { User, Shield, Phone, Building2, BadgeCheck, Mail, Calendar, Edit2, X, Check, AlertCircle, LogOut, Lock, ChevronDown } from 'lucide-react'
 import { formatDate } from '@/lib/utils/formatDate'
 import { supabase } from '@/lib/supabaseClient'
 import Spinner from '@/components/shared/Spinner'
@@ -53,6 +53,12 @@ export default function PropertyProfilePage() {
         cea_registration_no: '',
         agency_name: '',
     })
+
+    const [changingPassword, setChangingPassword] = useState(false)
+    const [pwSaving, setPwSaving] = useState(false)
+    const [pwError, setPwError] = useState<string | null>(null)
+    const [pwSuccess, setPwSuccess] = useState(false)
+    const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
 
     useEffect(() => {
         fetchProfile()
@@ -140,6 +146,30 @@ export default function PropertyProfilePage() {
         }
     }
 
+    async function handleChangePassword(e: React.FormEvent) {
+        e.preventDefault()
+        setPwError(null)
+        if (pwForm.next.length < 6) { setPwError('New password must be at least 6 characters.'); return }
+        if (pwForm.next !== pwForm.confirm) { setPwError('New passwords do not match.'); return }
+
+        setPwSaving(true)
+        // Verify current password by re-authenticating
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+            email: profile?.email ?? '',
+            password: pwForm.current,
+        })
+        if (signInError) { setPwError('Current password is incorrect.'); setPwSaving(false); return }
+
+        const { error: updateError } = await supabase.auth.updateUser({ password: pwForm.next })
+        setPwSaving(false)
+        if (updateError) { setPwError(updateError.message); return }
+
+        setPwForm({ current: '', next: '', confirm: '' })
+        setChangingPassword(false)
+        setPwSuccess(true)
+        setTimeout(() => setPwSuccess(false), 4000)
+    }
+
     const displayName = profile?.full_name || profile?.name || profile?.email?.split('@')[0] || 'Agent'
     const initials = displayName.charAt(0).toUpperCase()
 
@@ -173,6 +203,9 @@ export default function PropertyProfilePage() {
 
             {saveSuccess && (
                 <InlineAlert type="success" message="Profile updated successfully." onDismiss={() => setSaveSuccess(false)} />
+            )}
+            {pwSuccess && (
+                <InlineAlert type="success" message="Password changed successfully." onDismiss={() => setPwSuccess(false)} />
             )}
 
             {/* Profile Header Card */}
@@ -294,6 +327,73 @@ export default function PropertyProfilePage() {
                 </div>
             </div>
 
+            {/* Change Password */}
+            <div className="card overflow-hidden">
+                <button
+                    onClick={() => { setChangingPassword(v => !v); setPwError(null); setPwForm({ current: '', next: '', confirm: '' }) }}
+                    className="w-full flex items-center justify-between p-6 text-left hover:bg-slate-50 transition-colors"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center">
+                            <Lock size={15} color="#64748b" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-slate-800">Change Password</p>
+                            <p className="text-xs text-slate-400 mt-0.5">Update your login password</p>
+                        </div>
+                    </div>
+                    <ChevronDown
+                        size={18}
+                        color="#94a3b8"
+                        style={{ transform: changingPassword ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
+                    />
+                </button>
+
+                {changingPassword && (
+                    <form onSubmit={handleChangePassword} className="px-6 pb-6 space-y-4 border-t border-slate-100 pt-5">
+                        {pwError && (
+                            <InlineAlert type="error" message={pwError} onDismiss={() => setPwError(null)} />
+                        )}
+                        <PasswordField
+                            label="Current Password"
+                            value={pwForm.current}
+                            onChange={v => setPwForm(f => ({ ...f, current: v }))}
+                            placeholder="Enter your current password"
+                        />
+                        <PasswordField
+                            label="New Password"
+                            value={pwForm.next}
+                            onChange={v => setPwForm(f => ({ ...f, next: v }))}
+                            placeholder="At least 6 characters"
+                        />
+                        <PasswordField
+                            label="Confirm New Password"
+                            value={pwForm.confirm}
+                            onChange={v => setPwForm(f => ({ ...f, confirm: v }))}
+                            placeholder="Re-enter new password"
+                        />
+                        <div className="flex gap-3 pt-1">
+                            <button
+                                type="submit"
+                                disabled={pwSaving}
+                                className="btn-emerald flex items-center gap-2 text-sm px-5 py-2.5"
+                                style={{ opacity: pwSaving ? 0.7 : 1 }}
+                            >
+                                {pwSaving ? <Spinner size="sm" color="white" label="Saving…" /> : <><Check size={14} /> Update Password</>}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setChangingPassword(false); setPwError(null) }}
+                                disabled={pwSaving}
+                                className="btn-ghost text-sm px-4 py-2.5"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                )}
+            </div>
+
             {/* Sign Out */}
             <button
                 onClick={handleSignOut}
@@ -345,6 +445,32 @@ function InfoRow({
                     <p className={`text-sm ${highlight ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>{placeholder}</p>
                 )}
             </div>
+        </div>
+    )
+}
+
+function PasswordField({
+    label,
+    value,
+    onChange,
+    placeholder,
+}: {
+    label: string
+    value: string
+    onChange: (v: string) => void
+    placeholder?: string
+}) {
+    return (
+        <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}</label>
+            <input
+                type="password"
+                required
+                value={value}
+                onChange={e => onChange(e.target.value)}
+                placeholder={placeholder}
+                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 transition-colors"
+            />
         </div>
     )
 }
