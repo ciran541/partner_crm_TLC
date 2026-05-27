@@ -39,6 +39,15 @@ export async function POST(request: Request) {
 
     const admin = createAdminClient()
 
+    // Load all auth users once — used to look up by email for each agent
+    const { data: allUsersData, error: listError } = await admin.auth.admin.listUsers({ perPage: 1000 })
+    if (listError) {
+        return NextResponse.json({ error: 'Failed to list auth users: ' + listError.message }, { status: 500 })
+    }
+    const authUsersByEmail = new Map(
+        (allUsersData?.users ?? []).map(u => [u.email?.toLowerCase(), u])
+    )
+
     const results: {
         email: string | null
         old_id: string
@@ -56,16 +65,16 @@ export async function POST(request: Request) {
         }
 
         try {
-            // Find the agent's new UUID by email in Supabase Auth
-            const { data: authUser, error: authError } = await admin.auth.admin.getUserByEmail(agent.email)
+            // Find the agent's new UUID by email
+            const matchedUser = authUsersByEmail.get(agent.email.toLowerCase())
 
-            if (authError || !authUser?.user) {
+            if (!matchedUser) {
                 // Agent hasn't re-registered yet
                 results.push({ email: agent.email, old_id: agent.old_id, new_id: null, cases_updated: 0, status: 'not_registered' })
                 continue
             }
 
-            const newId = authUser.user.id
+            const newId = matchedUser.id
 
             if (newId === agent.old_id) {
                 // UUID didn't change — nothing to remap, just ensure profile data is up to date
