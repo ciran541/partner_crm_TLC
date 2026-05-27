@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { User, Shield, Phone, Building2, BadgeCheck, Mail, Calendar, Edit2, X, Check, AlertCircle, LogOut, Lock, ChevronDown, CalendarCheck, CalendarX } from 'lucide-react'
 import { formatDate } from '@/lib/utils/formatDate'
@@ -36,6 +36,14 @@ interface FieldErrors {
 }
 
 export default function PropertyProfilePage() {
+    return (
+        <Suspense fallback={<div className="space-y-6"><PageHeader /><div className="card p-8 flex items-center justify-center"><span className="text-slate-400 text-sm">Loading…</span></div></div>}>
+            <PropertyProfileContent />
+        </Suspense>
+    )
+}
+
+function PropertyProfileContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const [profile, setProfile] = useState<ProfileData | null>(null)
