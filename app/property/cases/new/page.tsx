@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
     Briefcase, User, Building2, FileText, StickyNote,
@@ -322,6 +322,28 @@ export default function NewCasePage() {
     const showLetterOfOffer = showYearRates && allYearRatesFilled
     const step3Complete = showLetterOfOffer // Next button enabled once LOO section visible
 
+    // ── Scroll refs ──────────────────────────────────────────────────────────
+    const refFormTop       = useRef<HTMLDivElement>(null)
+    const refCaseCategory  = useRef<HTMLDivElement>(null)
+    const refBanker        = useRef<HTMLDivElement>(null)
+    const refPropertyType  = useRef<HTMLDivElement>(null)
+    const refLoanFields    = useRef<HTMLDivElement>(null)
+    const refPackage       = useRef<HTMLDivElement>(null)
+    const refLetterOfOffer = useRef<HTMLDivElement>(null)
+
+    function scrollTo(ref: React.RefObject<HTMLDivElement | null>) {
+        requestAnimationFrame(() => {
+            ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        })
+    }
+
+    useEffect(() => { if (showCaseCategory)  scrollTo(refCaseCategory)  }, [showCaseCategory])
+    useEffect(() => { if (showBanker)        scrollTo(refBanker)        }, [showBanker])
+    useEffect(() => { if (showPropertyType)  scrollTo(refPropertyType)  }, [showPropertyType])
+    useEffect(() => { if (showLoanFields)    scrollTo(refLoanFields)    }, [showLoanFields])
+    useEffect(() => { if (showPackage)       scrollTo(refPackage)       }, [showPackage])
+    useEffect(() => { if (showLetterOfOffer) scrollTo(refLetterOfOffer) }, [showLetterOfOffer])
+
     // ── Handlers ──────────────────────────────────────────────────────────────
 
     function handleBankChange(id: string) {
@@ -403,11 +425,13 @@ export default function NewCasePage() {
     function handleNext() {
         if (!validateStep(step)) return
         setStep(s => s + 1)
+        scrollTo(refFormTop)
     }
 
     function handleBack() {
         setFieldErrors({})
         setStep(s => s - 1)
+        scrollTo(refFormTop)
     }
 
     // ── Submit ────────────────────────────────────────────────────────────────
@@ -496,7 +520,7 @@ export default function NewCasePage() {
     // ── Render ────────────────────────────────────────────────────────────────
 
     return (
-        <div style={{ maxWidth: 640, margin: '0 auto' }}>
+        <div ref={refFormTop} style={{ maxWidth: 640, margin: '0 auto' }}>
             <button
                 onClick={() => router.push('/property/cases')}
                 style={{
@@ -593,19 +617,19 @@ export default function NewCasePage() {
 
                         {/* Section B — Case Category */}
                         {showCaseCategory && (
-                            <>
+                            <div ref={refCaseCategory} style={{ scrollMarginTop: 16 }}>
                                 <SectionDivider label="Case Type" />
                                 <PillToggle
                                     options={[{ value: 'residential', label: 'Residential' }, { value: 'commercial', label: 'Commercial' }]}
                                     value={form.case_category}
                                     onChange={handleCategoryChange}
                                 />
-                            </>
+                            </div>
                         )}
 
                         {/* Section C — Banker */}
                         {showBanker && (
-                            <>
+                            <div ref={refBanker} style={{ scrollMarginTop: 16 }}>
                                 <SectionDivider label="Banker" />
                                 {bankerList.length === 0 ? (
                                     <p style={{ fontSize: 13, color: '#94a3b8', fontStyle: 'italic' }}>
@@ -623,12 +647,12 @@ export default function NewCasePage() {
                                         ))}
                                     </select>
                                 )}
-                            </>
+                            </div>
                         )}
 
                         {/* Section D — Property Type */}
                         {showPropertyType && (
-                            <>
+                            <div ref={refPropertyType} style={{ scrollMarginTop: 16 }}>
                                 <SectionDivider label="Property Type" />
                                 <select
                                     value={form.property_type}
@@ -640,12 +664,12 @@ export default function NewCasePage() {
                                         <option key={pt} value={pt}>{pt}</option>
                                     ))}
                                 </select>
-                            </>
+                            </div>
                         )}
 
                         {/* Section E — Loan Fields */}
                         {showLoanFields && (
-                            <>
+                            <div ref={refLoanFields} style={{ scrollMarginTop: 16 }}>
                                 <SectionDivider label="Loan Details" />
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                                     <Field label="Loan Amount (S$)" required>
@@ -706,12 +730,12 @@ export default function NewCasePage() {
                                         </div>
                                     </div>
                                 )}
-                            </>
+                            </div>
                         )}
 
                         {/* Section F — Package Details */}
                         {showPackage && (
-                            <>
+                            <div ref={refPackage} style={{ scrollMarginTop: 16 }}>
                                 <SectionDivider label="Package Details" />
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                                     <div>
@@ -778,12 +802,12 @@ export default function NewCasePage() {
                                         </div>
                                     )}
                                 </div>
-                            </>
+                            </div>
                         )}
 
                         {/* Section G — Date of Letter of Offer */}
                         {showLetterOfOffer && (
-                            <>
+                            <div ref={refLetterOfOffer} style={{ scrollMarginTop: 16 }}>
                                 <SectionDivider label="Letter of Offer" />
                                 <Field label="Date of Letter of Offer">
                                     <input
@@ -795,7 +819,7 @@ export default function NewCasePage() {
                                         onBlur={e => { e.target.style.borderColor = '#d1d5db'; e.target.style.boxShadow = 'none' }}
                                     />
                                 </Field>
-                            </>
+                            </div>
                         )}
 
                         {/* Nav */}

@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { User, Shield, Phone, Building2, BadgeCheck, Mail, Calendar, Edit2, X, Check, AlertCircle, LogOut, Lock, ChevronDown } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { User, Shield, Phone, Building2, BadgeCheck, Mail, Calendar, Edit2, X, Check, AlertCircle, LogOut, Lock, ChevronDown, CalendarCheck, CalendarX } from 'lucide-react'
 import { formatDate } from '@/lib/utils/formatDate'
 import { supabase } from '@/lib/supabaseClient'
 import Spinner from '@/components/shared/Spinner'
@@ -37,6 +37,7 @@ interface FieldErrors {
 
 export default function PropertyProfilePage() {
     const router = useRouter()
+    const searchParams = useSearchParams()
     const [profile, setProfile] = useState<ProfileData | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -60,13 +61,66 @@ export default function PropertyProfilePage() {
     const [pwSuccess, setPwSuccess] = useState(false)
     const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
 
+    // Google Calendar integration state
+    const [calendarConnected, setCalendarConnected] = useState(false)
+    const [calendarLoading, setCalendarLoading] = useState(false)
+    const [calendarSuccess, setCalendarSuccess] = useState<string | null>(null)
+    const [calendarError, setCalendarError] = useState<string | null>(null)
+
     useEffect(() => {
         fetchProfile()
+        fetchCalendarStatus()
+
+        // Handle redirect back from Google OAuth
+        const cal = searchParams.get('calendar')
+        const calErr = searchParams.get('calendar_error')
+        if (cal === 'connected') {
+            setCalendarSuccess('Google Calendar connected successfully! Follow-up dates will now appear in your calendar.')
+            // Clean up URL params
+            router.replace('/property/profile')
+        } else if (calErr) {
+            const msgs: Record<string, string> = {
+                access_denied: 'You denied calendar access. Connect again to enable sync.',
+                token_exchange: 'Failed to complete Google authorisation. Please try again.',
+                no_code: 'Google did not return an authorisation code. Please try again.',
+            }
+            setCalendarError(msgs[calErr] ?? 'Google Calendar connection failed. Please try again.')
+            router.replace('/property/profile')
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     async function handleSignOut() {
         await supabase.auth.signOut()
         router.push('/property/login')
+    }
+
+    async function fetchCalendarStatus() {
+        try {
+            const res = await fetch('/api/property/google/status')
+            if (res.ok) {
+                const json = await res.json()
+                setCalendarConnected(json.connected ?? false)
+            }
+        } catch {
+            // non-critical — silently ignore
+        }
+    }
+
+    async function handleDisconnectCalendar() {
+        setCalendarLoading(true)
+        setCalendarError(null)
+        try {
+            const res = await fetch('/api/property/google/disconnect', { method: 'POST' })
+            if (!res.ok) throw new Error('Disconnect failed')
+            setCalendarConnected(false)
+            setCalendarSuccess('Google Calendar disconnected.')
+            setTimeout(() => setCalendarSuccess(null), 4000)
+        } catch {
+            setCalendarError('Failed to disconnect. Please try again.')
+        } finally {
+            setCalendarLoading(false)
+        }
     }
 
     async function fetchProfile() {
@@ -207,6 +261,12 @@ export default function PropertyProfilePage() {
             {pwSuccess && (
                 <InlineAlert type="success" message="Password changed successfully." onDismiss={() => setPwSuccess(false)} />
             )}
+            {calendarSuccess && (
+                <InlineAlert type="success" message={calendarSuccess} onDismiss={() => setCalendarSuccess(null)} />
+            )}
+            {calendarError && (
+                <InlineAlert type="error" message={calendarError} onDismiss={() => setCalendarError(null)} />
+            )}
 
             {/* Profile Header Card */}
             <div className="card p-6">
@@ -324,6 +384,52 @@ export default function PropertyProfilePage() {
                     <InfoRow icon={Mail} label="Email" value={profile?.email} />
                     <InfoRow icon={Shield} label="Role" value={profile?.role === 'super_admin' ? 'Super Admin' : profile?.role === 'admin' ? 'Admin' : 'Property Agent'} />
                     <InfoRow icon={Calendar} label="Joined" value={profile?.joined_at ? formatDate(profile.joined_at) : null} placeholder="—" />
+                </div>
+            </div>
+
+            {/* Integrations */}
+            <div className="card p-6 space-y-4">
+                <h3 className="section-label">Integrations</h3>
+
+                <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: '#f0fdf4' }}>
+                            {calendarConnected
+                                ? <CalendarCheck size={15} color="#059669" />
+                                : <CalendarX size={15} color="#94a3b8" />
+                            }
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-slate-800">Google Calendar</p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                                {calendarConnected
+                                    ? 'Connected — follow-up dates sync to your calendar automatically.'
+                                    : 'Connect to auto-add follow-up dates to your Google Calendar.'
+                                }
+                            </p>
+                        </div>
+                    </div>
+
+                    {calendarConnected ? (
+                        <button
+                            onClick={handleDisconnectCalendar}
+                            disabled={calendarLoading}
+                            className="shrink-0 flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 transition-colors border border-red-200 rounded-lg px-3 py-2 hover:bg-red-50"
+                            style={{ opacity: calendarLoading ? 0.6 : 1 }}
+                        >
+                            {calendarLoading ? <Spinner size="sm" color="#dc2626" label="" /> : <X size={13} />}
+                            Disconnect
+                        </button>
+                    ) : (
+                        <a
+                            href="/api/property/google/auth"
+                            className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2 transition-colors"
+                            style={{ background: '#059669' }}
+                        >
+                            <CalendarCheck size={14} />
+                            Connect
+                        </a>
+                    )}
                 </div>
             </div>
 

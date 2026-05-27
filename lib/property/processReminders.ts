@@ -1,5 +1,4 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { sendOpportunityAlert } from '@/lib/email/sendOpportunityAlert'
 import { sendFollowUpReminder } from '@/lib/email/sendFollowUpReminder'
 
 export interface ProcessResult {
@@ -61,28 +60,6 @@ export async function processReminders(): Promise<ProcessResult> {
                 result.errors.push(`Case ${reminder.case_id}: ${updateError.message}`)
             } else {
                 result.caseStatusUpdated++
-
-                // Fetch agent email from auth.users via admin API
-                const { data: { user: agentUser } } = await admin.auth.admin.getUserById(caseRow.agent_id)
-
-                if (agentUser?.email) {
-                    const profile = caseRow.profiles as unknown as { full_name?: string; name?: string }
-                    const agentName = profile?.full_name || profile?.name || 'Agent'
-
-                    try {
-                        await sendOpportunityAlert({
-                            agentEmail: agentUser.email,
-                            agentName,
-                            clientName: caseRow.client_name,
-                            caseId: caseRow.id,
-                            projectedAgentIncome: caseRow.projected_agent_income,
-                            lockinConfirmedDate: caseRow.lockin_confirmed_date,
-                        })
-                        result.emailsSent++
-                    } catch (emailErr) {
-                        result.errors.push(`Email for case ${reminder.case_id}: ${String(emailErr)}`)
-                    }
-                }
             }
 
             // Mark reminder as sent regardless of email outcome

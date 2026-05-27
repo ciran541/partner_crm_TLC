@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
+import { syncFollowUpToCalendar } from '@/lib/google/syncFollowUp'
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
 
 export async function PATCH(
     request: Request,
@@ -12,10 +15,10 @@ export async function PATCH(
     const { id } = await params
     const admin = createAdminClient()
 
-    // Verify the agent owns this case
+    // Verify the agent owns this case; also fetch fields needed for calendar sync
     const { data: existing } = await admin
         .from('property_cases')
-        .select('agent_id')
+        .select('agent_id, followup_preference, follow_up_date, client_name')
         .eq('id', id)
         .single()
 
@@ -49,6 +52,21 @@ export async function PATCH(
         console.error('Follow-up PATCH error:', error)
         return NextResponse.json({ error: 'Failed to update follow-up' }, { status: 500 })
     }
+
+    // Sync Google Calendar (non-blocking — errors never surface to agent)
+    const preference = existing.followup_preference as 'self' | 'tlc' | null
+    const newDate = body.follow_up_date ?? existing.follow_up_date
+    const action = body.completed ? 'delete' : 'upsert'
+
+    syncFollowUpToCalendar(
+        auth.userId,
+        id,
+        preference,
+        action,
+        newDate,
+        existing.client_name,
+        `${APP_URL}/property/cases/${id}`
+    ).catch(err => console.error('[Calendar sync] followup patch:', err))
 
     return NextResponse.json({ success: true })
 }

@@ -5,6 +5,7 @@ import { calculateCommission } from '@/lib/property/commission'
 import { projectAtLockinMaturity } from '@/lib/property/amortization'
 import type { CreatePropertyCaseInput } from '@/lib/types/property'
 import { syncCaseToSheets } from '@/lib/services/sheets-sync'
+import { syncFollowUpToCalendar } from '@/lib/google/syncFollowUp'
 
 export async function GET(request: Request) {
     const auth = await requirePropertyUser()
@@ -172,6 +173,19 @@ export async function POST(request: Request) {
         action: 'case_submitted',
         new_value: { status: 'submitted', case_type },
     })
+
+    // Sync follow-up date to Google Calendar (non-blocking)
+    if (follow_up_date && followup_preference) {
+        syncFollowUpToCalendar(
+            auth.userId,
+            newCase.id,
+            followup_preference as 'self' | 'tlc',
+            'upsert',
+            follow_up_date,
+            client_name,
+            `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${newCase.id}`
+        ).catch(err => console.error('[Calendar sync] case creation:', err))
+    }
 
     const { data: agentProfile } = await admin
         .from('profiles')
