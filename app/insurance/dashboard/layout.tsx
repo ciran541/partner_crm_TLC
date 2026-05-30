@@ -9,11 +9,11 @@ import {
     Briefcase,
     Users,
     LogOut,
-    Settings,
     Menu,
     X,
     TrendingUp,
-    Percent
+    Percent,
+    UserCircle
 } from 'lucide-react'
 
 export default function DashboardLayout({
@@ -25,6 +25,7 @@ export default function DashboardLayout({
     const pathname = usePathname()
     const [role, setRole] = useState<string | null>(null)
     const [email, setEmail] = useState<string | null>(null)
+    const [displayName, setDisplayName] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
     const [sidebarOpen, setSidebarOpen] = useState(true)
 
@@ -43,7 +44,7 @@ export default function DashboardLayout({
 
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('role, app_type')
+                .select('role, app_type, name')
                 .eq('id', user.id)
                 .single()
 
@@ -53,6 +54,7 @@ export default function DashboardLayout({
             }
 
             setRole(profile.role ?? 'agent')
+            setDisplayName(profile.name ?? null)
             setLoading(false)
         }
 
@@ -80,6 +82,10 @@ export default function DashboardLayout({
         navItems.push({ name: 'User Management', href: '/insurance/dashboard/users', icon: Users })
         navItems.push({ name: 'Analytics', href: '/insurance/dashboard/analytics', icon: TrendingUp })
     }
+
+    const bottomNavItems = [
+        { name: 'Profile', href: '/insurance/dashboard/profile', icon: UserCircle },
+    ]
 
     return (
         <div className="flex min-h-screen bg-slate-50 relative">
@@ -152,17 +158,40 @@ export default function DashboardLayout({
                             )
                         })}
                     </ul>
+
+                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4 mt-6">
+                        Account
+                    </p>
+                    <ul className="space-y-1">
+                        {bottomNavItems.map((item) => {
+                            const isActive = pathname === item.href
+                            return (
+                                <li key={item.name}>
+                                    <a
+                                        href={item.href}
+                                        className={`sidebar-link ${isActive ? 'active' : ''}`}
+                                        onClick={() => {
+                                            if (window.innerWidth < 768) setSidebarOpen(false)
+                                        }}
+                                    >
+                                        <item.icon size={20} />
+                                        <span>{item.name}</span>
+                                    </a>
+                                </li>
+                            )
+                        })}
+                    </ul>
                 </nav>
 
                 {/* User Footer */}
                 <div className="p-5 border-t border-white/10 bg-black/10">
                     <div className="flex items-center gap-3 mb-4">
                         <div className="w-8 h-8 rounded-full bg-[#03a9e7] flex items-center justify-center text-white text-sm font-bold shrink-0">
-                            {email ? email[0].toUpperCase() : 'U'}
+                            {(displayName || email || 'U')[0].toUpperCase()}
                         </div>
                         <div className="min-w-0">
                             <p className="text-sm font-medium text-white truncate">
-                                {email?.split('@')[0]}
+                                {displayName || email?.split('@')[0]}
                             </p>
                             <p className="text-[11px] text-slate-400">
                                 {role === 'admin' ? 'Administrator' : 'Partner Agent'}

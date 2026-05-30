@@ -43,7 +43,7 @@ interface AnalyticsData {
     commissionByPaymentStatus: Record<string, number>
     topAgents: { name: string; count: number; totalAgentCommission: number }[]
     monthlyVolume: { month: string; count: number }[]
-    reminders: { total: number; sent: number; pending: number }
+    followUps: { total: number; completed: number; pending: number; overdue: number }
 }
 
 function BarRow({ label, count, total, color }: { label: string; count: number; total: number; color: string }) {
@@ -254,9 +254,10 @@ export default function PropertyAnalyticsPage() {
                             </h3>
                             <div className="space-y-3">
                                 {[
-                                    { label: 'Total Reminders', value: data.reminders.total, color: '#8b5cf6' },
-                                    { label: 'Processed', value: data.reminders.sent, color: '#16a34a' },
-                                    { label: 'Pending / Upcoming', value: data.reminders.pending, color: '#f59e0b' },
+                                    { label: 'Total Follow-Ups', value: data.followUps?.total ?? 0, color: '#8b5cf6' },
+                                    { label: 'Completed', value: data.followUps?.completed ?? 0, color: '#16a34a' },
+                                    { label: 'Pending / Upcoming', value: data.followUps?.pending ?? 0, color: '#f59e0b' },
+                                    { label: 'Overdue', value: data.followUps?.overdue ?? 0, color: '#dc2626' },
                                 ].map(({ label, value, color }) => (
                                     <div key={label} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
                                         <span className="text-sm text-slate-600">{label}</span>

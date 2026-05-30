@@ -8,17 +8,18 @@ export async function GET() {
 
     const admin = createAdminClient()
 
-    const [casesRes, remindersRes] = await Promise.all([
+    const [casesRes, followUpsRes] = await Promise.all([
         admin
             .from('property_cases')
             .select('id, status, case_type, gross_commission_amount, agent_commission_amount, tlc_commission_amount, commission_status, agent_id, created_at'),
         admin
-            .from('property_reminders')
-            .select('id, is_sent'),
+            .from('property_cases')
+            .select('id, follow_up_date, followup_completed_at')
+            .not('follow_up_date', 'is', null),
     ])
 
     const cases = casesRes.data ?? []
-    const reminders = remindersRes.data ?? []
+    const followUps = followUpsRes.data ?? []
 
     // Enrich with agent names
     const agentIds = [...new Set(cases.map(c => c.agent_id))]
@@ -84,10 +85,11 @@ export async function GET() {
             commissionByPaymentStatus,
             topAgents,
             monthlyVolume: monthlyVolumeSorted,
-            reminders: {
-                total: reminders.length,
-                sent: reminders.filter(r => r.is_sent).length,
-                pending: reminders.filter(r => !r.is_sent).length,
+            followUps: {
+                total: followUps.length,
+                completed: followUps.filter(r => !!r.followup_completed_at).length,
+                pending: followUps.filter(r => !r.followup_completed_at).length,
+                overdue: followUps.filter(r => !r.followup_completed_at && r.follow_up_date < new Date().toISOString().split('T')[0]).length,
             },
         },
     })

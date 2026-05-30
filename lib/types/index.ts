@@ -5,3 +5,4 @@
 export * from './shared'
 export * from './insurance'
 export * from './property'
+export * from './workflow'

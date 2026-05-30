@@ -52,7 +52,17 @@ export interface Case {
     subsidy_provided?: string
     clawback_end_date?: string
     remarks?: string
-    sales_assistant_data?: AssistantData // stored as JSONB in DB
+
+    // Closed Lost fields
+    closed_lost_reason?: string
+    closed_lost_notes?: string
+
+    // Workflow Engine data (JSONB, structure depends on case_type)
+    workflow_data?: Record<string, unknown>
+
+    // Legacy — superseded by workflow_data
+    sales_assistant_data?: AssistantData
+
     profiles?: {
         id: string
         name: string

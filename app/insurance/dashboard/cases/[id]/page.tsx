@@ -1,21 +1,41 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Case, PipelineStage } from '@/lib/types'
+import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow } from '@/lib/types/workflow'
+import RefinancingWorkflowPanel from '@/components/insurance/workflow/RefinancingWorkflow'
+import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
-    ArrowLeft,
-    Save,
-    Edit2,
-    X,
-    User,
-    Home,
-    DollarSign,
-    Briefcase,
-    Calendar,
-    CheckCircle2
+    ArrowLeft, Save, Edit2, X, User, Home,
+    Briefcase, CheckCircle2, AlertTriangle, FileText
 } from 'lucide-react'
+import Spinner from '@/components/shared/Spinner'
+import InlineAlert from '@/components/shared/InlineAlert'
+
+type TabKey = 'overview' | 'workflow' | 'closure'
+
+const PIPELINE_STAGES: PipelineStage[] = [
+    'Touched Base',
+    'Proposal Given',
+    'Referred to Bank',
+    'Pending Approval',
+    'Pending Signature',
+    'Closed Won',
+    'Closed Lost',
+]
+
+const CLOSED_LOST_REASONS = [
+    'Client chose another bank directly',
+    'Client used another broker',
+    'Rate not competitive enough',
+    'Client decided not to refinance',
+    'Client selling property',
+    'Loan not approved',
+    'Client unresponsive / lost contact',
+    'Other',
+]
 
 export default function CaseDetailPage() {
     const router = useRouter()
@@ -27,117 +47,112 @@ export default function CaseDetailPage() {
     const [saving, setSaving] = useState(false)
     const [isEditing, setIsEditing] = useState(false)
     const [userRole, setUserRole] = useState<string | null>(null)
+    const [activeTab, setActiveTab] = useState<TabKey>(() => {
+        if (typeof window !== 'undefined') {
+            const tab = new URLSearchParams(window.location.search).get('tab')
+            if (tab === 'workflow' || tab === 'closure') return tab as TabKey
+        }
+        return 'overview'
+    })
+    const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-    const pipelineStages: PipelineStage[] = [
-        'Touched Base',
-        'Proposal Given',
-        'Referred to Bank',
-        'Pending Approval',
-        'Pending Signature',
-        'Closed Won',
-        'Closed Lost'
-    ]
+    // Workflow state
+    const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData>({})
+    const [workflowSaving, setWorkflowSaving] = useState(false)
+    const [workflowSaved, setWorkflowSaved] = useState(false)
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    // Closed Won modal
+    const [closedWonOpen, setClosedWonOpen] = useState(false)
+    // Closed Lost modal
+    const [closedLostOpen, setClosedLostOpen] = useState(false)
 
     useEffect(() => {
-        if (caseId) {
-            loadCase()
-        }
+        if (caseId) loadCase()
     }, [caseId])
 
     const loadCase = async () => {
         setLoading(true)
-
         const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-            router.push('/login')
-            return
-        }
+        if (!user) { router.push('/login'); return }
 
         const { data: profile } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', user.id)
-            .single()
-
-        setUserRole(profile?.role)
+            .from('profiles').select('role').eq('id', user.id).single()
+        setUserRole(profile?.role ?? null)
 
         const { data, error } = await supabase
-            .from('cases')
-            .select('*')
-            .eq('id', caseId)
-            .eq('id', caseId)
-            .single()
+            .from('cases').select('*').eq('id', caseId).single()
 
-        if (error) {
-            console.error('Error loading case:', error)
-            alert('Failed to load case')
+        if (error || !data) {
             router.push('/insurance/dashboard/cases')
         } else {
             setCaseData(data)
+            setWorkflowData(getRefinancingWorkflow(data.workflow_data))
         }
-
         setLoading(false)
     }
 
     const handleUpdate = async (updates: Partial<Case>) => {
         if (!caseData) return
-
         setSaving(true)
+        setAlert(null)
 
-        let updateError = null
-
+        let err: any = null
         if (userRole === 'admin') {
-            try {
-                const res = await fetch('/api/admin/update-case', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        id: caseId,
-                        updates: {
-                            ...updates,
-                            updated_at: new Date().toISOString()
-                        }
-                    })
-                })
-                if (!res.ok) {
-                    const data = await res.json()
-                    updateError = { message: data.error || 'Failed to update via API' }
-                }
-            } catch (err) {
-                updateError = { message: 'Network error calling Admin API' }
-            }
+            const res = await fetch('/api/admin/update-case', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: caseId, updates: { ...updates, updated_at: new Date().toISOString() } }),
+            })
+            if (!res.ok) { const d = await res.json(); err = d.error }
         } else {
-            const { error } = await supabase
-                .from('cases')
-                .update({
-                    ...updates,
-                    updated_at: new Date().toISOString()
-                })
+            const { error } = await supabase.from('cases')
+                .update({ ...updates, updated_at: new Date().toISOString() })
                 .eq('id', caseId)
-
-            updateError = error
-        }
-
-        if (updateError) {
-            console.error('Error updating case:', updateError)
-            alert('Failed to update case: ' + updateError.message)
-        } else {
-            await loadCase()
-            setIsEditing(false)
+            err = error
         }
 
         setSaving(false)
+        if (err) {
+            setAlert({ type: 'error', message: typeof err === 'string' ? err : err?.message ?? 'Failed to save' })
+        } else {
+            await loadCase()
+            setIsEditing(false)
+            setAlert({ type: 'success', message: 'Case updated successfully.' })
+        }
     }
+
+    const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData) => {
+        setWorkflowSaving(true)
+        setWorkflowSaved(false)
+        const { error } = await supabase.from('cases')
+            .update({ workflow_data: wf, updated_at: new Date().toISOString() })
+            .eq('id', caseId)
+        setWorkflowSaving(false)
+        if (!error) { setWorkflowSaved(true); setTimeout(() => setWorkflowSaved(false), 2000) }
+    }, [caseId])
+
+    const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData) => {
+        setWorkflowData(updated)
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = setTimeout(() => saveWorkflow(updated), 800)
+    }, [saveWorkflow])
 
     const handleFieldChange = (field: keyof Case, value: any) => {
         if (!caseData) return
         setCaseData({ ...caseData, [field]: value })
     }
 
+    const handleStageChange = (newStage: string) => {
+        if (!caseData) return
+        if (newStage === 'Closed Won') { setClosedWonOpen(true); return }
+        if (newStage === 'Closed Lost') { setClosedLostOpen(true); return }
+        handleFieldChange('stage', newStage)
+    }
+
     const handleSave = () => {
         if (!caseData) return
-
-        const updates: Partial<Case> = {
+        handleUpdate({
             stage: caseData.stage,
             client_name: caseData.client_name,
             client_mobile: caseData.client_mobile,
@@ -148,513 +163,604 @@ export default function CaseDetailPage() {
             current_bank: caseData.current_bank,
             existing_loan_amount: caseData.existing_loan_amount,
             lock_in_end_date: caseData.lock_in_end_date,
-        }
-
-        if (caseData.stage === 'Closed Won') {
-            updates.closed_package_details = caseData.closed_package_details
-            updates.closed_interest_rate = caseData.closed_interest_rate
-            updates.closed_tenure = caseData.closed_tenure
-            updates.subsidy_provided = caseData.subsidy_provided
-            updates.clawback_end_date = caseData.clawback_end_date
-            updates.remarks = caseData.remarks
-        }
-
-        handleUpdate(updates)
-    }
-
-    const [isClosedWonModalOpen, setIsClosedWonModalOpen] = useState(false)
-    const [prevStage, setPrevStage] = useState<PipelineStage | null>(null)
-
-    const handleStageChange = (newStage: string) => {
-        if (!caseData) return
-        const stage = newStage as PipelineStage
-        if (stage === 'Closed Won') {
-            setPrevStage(caseData.stage)
-            setIsClosedWonModalOpen(true)
-        } else {
-            handleFieldChange('stage', stage)
-        }
-    }
-
-    const handleClosedWonSubmit = (details: Partial<Case>) => {
-        if (!caseData) return
-        setCaseData({
-            ...caseData,
-            ...details,
-            stage: 'Closed Won'
         })
-        setIsClosedWonModalOpen(false)
     }
 
-    if (loading) return <div style={{ padding: 20 }}>Loading...</div>
-    if (!caseData) return <div style={{ padding: 20 }}>Case not found</div>
+    if (loading) return (
+        <div className="flex items-center justify-center py-20">
+            <Spinner size="md" color="#03a9e7" label="Loading case…" />
+        </div>
+    )
+    if (!caseData) return null
 
+    const isRefiOrEquity = caseData.case_type === 'Refinancing' || caseData.case_type === 'Equity Loan'
     const isClosedWon = caseData.stage === 'Closed Won'
+    const isClosedLost = caseData.stage === 'Closed Lost'
+    const isClosed = isClosedWon || isClosedLost
+
+    const tabs: { key: TabKey; label: string; icon: React.ElementType }[] = [
+        { key: 'overview', label: 'Overview', icon: User },
+        { key: 'workflow', label: 'Workflow', icon: Briefcase },
+        { key: 'closure', label: 'Closure', icon: CheckCircle2 },
+    ]
 
     return (
-        <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-            {/* Header */}
-            <div style={{ marginBottom: '24px' }}>
+        <div className="max-w-4xl mx-auto space-y-5">
+            {/* Back + Header */}
+            <div>
                 <button
                     onClick={() => router.push('/insurance/dashboard/cases')}
-                    style={{
-                        background: 'none', border: 'none', color: '#64748b',
-                        display: 'flex', alignItems: 'center', gap: '8px',
-                        marginBottom: '12px', cursor: 'pointer', fontWeight: '500'
-                    }}
+                    className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 font-medium mb-3 transition-colors"
                 >
-                    <ArrowLeft size={16} />
-                    Back to Pipeline
+                    <ArrowLeft size={15} /> Back to Pipeline
                 </button>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                            <h1 style={{ fontSize: '28px', fontWeight: 'bold', color: '#052d4a', margin: 0 }}>
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <h1 className="text-2xl font-bold text-[#052d4a]">
                                 {caseData.client_name || 'Unnamed Case'}
                             </h1>
-                            <span className="status-badge" style={{ background: '#e0f2fe', color: '#0369a1' }}>
+                            <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-100">
                                 {caseData.case_type}
                             </span>
+                            {isClosedWon && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 size={11} /> Closed Won
+                                </span>
+                            )}
+                            {isClosedLost && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-700 border border-red-200">
+                                    <X size={11} /> Closed Lost
+                                </span>
+                            )}
                         </div>
-                        <p style={{ color: '#64748b', fontSize: '14px' }}>
-                            Created on {new Date(caseData.created_at).toLocaleDateString()}
+                        <p className="text-sm text-slate-400 mt-1">
+                            Created {new Date(caseData.created_at).toLocaleDateString()}
                         </p>
                     </div>
-
-                    <div style={{ display: 'flex', gap: '12px' }}>
-                        {/* Sales Assistant Button - Refinancing Only */}
-                        {(caseData.case_type === 'Refinancing' || caseData.case_type === 'Equity Loan') && (
-                            <button
-                                onClick={() => router.push(`/insurance/dashboard/cases/${caseId}/assistant`)}
-                                className="btn-outline"
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px', border: '1px solid #03a9e7', color: '#0369a1' }}
-                            >
-                                <Briefcase size={16} /> Sales Assistant
-                            </button>
-                        )}
-                        {!isEditing ? (
-                            <button className="btn-primary" onClick={() => setIsEditing(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <Edit2 size={16} /> Edit Details
-                            </button>
+                    <div className="flex items-center gap-2">
+                        {isEditing ? (
+                            <>
+                                <button onClick={() => { setIsEditing(false); loadCase() }} className="btn-ghost text-sm px-4 py-2 flex items-center gap-1.5">
+                                    <X size={15} /> Cancel
+                                </button>
+                                <button onClick={handleSave} disabled={saving} className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
+                                    {saving ? <Spinner size="sm" color="white" label="Saving…" /> : <><Save size={15} /> Save</>}
+                                </button>
+                            </>
                         ) : (
                             <>
-                                <button className="btn-outline" onClick={() => { setIsEditing(false); loadCase(); }}>
-                                    <X size={16} style={{ marginRight: 6 }} /> Cancel
-                                </button>
-                                <button className="btn-primary" onClick={handleSave} disabled={saving}>
-                                    {saving ? 'Saving...' : <><Save size={16} style={{ marginRight: 6 }} /> Save Changes</>}
-                                </button>
+                                {!isClosed && (
+                                    <button onClick={() => setIsEditing(true)} className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
+                                        <Edit2 size={15} /> Edit
+                                    </button>
+                                )}
                             </>
                         )}
                     </div>
                 </div>
             </div>
 
-            {/* Pipeline Stage Bar */}
-            <div className="card" style={{ padding: '20px', marginBottom: '24px', background: 'linear-gradient(to right, #052d4a, #0f4a75)', color: 'white' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            {alert && (
+                <InlineAlert type={alert.type} message={alert.message} onDismiss={() => setAlert(null)} />
+            )}
+
+            {/* Stage Bar */}
+            <div className="card p-5" style={{ background: 'linear-gradient(to right, #052d4a, #0f4a75)', color: 'white' }}>
+                <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div>
-                        <label style={{ display: 'block', textTransform: 'uppercase', fontSize: '11px', fontWeight: '600', opacity: 0.8, letterSpacing: '1px', marginBottom: '4px' }}>
-                            Current Stage
-                        </label>
+                        <p className="text-[11px] uppercase tracking-widest font-semibold opacity-70 mb-1">Current Stage</p>
                         {isEditing ? (
                             <select
                                 value={caseData.stage}
-                                onChange={(e) => handleStageChange(e.target.value)}
-                                style={{
-                                    background: 'rgba(255,255,255,0.1)',
-                                    color: 'white',
-                                    border: '1px solid rgba(255,255,255,0.2)',
-                                    padding: '8px 12px',
-                                    borderRadius: '6px',
-                                    fontSize: '16px',
-                                    fontWeight: '600'
-                                }}
+                                onChange={e => handleStageChange(e.target.value)}
+                                className="bg-white/10 text-white border border-white/20 rounded-lg px-3 py-2 text-sm font-semibold outline-none"
                             >
-                                {pipelineStages.map(stage => (
-                                    <option key={stage} value={stage} style={{ color: 'black' }}>{stage}</option>
+                                {PIPELINE_STAGES.map(s => (
+                                    <option key={s} value={s} className="text-black">{s}</option>
                                 ))}
                             </select>
                         ) : (
-                            <div style={{ fontSize: '20px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                {caseData.stage}
-                                {caseData.stage === 'Closed Won' && <CheckCircle2 color="#4ade80" />}
-                            </div>
+                            <p className="text-xl font-bold">{caseData.stage}</p>
                         )}
+                    </div>
+                    {/* Stage progress dots */}
+                    <div className="hidden md:flex items-center gap-1.5">
+                        {PIPELINE_STAGES.filter(s => s !== 'Closed Lost').map((s, i) => {
+                            const stageIndex = PIPELINE_STAGES.indexOf(caseData.stage)
+                            const thisIndex = PIPELINE_STAGES.indexOf(s)
+                            const isActive = s === caseData.stage
+                            const isPast = thisIndex < stageIndex && !isClosed
+                            return (
+                                <div key={s} className="flex items-center gap-1.5">
+                                    <div className={`w-2 h-2 rounded-full transition-all ${
+                                        isActive ? 'bg-white w-3 h-3' :
+                                        isPast ? 'bg-white/60' : 'bg-white/25'
+                                    }`} title={s} />
+                                    {i < PIPELINE_STAGES.filter(s => s !== 'Closed Lost').length - 1 && (
+                                        <div className={`w-5 h-px ${isPast ? 'bg-white/60' : 'bg-white/20'}`} />
+                                    )}
+                                </div>
+                            )
+                        })}
                     </div>
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-
-                {/* Client Info Card */}
-                <SectionCard title="Client Information" icon={User}>
-                    <GridField label="Name" isEditing={isEditing}>
-                        <input
-                            type="text"
-                            value={caseData.client_name || ''}
-                            onChange={(e) => handleFieldChange('client_name', e.target.value)}
-                            className="input-field-std"
-                        />
-                        {!isEditing && (caseData.client_name || '-')}
-                    </GridField>
-                    <GridField label="Mobile" isEditing={isEditing}>
-                        <input
-                            type="tel"
-                            value={caseData.client_mobile || ''}
-                            onChange={(e) => handleFieldChange('client_mobile', e.target.value)}
-                            className="input-field-std"
-                        />
-                        {!isEditing && (caseData.client_mobile || '-')}
-                    </GridField>
-                    <GridField label="Email" isEditing={isEditing}>
-                        <input
-                            type="email"
-                            value={caseData.client_email || ''}
-                            onChange={(e) => handleFieldChange('client_email', e.target.value)}
-                            className="input-field-std"
-                        />
-                        {!isEditing && (caseData.client_email || '-')}
-                    </GridField>
-                </SectionCard>
-
-                {/* Property & Loan Info */}
-                <SectionCard title="Property & Loan Details" icon={Home}>
-                    <GridField label="Property Type" isEditing={isEditing}>
-                        <input
-                            type="text"
-                            value={caseData.property_type || ''}
-                            onChange={(e) => handleFieldChange('property_type', e.target.value)}
-                            placeholder="e.g. HDB 4-Room"
-                            className="input-field-std"
-                        />
-                        {!isEditing && (caseData.property_type || '-')}
-                    </GridField>
-
-                    <GridField label="Property Price" isEditing={isEditing}>
-                        <div style={{ position: 'relative' }}>
-                            {isEditing && <span style={{ position: 'absolute', left: 10, top: 9, color: '#94a3b8' }}>$</span>}
-                            <input
-                                type="number"
-                                value={caseData.property_price || ''}
-                                onChange={(e) => handleFieldChange('property_price', e.target.value)}
-                                className="input-field-std"
-                                style={isEditing ? { paddingLeft: 24 } : {}}
-                            />
-                        </div>
-                        {!isEditing && (caseData.property_price ? `$${caseData.property_price.toLocaleString()}` : '-')}
-                    </GridField>
-
-                    {(caseData.case_type === 'Refinancing' || caseData.case_type === 'Equity Loan') ? (
-                        <>
-                            <GridField label="Existing Loan Amount" isEditing={isEditing}>
-                                <div style={{ position: 'relative' }}>
-                                    {isEditing && <span style={{ position: 'absolute', left: 10, top: 9, color: '#94a3b8' }}>$</span>}
-                                    <input
-                                        type="number"
-                                        value={caseData.existing_loan_amount || ''}
-                                        onChange={(e) => handleFieldChange('existing_loan_amount', e.target.value)}
-                                        className="input-field-std"
-                                        style={isEditing ? { paddingLeft: 24 } : {}}
-                                    />
-                                </div>
-                                {!isEditing && (caseData.existing_loan_amount ? `$${caseData.existing_loan_amount.toLocaleString()}` : '-')}
-                            </GridField>
-
-                            <GridField label="Current Bank" isEditing={isEditing}>
-                                <input
-                                    type="text"
-                                    value={caseData.current_bank || ''}
-                                    onChange={(e) => handleFieldChange('current_bank', e.target.value)}
-                                    placeholder="e.g. DBS"
-                                    className="input-field-std"
-                                />
-                                {!isEditing && (caseData.current_bank || '-')}
-                            </GridField>
-
-                            <GridField label="Lock-in End Date" isEditing={isEditing}>
-                                <input
-                                    type="date"
-                                    value={caseData.lock_in_end_date || ''}
-                                    onChange={(e) => handleFieldChange('lock_in_end_date', e.target.value)}
-                                    className="input-field-std"
-                                />
-                                {!isEditing && (caseData.lock_in_end_date ? new Date(caseData.lock_in_end_date).toLocaleDateString() : '-')}
-                            </GridField>
-                        </>
-                    ) : (
-                        <GridField label="Loan Amount" isEditing={isEditing}>
-                            <div style={{ position: 'relative' }}>
-                                {isEditing && <span style={{ position: 'absolute', left: 10, top: 9, color: '#94a3b8' }}>$</span>}
-                                <input
-                                    type="number"
-                                    value={caseData.loan_size || ''}
-                                    onChange={(e) => handleFieldChange('loan_size', e.target.value)}
-                                    className="input-field-std"
-                                    style={isEditing ? { paddingLeft: 24 } : {}}
-                                />
-                            </div>
-                            {!isEditing && (caseData.loan_size ? `$${caseData.loan_size.toLocaleString()}` : '-')}
-                        </GridField>
-                    )}
-                </SectionCard>
-
-                {/* Closure Details */}
-                {isClosedWon && (
-                    <div className="card" style={{ padding: '24px', border: '1px solid #86efac', background: '#f0fdf4' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px', color: '#166534' }}>
-                            <CheckCircle2 size={20} />
-                            <h3 style={{ margin: 0, fontWeight: '700' }}>Closed Won Details</h3>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-                            <GridField label="Package Details" isEditing={isEditing} fullWidth>
-                                <input
-                                    type="text"
-                                    value={caseData.closed_package_details || ''}
-                                    onChange={(e) => handleFieldChange('closed_package_details', e.target.value)}
-                                    placeholder="e.g. 2-Year Fixed @ 3.5%"
-                                    className="input-field-std"
-                                />
-                                {!isEditing && (caseData.closed_package_details || '-')}
-                            </GridField>
-                            <GridField label="Interest Rate (%)" isEditing={isEditing}>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    value={caseData.closed_interest_rate || ''}
-                                    onChange={(e) => handleFieldChange('closed_interest_rate', e.target.value)}
-                                    className="input-field-std"
-                                />
-                                {!isEditing && (caseData.closed_interest_rate ? `${caseData.closed_interest_rate}%` : '-')}
-                            </GridField>
-                            <GridField label="Tenure (Years)" isEditing={isEditing}>
-                                <input
-                                    type="number"
-                                    value={caseData.closed_tenure || ''}
-                                    onChange={(e) => handleFieldChange('closed_tenure', e.target.value)}
-                                    className="input-field-std"
-                                />
-                                {!isEditing && (caseData.closed_tenure || '-')}
-                            </GridField>
-                            <GridField label="Subsidy Provided" isEditing={isEditing}>
-                                <input
-                                    type="text"
-                                    value={caseData.subsidy_provided || ''}
-                                    onChange={(e) => handleFieldChange('subsidy_provided', e.target.value)}
-                                    placeholder="e.g. $2,000"
-                                    className="input-field-std"
-                                />
-                                {!isEditing && (caseData.subsidy_provided || '-')}
-                            </GridField>
-                            <GridField label="Clawback End Date" isEditing={isEditing}>
-                                <input
-                                    type="date"
-                                    value={caseData.clawback_end_date || ''}
-                                    onChange={(e) => handleFieldChange('clawback_end_date', e.target.value)}
-                                    className="input-field-std"
-                                />
-                                {!isEditing && (caseData.clawback_end_date ? new Date(caseData.clawback_end_date).toLocaleDateString() : '-')}
-                            </GridField>
-                            <GridField label="Remarks" isEditing={isEditing} fullWidth>
-                                <textarea
-                                    value={caseData.remarks || ''}
-                                    onChange={(e) => handleFieldChange('remarks', e.target.value)}
-                                    rows={3}
-                                    className="input-field-std"
-                                    style={{ fontFamily: 'inherit' }}
-                                />
-                                {!isEditing && (caseData.remarks || '-')}
-                            </GridField>
-                        </div>
-                    </div>
-                )}
+            {/* Tabs */}
+            <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-full sm:w-auto self-start">
+                {tabs.map(tab => (
+                    <button
+                        key={tab.key}
+                        onClick={() => setActiveTab(tab.key)}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                            activeTab === tab.key
+                                ? 'bg-white text-[#052d4a] shadow-sm'
+                                : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                    >
+                        <tab.icon size={15} />
+                        {tab.label}
+                    </button>
+                ))}
             </div>
 
-            {isClosedWonModalOpen && (
+            {/* Tab: Overview */}
+            {activeTab === 'overview' && (
+                <div className="space-y-5">
+                    {/* Client Info */}
+                    <SectionCard title="Client Information" icon={User}>
+                        <GridField label="Name" isEditing={isEditing}>
+                            <input type="text" value={caseData.client_name || ''} onChange={e => handleFieldChange('client_name', e.target.value)} className="input-std" />
+                            {caseData.client_name || <span className="text-slate-400">—</span>}
+                        </GridField>
+                        <GridField label="Mobile" isEditing={isEditing}>
+                            <input type="tel" value={caseData.client_mobile || ''} onChange={e => handleFieldChange('client_mobile', e.target.value)} className="input-std" />
+                            {caseData.client_mobile || <span className="text-slate-400">—</span>}
+                        </GridField>
+                        <GridField label="Email" isEditing={isEditing}>
+                            <input type="email" value={caseData.client_email || ''} onChange={e => handleFieldChange('client_email', e.target.value)} className="input-std" />
+                            {caseData.client_email || <span className="text-slate-400">—</span>}
+                        </GridField>
+                    </SectionCard>
+
+                    {/* Loan & Property */}
+                    <SectionCard title="Loan & Property" icon={Home}>
+                        <GridField label="Property Type" isEditing={isEditing}>
+                            <input type="text" value={caseData.property_type || ''} onChange={e => handleFieldChange('property_type', e.target.value)} placeholder="e.g. HDB 4-Room" className="input-std" />
+                            {caseData.property_type || <span className="text-slate-400">—</span>}
+                        </GridField>
+                        <GridField label="Property Price" isEditing={isEditing}>
+                            <PrefixInput prefix="$" value={caseData.property_price?.toString() || ''} onChange={v => handleFieldChange('property_price', v ? parseFloat(v) : null)} type="number" />
+                            {caseData.property_price ? `$${caseData.property_price.toLocaleString()}` : <span className="text-slate-400">—</span>}
+                        </GridField>
+
+                        {isRefiOrEquity ? (
+                            <>
+                                <GridField label="Existing Loan Amount" isEditing={isEditing}>
+                                    <PrefixInput prefix="$" value={caseData.existing_loan_amount?.toString() || ''} onChange={v => handleFieldChange('existing_loan_amount', v ? parseFloat(v) : null)} type="number" />
+                                    {caseData.existing_loan_amount ? `$${caseData.existing_loan_amount.toLocaleString()}` : <span className="text-slate-400">—</span>}
+                                </GridField>
+                                <GridField label="Current Bank" isEditing={isEditing}>
+                                    <InsuranceBankDropdown value={caseData.current_bank || ''} onChange={v => handleFieldChange('current_bank', v)} />
+                                    {caseData.current_bank || <span className="text-slate-400">—</span>}
+                                </GridField>
+                                <GridField label="Lock-in End Date" isEditing={isEditing}>
+                                    <input type="date" value={caseData.lock_in_end_date || ''} onChange={e => handleFieldChange('lock_in_end_date', e.target.value)} className="input-std" />
+                                    {caseData.lock_in_end_date ? new Date(caseData.lock_in_end_date).toLocaleDateString() : <span className="text-slate-400">—</span>}
+                                </GridField>
+                            </>
+                        ) : (
+                            <GridField label="Loan Amount" isEditing={isEditing}>
+                                <PrefixInput prefix="$" value={caseData.loan_size?.toString() || ''} onChange={v => handleFieldChange('loan_size', v ? parseFloat(v) : null)} type="number" />
+                                {caseData.loan_size ? `$${caseData.loan_size.toLocaleString()}` : <span className="text-slate-400">—</span>}
+                            </GridField>
+                        )}
+                    </SectionCard>
+
+                    {/* Workflow shortcut */}
+                    <div className="card p-5 flex items-center justify-between gap-4">
+                        <div>
+                            <p className="font-semibold text-slate-800 text-sm">Guided Workflow</p>
+                            <p className="text-xs text-slate-500 mt-0.5">Step-by-step fact finding, risk checks, suitability &amp; documents</p>
+                        </div>
+                        <button
+                            onClick={() => setActiveTab('workflow')}
+                            className="btn-primary text-sm px-4 py-2 flex items-center gap-2 shrink-0"
+                        >
+                            <Briefcase size={15} /> Open Workflow
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Tab: Workflow */}
+            {activeTab === 'workflow' && (
+                caseData.case_type === 'Refinancing' ? (
+                    <RefinancingWorkflowPanel
+                        data={workflowData}
+                        onChange={handleWorkflowChange}
+                        saving={workflowSaving}
+                        saved={workflowSaved}
+                        onSave={() => saveWorkflow(workflowData)}
+                        onStageAdvance={newStage => handleStageChange(newStage)}
+                        currentPipelineStage={caseData.stage}
+                    />
+                ) : (
+                    <div className="card p-8 text-center space-y-3">
+                        <p className="text-3xl">🚧</p>
+                        <p className="font-semibold text-slate-700">Workflow coming soon</p>
+                        <p className="text-sm text-slate-500">The guided workflow for <strong>{caseData.case_type}</strong> cases is under development.</p>
+                    </div>
+                )
+            )}
+
+            {/* Tab: Closure */}
+            {activeTab === 'closure' && (
+                <ClosureTab
+                    caseData={caseData}
+                    isEditing={isEditing}
+                    onFieldChange={handleFieldChange}
+                    onSave={handleUpdate}
+                    saving={saving}
+                />
+            )}
+
+            {/* Closed Won Modal */}
+            {closedWonOpen && (
                 <ClosedWonModal
                     initialData={caseData}
-                    onConfirm={handleClosedWonSubmit}
-                    onCancel={() => setIsClosedWonModalOpen(false)}
+                    onConfirm={details => {
+                        setClosedWonOpen(false)
+                        handleUpdate({ ...details, stage: 'Closed Won' })
+                    }}
+                    onCancel={() => setClosedWonOpen(false)}
+                />
+            )}
+
+            {/* Closed Lost Modal */}
+            {closedLostOpen && (
+                <ClosedLostModal
+                    onConfirm={(reason, notes) => {
+                        setClosedLostOpen(false)
+                        handleUpdate({ stage: 'Closed Lost', closed_lost_reason: reason, closed_lost_notes: notes || undefined })
+                    }}
+                    onCancel={() => setClosedLostOpen(false)}
                 />
             )}
 
             <style jsx global>{`
-                .input-field-std {
+                .input-std {
                     width: 100%;
                     padding: 8px 12px;
                     border: 1px solid #cbd5e1;
-                    border-radius: 6px;
+                    border-radius: 8px;
                     font-size: 14px;
                     color: #0f172a;
                     background: white;
+                    outline: none;
+                    transition: border-color 0.15s;
                 }
-                .label-text {
+                .input-std:focus { border-color: #03a9e7; box-shadow: 0 0 0 3px rgba(3,169,231,0.1); }
+                .label-xs {
                     display: block;
-                    font-size: 13px;
-                    font-weight: 600;
+                    font-size: 11px;
+                    font-weight: 700;
                     color: #64748b;
                     margin-bottom: 6px;
                     text-transform: uppercase;
-                    letter-spacing: 0.02em;
+                    letter-spacing: 0.06em;
                 }
             `}</style>
         </div>
     )
 }
 
-function SectionCard({ title, icon: Icon, children }: { title: string, icon: any, children: React.ReactNode }) {
-    return (
-        <div className="card" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px', borderBottom: '1px solid #f1f5f9', paddingBottom: '16px' }}>
-                <div style={{ padding: 8, background: '#f1f5f9', borderRadius: 6, color: '#64748b' }}>
-                    <Icon size={18} />
-                </div>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>{title}</h3>
+// ─── Closure Tab ──────────────────────────────────────────────────────────────
+
+function ClosureTab({ caseData, isEditing, onFieldChange, onSave, saving }: {
+    caseData: Case
+    isEditing: boolean
+    onFieldChange: (f: keyof Case, v: any) => void
+    onSave: (u: Partial<Case>) => void
+    saving: boolean
+}) {
+    const isClosedWon = caseData.stage === 'Closed Won'
+    const isClosedLost = caseData.stage === 'Closed Lost'
+
+    if (!isClosedWon && !isClosedLost) {
+        return (
+            <div className="card p-8 text-center space-y-2">
+                <FileText size={28} className="mx-auto text-slate-300" />
+                <p className="font-semibold text-slate-600">No closure details yet</p>
+                <p className="text-sm text-slate-400">This section fills in when the case is closed.</p>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '24px' }}>
+        )
+    }
+
+    if (isClosedLost) {
+        return (
+            <div className="card p-6 border border-red-100 bg-red-50/30 space-y-4">
+                <div className="flex items-center gap-3 text-red-700">
+                    <X size={20} />
+                    <h3 className="font-bold text-base">Closed Lost</h3>
+                </div>
+                <div className="grid grid-cols-1 gap-4">
+                    <div>
+                        <p className="label-xs">Loss Reason</p>
+                        <p className="text-sm font-medium text-slate-800">{caseData.closed_lost_reason || '—'}</p>
+                    </div>
+                    {caseData.closed_lost_notes && (
+                        <div>
+                            <p className="label-xs">Notes</p>
+                            <p className="text-sm text-slate-700 whitespace-pre-line">{caseData.closed_lost_notes}</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )
+    }
+
+    // Closed Won
+    return (
+        <div className="card p-6 border border-emerald-200 bg-emerald-50/20 space-y-5">
+            <div className="flex items-center gap-3 text-emerald-700">
+                <CheckCircle2 size={20} />
+                <h3 className="font-bold text-base">Closed Won Details</h3>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div className="sm:col-span-2">
+                    <label className="label-xs">Package Details</label>
+                    {isEditing ? (
+                        <input type="text" value={caseData.closed_package_details || ''} onChange={e => onFieldChange('closed_package_details', e.target.value)} placeholder="e.g. 2-Year Fixed @ 3.5%" className="input-std" />
+                    ) : (
+                        <p className="text-sm font-medium text-slate-800">{caseData.closed_package_details || '—'}</p>
+                    )}
+                </div>
+                <div>
+                    <label className="label-xs">Interest Rate (%)</label>
+                    {isEditing ? (
+                        <input type="number" step="0.01" value={caseData.closed_interest_rate || ''} onChange={e => onFieldChange('closed_interest_rate', e.target.value ? parseFloat(e.target.value) : null)} className="input-std" />
+                    ) : (
+                        <p className="text-sm font-medium text-slate-800">{caseData.closed_interest_rate ? `${caseData.closed_interest_rate}%` : '—'}</p>
+                    )}
+                </div>
+                <div>
+                    <label className="label-xs">Tenure (Years)</label>
+                    {isEditing ? (
+                        <input type="number" value={caseData.closed_tenure || ''} onChange={e => onFieldChange('closed_tenure', e.target.value ? parseInt(e.target.value) : null)} className="input-std" />
+                    ) : (
+                        <p className="text-sm font-medium text-slate-800">{caseData.closed_tenure ? `${caseData.closed_tenure} years` : '—'}</p>
+                    )}
+                </div>
+                <div>
+                    <label className="label-xs">Subsidy Provided</label>
+                    {isEditing ? (
+                        <input type="text" value={caseData.subsidy_provided || ''} onChange={e => onFieldChange('subsidy_provided', e.target.value)} placeholder="e.g. $2,000" className="input-std" />
+                    ) : (
+                        <p className="text-sm font-medium text-slate-800">{caseData.subsidy_provided || '—'}</p>
+                    )}
+                </div>
+                <div>
+                    <label className="label-xs">Clawback End Date</label>
+                    {isEditing ? (
+                        <input type="date" value={caseData.clawback_end_date || ''} onChange={e => onFieldChange('clawback_end_date', e.target.value)} className="input-std" />
+                    ) : (
+                        <p className="text-sm font-medium text-slate-800">{caseData.clawback_end_date ? new Date(caseData.clawback_end_date).toLocaleDateString() : '—'}</p>
+                    )}
+                </div>
+                <div className="sm:col-span-2">
+                    <label className="label-xs">Remarks</label>
+                    {isEditing ? (
+                        <textarea rows={3} value={caseData.remarks || ''} onChange={e => onFieldChange('remarks', e.target.value)} className="input-std font-inherit" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
+                    ) : (
+                        <p className="text-sm text-slate-700 whitespace-pre-line">{caseData.remarks || '—'}</p>
+                    )}
+                </div>
+            </div>
+            {isEditing && (
+                <button
+                    onClick={() => onSave({
+                        closed_package_details: caseData.closed_package_details,
+                        closed_interest_rate: caseData.closed_interest_rate,
+                        closed_tenure: caseData.closed_tenure,
+                        subsidy_provided: caseData.subsidy_provided,
+                        clawback_end_date: caseData.clawback_end_date,
+                        remarks: caseData.remarks,
+                    })}
+                    disabled={saving}
+                    className="btn-primary text-sm px-5 py-2.5 flex items-center gap-2 w-fit"
+                >
+                    {saving ? <Spinner size="sm" color="white" label="Saving…" /> : <><Save size={15} /> Save Closure Details</>}
+                </button>
+            )}
+        </div>
+    )
+}
+
+// ─── Closed Won Modal ─────────────────────────────────────────────────────────
+
+function ClosedWonModal({ initialData, onConfirm, onCancel }: {
+    initialData: Partial<Case>
+    onConfirm: (details: Partial<Case>) => void
+    onCancel: () => void
+}) {
+    const [details, setDetails] = useState({
+        closed_package_details: initialData.closed_package_details || '',
+        closed_interest_rate: initialData.closed_interest_rate?.toString() || '',
+        closed_tenure: initialData.closed_tenure?.toString() || '',
+        subsidy_provided: initialData.subsidy_provided || '',
+        clawback_end_date: initialData.clawback_end_date || '',
+        remarks: initialData.remarks || '',
+    })
+
+    return (
+        <ModalOverlay>
+            <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+                    <CheckCircle2 size={22} className="text-emerald-600" />
+                </div>
+                <div>
+                    <h2 className="text-lg font-bold text-[#052d4a]">Closed Won Details</h2>
+                    <p className="text-sm text-slate-500">Complete the loan package information to close this case.</p>
+                </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                    <label className="label-xs">Package Details *</label>
+                    <input required type="text" value={details.closed_package_details} onChange={e => setDetails(d => ({ ...d, closed_package_details: e.target.value }))} placeholder="e.g. 2-Year Fixed @ 3.5%" className="input-std" autoFocus />
+                </div>
+                <div>
+                    <label className="label-xs">Interest Rate (%)</label>
+                    <input type="number" step="0.01" value={details.closed_interest_rate} onChange={e => setDetails(d => ({ ...d, closed_interest_rate: e.target.value }))} className="input-std" />
+                </div>
+                <div>
+                    <label className="label-xs">Tenure (Years)</label>
+                    <input type="number" value={details.closed_tenure} onChange={e => setDetails(d => ({ ...d, closed_tenure: e.target.value }))} className="input-std" />
+                </div>
+                <div>
+                    <label className="label-xs">Subsidy Provided</label>
+                    <input type="text" value={details.subsidy_provided} onChange={e => setDetails(d => ({ ...d, subsidy_provided: e.target.value }))} placeholder="e.g. $2,000" className="input-std" />
+                </div>
+                <div>
+                    <label className="label-xs">Clawback End Date</label>
+                    <input type="date" value={details.clawback_end_date} onChange={e => setDetails(d => ({ ...d, clawback_end_date: e.target.value }))} className="input-std" />
+                </div>
+                <div className="sm:col-span-2">
+                    <label className="label-xs">Remarks</label>
+                    <textarea rows={3} value={details.remarks} onChange={e => setDetails(d => ({ ...d, remarks: e.target.value }))} className="input-std" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
+                </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+                <button onClick={onCancel} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
+                <button
+                    disabled={!details.closed_package_details.trim()}
+                    onClick={() => onConfirm({
+                        closed_package_details: details.closed_package_details,
+                        closed_interest_rate: details.closed_interest_rate ? parseFloat(details.closed_interest_rate) : undefined,
+                        closed_tenure: details.closed_tenure ? parseInt(details.closed_tenure) : undefined,
+                        subsidy_provided: details.subsidy_provided || undefined,
+                        clawback_end_date: details.clawback_end_date || undefined,
+                        remarks: details.remarks || undefined,
+                    })}
+                    className="btn-primary flex-2 py-2.5 text-sm flex items-center gap-2 justify-center"
+                    style={{ flex: 2, background: '#166534', borderColor: '#166534' }}
+                >
+                    <CheckCircle2 size={16} /> Save &amp; Close Won
+                </button>
+            </div>
+        </ModalOverlay>
+    )
+}
+
+// ─── Closed Lost Modal ────────────────────────────────────────────────────────
+
+function ClosedLostModal({ onConfirm, onCancel }: {
+    onConfirm: (reason: string, notes: string) => void
+    onCancel: () => void
+}) {
+    const [reason, setReason] = useState('')
+    const [notes, setNotes] = useState('')
+
+    return (
+        <ModalOverlay>
+            <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center">
+                    <AlertTriangle size={20} className="text-red-600" />
+                </div>
+                <div>
+                    <h2 className="text-lg font-bold text-[#052d4a]">Mark as Closed Lost</h2>
+                    <p className="text-sm text-slate-500">Please record why this case was lost.</p>
+                </div>
+            </div>
+            <div className="space-y-4">
+                <div>
+                    <label className="label-xs">Loss Reason *</label>
+                    <select
+                        value={reason}
+                        onChange={e => setReason(e.target.value)}
+                        className="input-std"
+                        autoFocus
+                    >
+                        <option value="">Select a reason…</option>
+                        {CLOSED_LOST_REASONS.map(r => (
+                            <option key={r} value={r}>{r}</option>
+                        ))}
+                    </select>
+                </div>
+                <div>
+                    <label className="label-xs">Additional Notes (optional)</label>
+                    <textarea
+                        rows={3}
+                        value={notes}
+                        onChange={e => setNotes(e.target.value)}
+                        placeholder="Any additional context…"
+                        className="input-std"
+                        style={{ fontFamily: 'inherit', resize: 'vertical' }}
+                    />
+                </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+                <button onClick={onCancel} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
+                <button
+                    disabled={!reason}
+                    onClick={() => onConfirm(reason, notes)}
+                    className="flex-2 py-2.5 text-sm rounded-lg font-semibold text-white flex items-center gap-2 justify-center transition-colors"
+                    style={{ flex: 2, background: reason ? '#dc2626' : '#fca5a5', cursor: reason ? 'pointer' : 'not-allowed' }}
+                >
+                    <X size={15} /> Confirm Closed Lost
+                </button>
+            </div>
+        </ModalOverlay>
+    )
+}
+
+// ─── Shared layout helpers ────────────────────────────────────────────────────
+
+function ModalOverlay({ children }: { children: React.ReactNode }) {
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(5,45,74,0.65)', backdropFilter: 'blur(4px)' }}>
+            <div className="card w-full max-w-xl p-7 shadow-2xl">
                 {children}
             </div>
         </div>
     )
 }
 
-function GridField({ label, children, isEditing, fullWidth }: { label: string, children: React.ReactNode, isEditing: boolean, fullWidth?: boolean }) {
-    const childArray = React.Children.toArray(children)
-    const inputComponent = childArray[0]
-    const displayComponent = childArray[1]
-
+function SectionCard({ title, icon: Icon, children }: { title: string; icon: any; children: React.ReactNode }) {
     return (
-        <div style={{ gridColumn: fullWidth ? '1 / -1' : 'auto' }}>
-            <label className="label-text">{label}</label>
-            {isEditing ? inputComponent : (
-                <div style={{ fontSize: '15px', fontWeight: '500', color: '#0f172a', minHeight: '24px' }}>
-                    {displayComponent}
+        <div className="card p-6">
+            <div className="flex items-center gap-3 mb-5 pb-4 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center">
+                    <Icon size={16} className="text-slate-500" />
                 </div>
-            )}
+                <h3 className="font-bold text-slate-800">{title}</h3>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                {children}
+            </div>
         </div>
     )
 }
 
-function ClosedWonModal({ initialData, onConfirm, onCancel }: {
-    initialData: Partial<Case>,
-    onConfirm: (details: Partial<Case>) => void,
-    onCancel: () => void
-}) {
-    const [details, setDetails] = useState({
-        closed_package_details: initialData.closed_package_details || '',
-        closed_interest_rate: initialData.closed_interest_rate || '',
-        closed_tenure: initialData.closed_tenure || '',
-        subsidy_provided: initialData.subsidy_provided || '',
-        clawback_end_date: initialData.clawback_end_date || '',
-        remarks: initialData.remarks || '',
-    })
-
-    const handleChange = (field: string, value: any) => {
-        setDetails(prev => ({ ...prev, [field]: value }))
-    }
-
+function GridField({ label, children, isEditing, fullWidth }: { label: string; children: React.ReactNode; isEditing: boolean; fullWidth?: boolean }) {
+    const childArray = React.Children.toArray(children)
     return (
-        <div style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(5, 45, 74, 0.7)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-            padding: '20px'
-        }}>
-            <div className="card" style={{ width: '100%', maxWidth: '600px', padding: '32px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', color: '#166534' }}>
-                    <div style={{ background: '#dcfce7', padding: '8px', borderRadius: '8px' }}>
-                        <CheckCircle2 size={24} />
-                    </div>
-                    <div>
-                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#052d4a' }}>Closed Won Details</h2>
-                        <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>Please provide the final loan package information</p>
-                    </div>
-                </div>
+        <div style={{ gridColumn: fullWidth ? '1 / -1' : 'auto' }}>
+            <label className="label-xs">{label}</label>
+            {isEditing
+                ? <div>{childArray[0]}</div>
+                : <div className="text-sm font-medium text-slate-800 min-h-[22px]">{childArray[1]}</div>
+            }
+        </div>
+    )
+}
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                    <div style={{ gridColumn: '1 / -1' }}>
-                        <label className="label-text">Package Details</label>
-                        <input
-                            type="text"
-                            value={details.closed_package_details}
-                            onChange={(e) => handleChange('closed_package_details', e.target.value)}
-                            placeholder="e.g. 2-Year Fixed @ 3.5%"
-                            className="input-field-std"
-                            autoFocus
-                        />
-                    </div>
-                    <div>
-                        <label className="label-text">Interest Rate (%)</label>
-                        <input
-                            type="number"
-                            step="0.01"
-                            value={details.closed_interest_rate}
-                            onChange={(e) => handleChange('closed_interest_rate', e.target.value)}
-                            className="input-field-std"
-                        />
-                    </div>
-                    <div>
-                        <label className="label-text">Tenure (Years)</label>
-                        <input
-                            type="number"
-                            value={details.closed_tenure}
-                            onChange={(e) => handleChange('closed_tenure', e.target.value)}
-                            className="input-field-std"
-                        />
-                    </div>
-                    <div>
-                        <label className="label-text">Subsidy Provided</label>
-                        <input
-                            type="text"
-                            value={details.subsidy_provided}
-                            onChange={(e) => handleChange('subsidy_provided', e.target.value)}
-                            placeholder="e.g. $2,000"
-                            className="input-field-std"
-                        />
-                    </div>
-                    <div>
-                        <label className="label-text">Clawback End Date</label>
-                        <input
-                            type="date"
-                            value={details.clawback_end_date}
-                            onChange={(e) => handleChange('clawback_end_date', e.target.value)}
-                            className="input-field-std"
-                        />
-                    </div>
-                    <div style={{ gridColumn: '1 / -1' }}>
-                        <label className="label-text">Remarks</label>
-                        <textarea
-                            value={details.remarks}
-                            onChange={(e) => handleChange('remarks', e.target.value)}
-                            rows={3}
-                            className="input-field-std"
-                            style={{ fontFamily: 'inherit' }}
-                        />
-                    </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '12px', marginTop: '32px' }}>
-                    <button
-                        className="btn-outline"
-                        style={{ flex: 1, justifyContent: 'center' }}
-                        onClick={onCancel}
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        className="btn-primary"
-                        style={{ flex: 2, justifyContent: 'center', background: '#166534', borderColor: '#166534' }}
-                        onClick={() => onConfirm({
-                            ...details,
-                            closed_interest_rate: details.closed_interest_rate ? parseFloat(details.closed_interest_rate as string) : undefined,
-                            closed_tenure: details.closed_tenure ? parseInt(details.closed_tenure as string) : undefined,
-                        })}
-                    >
-                        Save Closure Details
-                    </button>
-                </div>
-            </div>
+function PrefixInput({ prefix, value, onChange, type = 'text' }: { prefix: string; value: string; onChange: (v: string) => void; type?: string }) {
+    return (
+        <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">{prefix}</span>
+            <input type={type} value={value} onChange={e => onChange(e.target.value)} className="input-std pl-7" />
         </div>
     )
 }

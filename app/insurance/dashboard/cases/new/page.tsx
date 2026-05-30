@@ -4,326 +4,271 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { CaseType } from '@/lib/types'
-import { ArrowLeft, Save, Info, Briefcase } from 'lucide-react'
+import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
+import InlineAlert from '@/components/shared/InlineAlert'
+import Spinner from '@/components/shared/Spinner'
+import { ArrowLeft, Zap, RefreshCcw, ShoppingCart, Users, TrendingUp, Scale } from 'lucide-react'
+
+const CASE_TYPES: { type: CaseType; icon: React.ElementType; description: string }[] = [
+    { type: 'Refinancing',  icon: RefreshCcw,   description: 'Switch to a better rate' },
+    { type: 'Purchase',     icon: ShoppingCart,  description: 'New property purchase' },
+    { type: 'Decouple',     icon: Users,         description: 'Remove a co-borrower' },
+    { type: 'Equity Loan',  icon: TrendingUp,    description: 'Unlock property equity' },
+    { type: 'Divorce',      icon: Scale,         description: 'Settlement restructuring' },
+]
+
+const isRefiOrEquity = (t: CaseType) => t === 'Refinancing' || t === 'Equity Loan'
 
 export default function NewCasePage() {
     const router = useRouter()
     const [loading, setLoading] = useState(false)
-    const [formData, setFormData] = useState({
-        case_type: 'Refinancing' as CaseType,
-        client_name: '',
-        loan_size: '',
-        existing_loan_amount: '',
-        current_bank: '',
-        lock_in_end_date: ''
-    })
+    const [error, setError] = useState<string | null>(null)
+    const [openWorkflow, setOpenWorkflow] = useState(false)
 
-    const caseTypes: CaseType[] = ['Refinancing', 'Purchase', 'Decouple', 'Equity Loan', 'Divorce']
+    const [caseType, setCaseType] = useState<CaseType>('Refinancing')
+    const [clientName, setClientName] = useState('')
+    const [clientMobile, setClientMobile] = useState('')
+    const [clientEmail, setClientEmail] = useState('')
+    const [loanSize, setLoanSize] = useState('')
+    const [existingLoanAmount, setExistingLoanAmount] = useState('')
+    const [currentBank, setCurrentBank] = useState('')
+    const [lockInEndDate, setLockInEndDate] = useState('')
+    const [propertyType, setPropertyType] = useState('')
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setLoading(true)
+        setError(null)
 
         try {
             const { data: { user } } = await supabase.auth.getUser()
-            if (!user) {
-                router.push('/login')
-                return
-            }
+            if (!user) { router.push('/login'); return }
 
-            const isRefiOrEquity = formData.case_type === 'Refinancing' || formData.case_type === 'Equity Loan'
-
-            const payload: any = {
-                case_type: formData.case_type,
-                client_name: formData.client_name || null,
+            const payload: Record<string, unknown> = {
+                case_type: caseType,
+                client_name: clientName.trim() || null,
+                client_mobile: clientMobile.trim() || null,
+                client_email: clientEmail.trim() || null,
                 stage: 'Touched Base',
-                created_by: user.id
+                created_by: user.id,
             }
 
-            if (isRefiOrEquity) {
-                payload.existing_loan_amount = formData.existing_loan_amount ? parseFloat(formData.existing_loan_amount) : null
-                payload.current_bank = formData.current_bank || null
-                payload.lock_in_end_date = formData.lock_in_end_date || null
+            if (isRefiOrEquity(caseType)) {
+                payload.existing_loan_amount = existingLoanAmount ? parseFloat(existingLoanAmount) : null
+                payload.current_bank = currentBank || null
+                payload.lock_in_end_date = lockInEndDate || null
             } else {
-                payload.loan_size = formData.loan_size ? parseFloat(formData.loan_size) : null
+                payload.loan_size = loanSize ? parseFloat(loanSize) : null
+                payload.property_type = propertyType || null
             }
 
-            const { data, error } = await supabase
+            const { data, error: insertError } = await supabase
                 .from('cases')
                 .insert(payload)
                 .select()
                 .single()
 
-            if (error) {
-                console.error('Error creating case:', error)
-                alert('Failed to create case: ' + error.message)
-            } else {
-                const searchParams = new URLSearchParams(window.location.search)
-                const startAssistant = searchParams.get('startAssistant') === 'true'
+            if (insertError) throw new Error(insertError.message)
 
-                if (startAssistant && (data.case_type === 'Refinancing' || data.case_type === 'Equity Loan')) {
-                    router.push(`/insurance/dashboard/cases/${data.id}/assistant`)
-                } else {
-                    router.push(`/insurance/dashboard/cases/${data.id}`)
-                }
+            if (openWorkflow && data.case_type === 'Refinancing') {
+                router.push(`/insurance/dashboard/cases/${data.id}?tab=workflow`)
+            } else {
+                router.push(`/insurance/dashboard/cases/${data.id}`)
             }
-        } catch (err) {
-            console.error('Unexpected error:', err)
-            alert('An unexpected error occurred')
-        } finally {
+        } catch (err: any) {
+            setError(err.message ?? 'An unexpected error occurred')
             setLoading(false)
         }
     }
 
     return (
-        <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+        <div className="max-w-2xl mx-auto space-y-6">
             {/* Header */}
-            <div style={{ marginBottom: '24px' }}>
+            <div>
                 <button
+                    type="button"
                     onClick={() => router.back()}
-                    style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#64748b',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        marginBottom: '16px',
-                        cursor: 'pointer',
-                        fontWeight: '500'
-                    }}
+                    className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 font-medium mb-3 transition-colors"
                 >
-                    <ArrowLeft size={16} />
-                    Back to Cases
+                    <ArrowLeft size={15} /> Back to Cases
                 </button>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#052d4a' }}>Create New Case</h1>
+                <h1 className="text-2xl font-bold text-[#052d4a]">New Case</h1>
+                <p className="text-sm text-slate-500 mt-1">Cases start at <strong>Touched Base</strong>. All additional details can be filled in after creation.</p>
             </div>
 
-            {/* Form Card */}
-            <div className="card" style={{ padding: '32px' }}>
-                <form onSubmit={handleSubmit}>
-                    {/* Info Alert */}
-                    <div style={{
-                        padding: '16px',
-                        background: '#eff6ff',
-                        borderRadius: '8px',
-                        marginBottom: '24px',
-                        display: 'flex',
-                        gap: '12px',
-                        border: '1px solid #dbeafe'
-                    }}>
-                        <Info size={20} color="#3b82f6" style={{ flexShrink: 0 }} />
-                        <div>
-                            <p style={{ margin: 0, fontSize: '14px', color: '#1e3a8a', fontWeight: '500' }}>Initial Setup</p>
-                            <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#3b82f6' }}>
-                                The case will start at the <strong>"Touched Base"</strong> stage. You can add detailed property and pipeline information after creation.
-                            </p>
-                        </div>
-                    </div>
+            {error && <InlineAlert type="error" message={error} onDismiss={() => setError(null)} />}
 
-                    <div style={{ display: 'grid', gap: '24px' }}>
-                        {/* Case Type */}
-                        <div>
-                            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#334155' }}>
-                                Case Type <span style={{ color: '#ef4444' }}>*</span>
-                            </label>
-                            <select
-                                value={formData.case_type}
-                                onChange={(e) => setFormData({ ...formData, case_type: e.target.value as CaseType })}
-                                required
-                                style={{
-                                    width: '100%',
-                                    padding: '10px 12px',
-                                    borderRadius: '6px',
-                                    border: '1px solid #cbd5e1',
-                                    fontSize: '15px',
-                                    color: '#0f172a',
-                                    background: '#f8fafc'
-                                }}
+            <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Case Type */}
+                <div className="card p-5 space-y-3">
+                    <p className="text-sm font-semibold text-slate-700">Case Type <span className="text-red-400">*</span></p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {CASE_TYPES.map(({ type, icon: Icon, description }) => (
+                            <button
+                                key={type}
+                                type="button"
+                                onClick={() => setCaseType(type)}
+                                className={`flex flex-col items-start gap-1.5 p-3.5 rounded-xl border text-left transition-all ${
+                                    caseType === type
+                                        ? 'border-[#03a9e7] bg-sky-50 shadow-sm'
+                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                }`}
                             >
-                                {caseTypes.map(type => (
-                                    <option key={type} value={type}>{type}</option>
-                                ))}
-                            </select>
-                        </div>
+                                <Icon size={18} className={caseType === type ? 'text-[#03a9e7]' : 'text-slate-400'} />
+                                <div>
+                                    <p className={`text-sm font-semibold leading-tight ${caseType === type ? 'text-[#052d4a]' : 'text-slate-700'}`}>{type}</p>
+                                    <p className="text-xs text-slate-400 mt-0.5 leading-tight">{description}</p>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
 
-                        {/* Client Name */}
-                        <div>
-                            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#334155' }}>
-                                Client Name (Optional)
-                            </label>
+                {/* Client Information */}
+                <div className="card p-5 space-y-4">
+                    <p className="text-sm font-semibold text-slate-700">Client Information</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="sm:col-span-2">
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Full Name</label>
                             <input
                                 type="text"
-                                value={formData.client_name}
-                                onChange={(e) => setFormData({ ...formData, client_name: e.target.value })}
-                                placeholder="e.g. John Doe"
-                                style={{
-                                    width: '100%',
-                                    padding: '10px 12px',
-                                    borderRadius: '6px',
-                                    border: '1px solid #cbd5e1',
-                                    fontSize: '15px',
-                                    color: '#0f172a',
-                                    background: '#f8fafc'
-                                }}
+                                value={clientName}
+                                onChange={e => setClientName(e.target.value)}
+                                placeholder="e.g. John Tan"
+                                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
                             />
                         </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Mobile</label>
+                            <input
+                                type="tel"
+                                value={clientMobile}
+                                onChange={e => setClientMobile(e.target.value)}
+                                placeholder="+65 9123 4567"
+                                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Email</label>
+                            <input
+                                type="email"
+                                value={clientEmail}
+                                onChange={e => setClientEmail(e.target.value)}
+                                placeholder="client@email.com"
+                                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
+                            />
+                        </div>
+                    </div>
+                </div>
 
-                        {/* Conditional Fields based on Type */}
-                        {(formData.case_type === 'Refinancing' || formData.case_type === 'Equity Loan') ? (
-                            <>
-                                {/* Existing Loan Amount */}
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#334155' }}>
-                                        Existing Loan Amount
-                                    </label>
-                                    <div style={{ position: 'relative' }}>
-                                        <span style={{ position: 'absolute', left: '12px', top: '10px', color: '#94a3b8' }}>$</span>
-                                        <input
-                                            type="number"
-                                            value={formData.existing_loan_amount}
-                                            onChange={(e) => setFormData({ ...formData, existing_loan_amount: e.target.value })}
-                                            placeholder="0.00"
-                                            min="0"
-                                            style={{
-                                                width: '100%',
-                                                padding: '10px 12px 10px 32px',
-                                                borderRadius: '6px',
-                                                border: '1px solid #cbd5e1',
-                                                fontSize: '15px',
-                                                color: '#0f172a',
-                                                background: '#f8fafc'
-                                            }}
-                                        />
-                                    </div>
-                                </div>
+                {/* Case-type-specific fields */}
+                <div className="card p-5 space-y-4">
+                    <p className="text-sm font-semibold text-slate-700">
+                        {isRefiOrEquity(caseType) ? 'Existing Loan Details' : 'Purchase Details'}
+                    </p>
 
-                                {/* Current Bank */}
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#334155' }}>
-                                        Current Bank
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={formData.current_bank}
-                                        onChange={(e) => setFormData({ ...formData, current_bank: e.target.value })}
-                                        placeholder="e.g. DBS"
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 12px',
-                                            borderRadius: '6px',
-                                            border: '1px solid #cbd5e1',
-                                            fontSize: '15px',
-                                            color: '#0f172a',
-                                            background: '#f8fafc'
-                                        }}
-                                    />
-                                </div>
-
-                                {/* Lock-in End Date */}
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#334155' }}>
-                                        Lock-in End Date
-                                    </label>
-                                    <input
-                                        type="date"
-                                        value={formData.lock_in_end_date}
-                                        onChange={(e) => setFormData({ ...formData, lock_in_end_date: e.target.value })}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 12px',
-                                            borderRadius: '6px',
-                                            border: '1px solid #cbd5e1',
-                                            fontSize: '15px',
-                                            color: '#0f172a',
-                                            background: '#f8fafc'
-                                        }}
-                                    />
-                                </div>
-                            </>
-                        ) : (
-                            /* Purchase / Others -> Show Loan Size */
+                    {isRefiOrEquity(caseType) ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="sm:col-span-2">
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Current Bank</label>
+                                <InsuranceBankDropdown value={currentBank} onChange={setCurrentBank} placeholder="Select current bank…" />
+                            </div>
                             <div>
-                                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#334155' }}>
-                                    Estimated Loan Size
-                                </label>
-                                <div style={{ position: 'relative' }}>
-                                    <span style={{ position: 'absolute', left: '12px', top: '10px', color: '#94a3b8' }}>$</span>
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Existing Loan Amount</label>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">$</span>
                                     <input
                                         type="number"
-                                        value={formData.loan_size}
-                                        onChange={(e) => setFormData({ ...formData, loan_size: e.target.value })}
-                                        placeholder="0.00"
+                                        value={existingLoanAmount}
+                                        onChange={e => setExistingLoanAmount(e.target.value)}
+                                        placeholder="0"
                                         min="0"
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 12px 10px 32px',
-                                            borderRadius: '6px',
-                                            border: '1px solid #cbd5e1',
-                                            fontSize: '15px',
-                                            color: '#0f172a',
-                                            background: '#f8fafc'
-                                        }}
+                                        className="w-full pl-7 pr-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
                                     />
                                 </div>
                             </div>
-                        )}
-
-                        {/* Actions */}
-                        <div style={{ display: 'flex', gap: '12px', marginTop: '8px', paddingTop: '24px', borderTop: '1px solid #f1f5f9' }}>
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="btn-primary"
-                                style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-                                onClick={() => {
-                                    const url = new URL(window.location.href)
-                                    url.searchParams.delete('startAssistant')
-                                    window.history.replaceState({}, '', url.toString())
-                                }}
-                            >
-                                {loading ? 'Creating...' : (
-                                    <>
-                                        <Save size={18} />
-                                        Create Case
-                                    </>
-                                )}
-                            </button>
-
-                            {(formData.case_type === 'Refinancing' || formData.case_type === 'Equity Loan') && (
-                                <button
-                                    type="submit"
-                                    disabled={loading}
-                                    className="btn-outline"
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '8px',
-                                        borderColor: '#03a9e7',
-                                        color: '#0369a1'
-                                    }}
-                                    onClick={() => {
-                                        const url = new URL(window.location.href)
-                                        url.searchParams.set('startAssistant', 'true')
-                                        window.history.replaceState({}, '', url.toString())
-                                    }}
-                                >
-                                    <Briefcase size={18} />
-                                    {loading ? 'Creating...' : 'Create & Start Assistant'}
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => router.back()}
-                                className="btn-outline"
-                                disabled={loading}
-                            >
-                                Cancel
-                            </button>
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Lock-in End Date</label>
+                                <input
+                                    type="date"
+                                    value={lockInEndDate}
+                                    onChange={e => setLockInEndDate(e.target.value)}
+                                    className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
+                                />
+                            </div>
                         </div>
-                    </div>
-                </form>
-            </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Property Type</label>
+                                <select
+                                    value={propertyType}
+                                    onChange={e => setPropertyType(e.target.value)}
+                                    className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
+                                >
+                                    <option value="">Select type…</option>
+                                    <option value="HDB">HDB</option>
+                                    <option value="Private Condo">Private Condo</option>
+                                    <option value="Landed">Landed</option>
+                                    <option value="EC">EC (Executive Condo)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Estimated Loan Amount</label>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">$</span>
+                                    <input
+                                        type="number"
+                                        value={loanSize}
+                                        onChange={e => setLoanSize(e.target.value)}
+                                        placeholder="0"
+                                        min="0"
+                                        className="w-full pl-7 pr-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex flex-wrap items-center gap-3">
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        onClick={() => setOpenWorkflow(false)}
+                        className="btn-primary px-6 py-2.5 flex items-center gap-2"
+                    >
+                        {loading && !openWorkflow
+                            ? <Spinner size="sm" color="white" label="Creating…" />
+                            : 'Create Case'
+                        }
+                    </button>
+
+                    {caseType === 'Refinancing' && (
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            onClick={() => setOpenWorkflow(true)}
+                            className="flex items-center gap-2 px-5 py-2.5 rounded-lg border border-[#03a9e7] text-[#03a9e7] text-sm font-semibold hover:bg-sky-50 transition-colors"
+                        >
+                            {loading && openWorkflow
+                                ? <Spinner size="sm" color="#03a9e7" label="Creating…" />
+                                : <><Zap size={16} /> Create & Open Workflow</>
+                            }
+                        </button>
+                    )}
+
+                    <button
+                        type="button"
+                        onClick={() => router.back()}
+                        disabled={loading}
+                        className="btn-ghost px-5 py-2.5 text-sm"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </form>
         </div>
     )
 }
