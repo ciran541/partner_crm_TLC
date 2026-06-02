@@ -118,4 +118,14 @@ RESEND_FROM_EMAIL
 NEXT_PUBLIC_APP_URL
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
+GEMINI_API_KEY          # Google AI Studio (free tier) — knowledge assistant answer synthesis
 ```
+
+### Insurance CRM — Knowledge Engine (Layer 4)
+
+Admin-managed knowledge repository (`knowledge_articles` table) surfaced to agents only via search/contextual APIs (never an unfiltered list — RLS on, all access through service-role server routes).
+
+- **Semantic search**: `embedText()` (`lib/insurance/embed.ts`) calls the Supabase `embed` Edge Function (`supabase/functions/embed`, free `gte-small`, 384-dim) → `match_knowledge_articles` RPC (pgvector cosine). Falls back to Postgres full-text then ILIKE.
+- **Grounded RAG answers**: `/api/insurance/knowledge/ask` retrieves articles then `composeAnswer()` (`lib/insurance/askGemini.ts`) has Gemini phrase an answer ONLY from them. Strictly grounded — refuses when nothing relevant matches; degrades to article cards if `GEMINI_API_KEY` absent. Agent UI: `components/insurance/knowledge/KnowledgeAsk.tsx`.
+- Auto-embed on create/update; `/api/admin/knowledge/reindex` backfills.
+- **Deploy note**: `supabase functions deploy embed` is a separate step from `db push`.

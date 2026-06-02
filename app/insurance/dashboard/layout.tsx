@@ -13,7 +13,8 @@ import {
     X,
     TrendingUp,
     Percent,
-    UserCircle
+    UserCircle,
+    BookOpen
 } from 'lucide-react'
 
 export default function DashboardLayout({
@@ -75,6 +76,7 @@ export default function DashboardLayout({
     const navItems = [
         { name: 'Dashboard', href: '/insurance/dashboard', icon: LayoutDashboard },
         { name: 'Cases', href: '/insurance/dashboard/cases', icon: Briefcase },
+        { name: 'Knowledge', href: '/insurance/dashboard/knowledge', icon: BookOpen },
         { name: 'Rates', href: '/insurance/dashboard/rates', icon: Percent },
     ]
 

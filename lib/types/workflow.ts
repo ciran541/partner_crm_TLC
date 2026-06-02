@@ -37,7 +37,11 @@ export interface WorkflowFlags {
 export interface RefinancingStep1_Qualify {
     lock_in_status?: 'in_lock_in' | 'expired' | 'no_lock_in'
     lock_in_expiry?: string
-    current_rate?: number
+    interest_type?: 'fixed' | 'floating'
+    lock_in_years?: number                // total lock-in period in years
+    fixed_years?: number                  // how many of those years are fixed
+    year_rates?: string[]                 // rate per year, index 0 = Year 1
+    floating_rate_type?: FloatingRateType // SORA benchmark for floating years
     current_bank?: string
     outstanding_loan?: number
     remaining_tenure?: number
@@ -48,11 +52,17 @@ export interface RefinancingStep1_Qualify {
 
 // ─── Step 2: Fact Find ────────────────────────────────────────────────────────
 
+export type FloatingRateType = '1M SORA' | '3M SORA' | 'FD Rate'
+
 export interface RefinancingStep2_FactFind {
     property_type?: 'hdb' | 'private_condo' | 'landed' | 'ec'
     property_address?: string
     property_valuation?: number
-    interest_type?: 'fixed' | 'floating' | 'board_rate'
+    interest_type?: 'fixed' | 'floating'
+    lock_in_years?: number                // total lock-in period in years
+    fixed_years?: number                  // how many of those years are fixed
+    year_rates?: string[]                 // rate per year, index 0 = Year 1
+    floating_rate_type?: FloatingRateType // SORA benchmark for floating years
     gross_monthly_income?: number
     other_monthly_debts?: number
     cpf_used_monthly?: boolean
@@ -74,7 +84,6 @@ export interface RefinancingStep3_RiskSuitability {
     income_change_expected?: boolean
     income_change_details?: string
     rate_preference?: 'fixed' | 'floating' | 'dont_mind'
-    fixed_tenure_preference?: '1yr' | '2yr' | '3yr'
     payment_sensitivity?: 'low' | 'medium' | 'high'
     holding_period?: 'short' | 'medium' | 'long'
     tdsr_computed?: number
@@ -252,7 +261,8 @@ export function computeRefinancingFlags(workflow: RefinancingWorkflow): Workflow
 
     if (q.lock_in_status === 'in_lock_in' && q.lock_in_expiry) {
         const days = Math.ceil((new Date(q.lock_in_expiry).getTime() - Date.now()) / 86400000)
-        if (days <= 90) flags.urgent_lock_in = true
+        // Only flag urgent if expiry is in the FUTURE and within 90 days
+        if (days > 0 && days <= 90) flags.urgent_lock_in = true
     }
     if (ff.subsidy_received && ff.clawback_amount && ff.clawback_amount > 0) {
         flags.clawback_risk = true

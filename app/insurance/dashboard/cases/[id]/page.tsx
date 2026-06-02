@@ -92,29 +92,33 @@ export default function CaseDetailPage() {
         setLoading(false)
     }
 
+    // Single admin-aware persist path. Admins/super_admins must go through the
+    // admin API (RLS blocks their direct table writes); agents update directly.
+    // Returns an error string, or null on success.
+    const persistCaseUpdate = useCallback(async (updates: Record<string, unknown>): Promise<string | null> => {
+        const isAdminUser = userRole === 'admin' || userRole === 'super_admin'
+        const payload = { ...updates, updated_at: new Date().toISOString() }
+        if (isAdminUser) {
+            const res = await fetch('/api/admin/update-case', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: caseId, updates: payload }),
+            })
+            if (!res.ok) { const d = await res.json().catch(() => ({})); return d.error || 'Failed to save' }
+            return null
+        }
+        const { error } = await supabase.from('cases').update(payload).eq('id', caseId)
+        return error?.message ?? null
+    }, [caseId, userRole])
+
     const handleUpdate = async (updates: Partial<Case>) => {
         if (!caseData) return
         setSaving(true)
         setAlert(null)
-
-        let err: any = null
-        if (userRole === 'admin') {
-            const res = await fetch('/api/admin/update-case', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: caseId, updates: { ...updates, updated_at: new Date().toISOString() } }),
-            })
-            if (!res.ok) { const d = await res.json(); err = d.error }
-        } else {
-            const { error } = await supabase.from('cases')
-                .update({ ...updates, updated_at: new Date().toISOString() })
-                .eq('id', caseId)
-            err = error
-        }
-
+        const err = await persistCaseUpdate(updates)
         setSaving(false)
         if (err) {
-            setAlert({ type: 'error', message: typeof err === 'string' ? err : err?.message ?? 'Failed to save' })
+            setAlert({ type: 'error', message: err })
         } else {
             await loadCase()
             setIsEditing(false)
@@ -122,20 +126,49 @@ export default function CaseDetailPage() {
         }
     }
 
+    // Extract case-column values from workflow data so Overview stays in sync
+    const extractCaseFields = (wf: RefinancingWorkflowData): Partial<Case> => {
+        const q = wf.qualify ?? {}
+        const ff = wf.fact_find ?? {}
+        const updates: Partial<Case> = {}
+
+        if (q.current_bank)       updates.current_bank = q.current_bank
+        if (q.outstanding_loan)   updates.existing_loan_amount = q.outstanding_loan
+        if (q.lock_in_expiry)     updates.lock_in_end_date = q.lock_in_expiry
+
+
+        if (ff.property_valuation) updates.property_price = ff.property_valuation
+        if (ff.property_type) {
+            const map: Record<string, string> = {
+                hdb: 'HDB', private_condo: 'Private Condo', landed: 'Landed', ec: 'EC (Executive Condo)',
+            }
+            updates.property_type = map[ff.property_type] ?? ff.property_type
+        }
+
+        return updates
+    }
+
     const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData) => {
         setWorkflowSaving(true)
         setWorkflowSaved(false)
-        const { error } = await supabase.from('cases')
-            .update({ workflow_data: wf, updated_at: new Date().toISOString() })
-            .eq('id', caseId)
+        const caseFields = extractCaseFields(wf)
+        const err = await persistCaseUpdate({ workflow_data: wf, ...caseFields })
         setWorkflowSaving(false)
-        if (!error) { setWorkflowSaved(true); setTimeout(() => setWorkflowSaved(false), 2000) }
-    }, [caseId])
+        if (!err) { setWorkflowSaved(true); setTimeout(() => setWorkflowSaved(false), 2000) }
+        else setAlert({ type: 'error', message: `Workflow save failed: ${err}` })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [persistCaseUpdate])
 
     const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData) => {
         setWorkflowData(updated)
+        // Immediately update caseData state so Overview reflects workflow changes without waiting for DB save
+        const caseFields = extractCaseFields(updated)
+        if (Object.keys(caseFields).length > 0) {
+            setCaseData(prev => prev ? { ...prev, ...caseFields } : prev)
+        }
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
         saveTimerRef.current = setTimeout(() => saveWorkflow(updated), 800)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [saveWorkflow])
 
     const handleFieldChange = (field: keyof Case, value: any) => {
@@ -149,6 +182,16 @@ export default function CaseDetailPage() {
         if (newStage === 'Closed Lost') { setClosedLostOpen(true); return }
         handleFieldChange('stage', newStage)
     }
+
+    // Called from the workflow stage-advance prompt — saves immediately, no edit mode needed
+    const advanceStage = useCallback(async (newStage: string) => {
+        if (!caseData) return
+        if (newStage === 'Closed Won') { setClosedWonOpen(true); return }
+        if (newStage === 'Closed Lost') { setClosedLostOpen(true); return }
+        setCaseData(prev => prev ? { ...prev, stage: newStage as PipelineStage } : prev)
+        const err = await persistCaseUpdate({ stage: newStage })
+        if (err) setAlert({ type: 'error', message: `Stage update failed: ${err}` })
+    }, [caseData, persistCaseUpdate])
 
     const handleSave = () => {
         if (!caseData) return
@@ -379,11 +422,12 @@ export default function CaseDetailPage() {
                 caseData.case_type === 'Refinancing' ? (
                     <RefinancingWorkflowPanel
                         data={workflowData}
+                        caseData={caseData}
                         onChange={handleWorkflowChange}
                         saving={workflowSaving}
                         saved={workflowSaved}
                         onSave={() => saveWorkflow(workflowData)}
-                        onStageAdvance={newStage => handleStageChange(newStage)}
+                        onStageAdvance={advanceStage}
                         currentPipelineStage={caseData.stage}
                     />
                 ) : (

@@ -1,25 +1,88 @@
 'use client'
 
+import { useEffect } from 'react'
 import { RefinancingStep4_ResearchProposal, RefinancingStep1_Qualify, RefinancingStep2_FactFind } from '@/lib/types/workflow'
-import { Question, RadioGroup, FieldInput, FieldTextarea, ExpandableCard, ActionList, StepActions, CheckItem } from '../WorkflowStep'
-import { ExternalLink } from 'lucide-react'
+import { Question, FieldInput, FieldTextarea, ExpandableCard, ActionList, StepActions, CheckItem } from '../WorkflowStep'
+import { ExternalLink, Calculator } from 'lucide-react'
+import {
+    monthlyInstallment, maxEligibleLoan, tdsrRatioForLoan, isMsrApplicable,
+    TDSR_LIMIT, MSR_LIMIT,
+} from '@/lib/insurance/loanCalc'
 
 interface Props {
     data: RefinancingStep4_ResearchProposal
     qualify: RefinancingStep1_Qualify
     factFind: RefinancingStep2_FactFind
+    clientName?: string | null
     onChange: (patch: Partial<RefinancingStep4_ResearchProposal>) => void
     isComplete: boolean
     onMarkComplete: () => void
     onMarkIncomplete: () => void
 }
 
-export default function Step4ResearchProposal({ data, qualify, factFind, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
-    // Auto-calculate net savings helper
-    const monthlySaving = data.monthly_saving ?? 0
+function fmt(n: number) { return `$${Math.round(n).toLocaleString()}` }
+
+export default function Step4ResearchProposal({ data, qualify, factFind, clientName, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
+    const name = clientName || 'the client'
     const clawback = factFind.clawback_amount ?? 0
-    const netSaving2yr = monthlySaving > 0 ? (monthlySaving * 24) - clawback : null
-    const netSaving3yr = monthlySaving > 0 ? (monthlySaving * 36) - clawback : null
+
+    // ── Inputs gathered from earlier steps ──
+    const outstandingLoan = qualify.outstanding_loan
+    const tenure = qualify.remaining_tenure
+    const newRate = data.new_rate
+    const income = (factFind.gross_monthly_income ?? 0) + (factFind.co_borrower_income ?? 0)
+    const commitments = factFind.other_monthly_debts ?? 0
+
+    // Current rate = first filled year-rate from Step 1
+    const currentRate = (() => {
+        const rates = (qualify.year_rates ?? []).map(r => parseFloat(r)).filter(r => !isNaN(r))
+        return rates.length ? rates[0] : undefined
+    })()
+
+    // ── Auto-calculations ──
+    // Current monthly: prefer the agent-entered actual figure, else compute it
+    const currentMonthly = qualify.rough_monthly_payment
+        ?? (outstandingLoan && currentRate && tenure ? monthlyInstallment(outstandingLoan, currentRate, tenure) : undefined)
+
+    const computedNewMonthly = (outstandingLoan && newRate && tenure)
+        ? monthlyInstallment(outstandingLoan, newRate, tenure)
+        : undefined
+
+    const computedSaving = (currentMonthly !== undefined && computedNewMonthly !== undefined)
+        ? currentMonthly - computedNewMonthly
+        : undefined
+
+    const computedPenalty = (qualify.lock_in_status === 'in_lock_in' && outstandingLoan)
+        ? outstandingLoan * 0.015
+        : undefined
+
+    // Persist computed values into workflow data so later steps & summaries can use them
+    useEffect(() => {
+        const patch: Partial<RefinancingStep4_ResearchProposal> = {}
+        if (computedNewMonthly !== undefined && Math.round(computedNewMonthly) !== Math.round(data.new_monthly_payment ?? -1))
+            patch.new_monthly_payment = Math.round(computedNewMonthly)
+        if (computedSaving !== undefined && Math.round(computedSaving) !== Math.round(data.monthly_saving ?? -1))
+            patch.monthly_saving = Math.round(computedSaving)
+        if (computedPenalty !== undefined && Math.round(computedPenalty) !== Math.round(data.penalty_if_in_lockin ?? -1))
+            patch.penalty_if_in_lockin = Math.round(computedPenalty)
+        if (Object.keys(patch).length > 0) onChange(patch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [computedNewMonthly, computedSaving, computedPenalty])
+
+    const monthlySaving = computedSaving ?? data.monthly_saving ?? 0
+    const penalty = computedPenalty ?? 0
+    const netSaving2yr = monthlySaving !== 0 ? (monthlySaving * 24) - clawback - penalty : null
+    const netSaving3yr = monthlySaving !== 0 ? (monthlySaving * 36) - clawback - penalty : null
+
+    // ── Eligibility (TDSR / MSR) ──
+    const eligibility = (income > 0 && tenure)
+        ? maxEligibleLoan({ grossMonthlyIncome: income, existingMonthlyDebts: commitments, propertyType: factFind.property_type, tenureYears: tenure })
+        : undefined
+    const tdsrRatio = (income > 0 && outstandingLoan && tenure)
+        ? tdsrRatioForLoan({ loanAmount: outstandingLoan, tenureYears: tenure, grossMonthlyIncome: income, existingMonthlyDebts: commitments })
+        : undefined
+    const qualifies = (eligibility !== undefined && outstandingLoan) ? eligibility >= outstandingLoan : undefined
+    const msrApplies = isMsrApplicable(factFind.property_type)
 
     return (
         <div className="space-y-5 pt-4">
@@ -46,9 +109,11 @@ export default function Step4ResearchProposal({ data, qualify, factFind, onChang
 
             <div className="space-y-2">
                 <ExpandableCard variant="script" title="How to present the net savings calculation">
-                    {`"Let me walk you through the numbers. Your current monthly payment is approximately $[X]. The new package I'm recommending is [Bank] [Product] at [rate]%, which brings your monthly payment down to roughly $[Y]. That's a saving of $[Z] per month.
+                    {qualify.rough_monthly_payment && data.new_monthly_payment && data.monthly_saving
+                        ? `"${name}, let me walk you through the numbers. Your current monthly payment is approximately ${fmt(qualify.rough_monthly_payment)}. The new package I'm recommending is ${data.recommended_package || '[package]'}, which brings your monthly payment down to roughly ${fmt(data.new_monthly_payment)}. That's a saving of ${fmt(data.monthly_saving)} per month.
 
-Over 2 years, that's $[Z × 24] in savings. Now, because you received a $[clawback] subsidy, you'd need to return that. After accounting for that, your net saving over 2 years is $[net amount]. That [is/is not] enough to justify refinancing — and here's why…"`}
+Over 2 years, that's ${fmt(data.monthly_saving * 24)} in savings.${clawback > 0 ? ` Because of the ${fmt(clawback)} clawback, your net saving over 2 years is ${netSaving2yr !== null ? fmt(netSaving2yr) : '[calculating]'}.` : ''} That ${(netSaving2yr ?? 0) > 3000 ? 'makes good financial sense' : 'is borderline — here\'s why it still makes sense'}."`
+                        : `"Let me walk you through the numbers. Your current monthly payment is approximately $[fill in Step 1]. The new package I'm recommending is [package] at [rate]%, which brings the monthly payment down to $[new payment]. That's a saving of $[monthly saving] per month. Fill in the fields below to get the personalised version of this script."`}
                 </ExpandableCard>
                 <ExpandableCard variant="script" title='Handling "Is the saving worth it?"'>
                     {`"I completely understand if this feels like a lot of hassle for not much saving. Let me be honest with you — if the net saving is under $3,000–$5,000 over 2 years, it's borderline.
@@ -81,13 +146,55 @@ The months horizon should be until the end of the new lock-in period — that's 
                 <div className="bg-slate-50 rounded-lg px-4 py-3 text-xs text-slate-600 space-y-1">
                     <p className="font-semibold text-slate-700 text-xs uppercase tracking-wide mb-1">Reference from earlier steps</p>
                     {qualify.current_bank && <p>Current bank: <span className="font-medium text-slate-800">{qualify.current_bank}</span></p>}
-                    {qualify.current_rate && <p>Current rate: <span className="font-medium text-slate-800">{qualify.current_rate}%</span></p>}
+                    {qualify.year_rates && qualify.year_rates.length > 0 && (
+                        <p>Current rates: <span className="font-medium text-slate-800">
+                            {qualify.year_rates.map((r, i) => `Yr${i + 1}: ${r || '?'}%`).join(' / ')}
+                        </span></p>
+                    )}
                     {qualify.outstanding_loan && <p>Outstanding loan: <span className="font-medium text-slate-800">${qualify.outstanding_loan.toLocaleString()}</span></p>}
                     {qualify.rough_monthly_payment && <p>Current monthly payment: <span className="font-medium text-slate-800">${qualify.rough_monthly_payment.toLocaleString()}</span></p>}
                     {factFind.clawback_amount && factFind.clawback_amount > 0 && <p className="text-amber-700 font-semibold">⚠ Clawback: ${factFind.clawback_amount.toLocaleString()} (until {factFind.clawback_end_date ?? '?'})</p>}
                 </div>
             )}
 
+            {/* Eligibility check — auto-computed from income + property type */}
+            {eligibility !== undefined && (
+                <div className={`rounded-lg px-4 py-3 border ${qualifies ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                    <p className={`text-xs font-bold uppercase tracking-wide mb-2 flex items-center gap-1.5 ${qualifies ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        <Calculator size={12} /> Eligibility Check (auto-calculated)
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                        <div>
+                            <p className="text-slate-500 text-xs">Max eligible loan</p>
+                            <p className="font-bold text-slate-800">{fmt(eligibility)}</p>
+                            <p className="text-[10px] text-slate-400">at 4% stress rate</p>
+                        </div>
+                        {outstandingLoan && (
+                            <div>
+                                <p className="text-slate-500 text-xs">Refinancing loan</p>
+                                <p className="font-bold text-slate-800">{fmt(outstandingLoan)}</p>
+                            </div>
+                        )}
+                        {tdsrRatio !== undefined && (
+                            <div>
+                                <p className="text-slate-500 text-xs">TDSR usage</p>
+                                <p className={`font-bold ${tdsrRatio > TDSR_LIMIT * 100 ? 'text-red-700' : 'text-slate-800'}`}>
+                                    {tdsrRatio.toFixed(1)}%
+                                </p>
+                                <p className="text-[10px] text-slate-400">limit {TDSR_LIMIT * 100}%</p>
+                            </div>
+                        )}
+                    </div>
+                    <p className={`text-xs mt-2 font-medium ${qualifies ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {qualifies
+                            ? `✓ Client qualifies to refinance the full ${fmt(outstandingLoan ?? 0)}.`
+                            : `⚠ Income supports only ${fmt(eligibility)} — below the ${fmt(outstandingLoan ?? 0)} needed. May require a co-borrower or income top-up.`}
+                        {msrApplies && ` MSR (${MSR_LIMIT * 100}%) applies for ${factFind.property_type?.toUpperCase()}.`}
+                    </p>
+                </div>
+            )}
+
+            {/* Package recommendation */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
                     <Question label="Recommended package" required>
@@ -99,45 +206,53 @@ The months horizon should be until the end of the new lock-in period — that's 
                     <FieldInput type="number" value={data.new_rate} onChange={v => onChange({ new_rate: v ? parseFloat(v) : undefined })} placeholder="e.g. 2.75" suffix="%" />
                 </Question>
 
-                <Question label="New estimated monthly payment">
-                    <FieldInput type="number" value={data.new_monthly_payment} onChange={v => onChange({ new_monthly_payment: v ? parseFloat(v) : undefined })} placeholder="0" prefix="$" />
-                </Question>
-
-                <Question label="Monthly saving">
-                    <FieldInput type="number" value={data.monthly_saving} onChange={v => onChange({ monthly_saving: v ? parseFloat(v) : undefined })} placeholder="0" prefix="$" />
-                </Question>
-
-                {qualify.lock_in_status === 'in_lock_in' && (
-                    <Question label="Lock-in break penalty (1.5% of outstanding)">
-                        <FieldInput type="number" value={data.penalty_if_in_lockin} onChange={v => onChange({ penalty_if_in_lockin: v ? parseFloat(v) : undefined })} placeholder="0" prefix="$" />
+                <div>
+                    <Question label="New monthly payment (auto)">
+                        <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-800">
+                            {computedNewMonthly !== undefined ? fmt(computedNewMonthly) : <span className="text-slate-400 font-normal">Enter new rate above</span>}
+                        </div>
                     </Question>
-                )}
+                </div>
             </div>
 
-            {/* Auto-computed net savings */}
-            {netSaving2yr !== null && (
-                <div className={`rounded-lg px-4 py-3 border ${netSaving2yr > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                    <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${netSaving2yr > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                        Net savings estimate (auto-calculated)
+            {/* Auto-computed savings breakdown */}
+            {computedNewMonthly !== undefined && currentMonthly !== undefined && (
+                <div className={`rounded-lg px-4 py-3 border ${monthlySaving > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                    <p className={`text-xs font-bold uppercase tracking-wide mb-2 flex items-center gap-1.5 ${monthlySaving > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        <Calculator size={12} /> Savings (auto-calculated)
                     </p>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                         <div>
-                            <p className="text-slate-500 text-xs">Over 2 years</p>
-                            <p className={`font-bold ${netSaving2yr > 0 ? 'text-emerald-800' : 'text-red-700'}`}>
-                                {netSaving2yr >= 0 ? '+' : ''}{netSaving2yr > 0 ? `$${netSaving2yr.toLocaleString()}` : `−$${Math.abs(netSaving2yr).toLocaleString()}`}
+                            <p className="text-slate-500 text-xs">Current monthly</p>
+                            <p className="font-bold text-slate-800">{fmt(currentMonthly)}</p>
+                        </div>
+                        <div>
+                            <p className="text-slate-500 text-xs">New monthly</p>
+                            <p className="font-bold text-slate-800">{fmt(computedNewMonthly)}</p>
+                        </div>
+                        <div>
+                            <p className="text-slate-500 text-xs">Monthly saving</p>
+                            <p className={`font-bold ${monthlySaving > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                {monthlySaving >= 0 ? '+' : '−'}{fmt(Math.abs(monthlySaving))}
                             </p>
                         </div>
-                        {netSaving3yr !== null && (
+                        {netSaving2yr !== null && (
                             <div>
-                                <p className="text-slate-500 text-xs">Over 3 years</p>
-                                <p className={`font-bold ${netSaving3yr > 0 ? 'text-emerald-800' : 'text-red-700'}`}>
-                                    {netSaving3yr >= 0 ? '+' : ''}{netSaving3yr > 0 ? `$${netSaving3yr.toLocaleString()}` : `−$${Math.abs(netSaving3yr).toLocaleString()}`}
+                                <p className="text-slate-500 text-xs">Net / 2yr{clawback > 0 || penalty > 0 ? '*' : ''}</p>
+                                <p className={`font-bold ${netSaving2yr > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                    {netSaving2yr >= 0 ? '+' : '−'}{fmt(Math.abs(netSaving2yr))}
                                 </p>
                             </div>
                         )}
                     </div>
-                    {netSaving2yr <= 0 && (
-                        <p className="text-xs text-red-700 mt-2 font-medium">⚠ Net savings are negative — consider whether refinancing is actually beneficial for this client.</p>
+                    {(clawback > 0 || penalty > 0) && (
+                        <p className="text-[11px] text-slate-500 mt-2">
+                            * Net of {clawback > 0 ? `${fmt(clawback)} clawback` : ''}{clawback > 0 && penalty > 0 ? ' + ' : ''}{penalty > 0 ? `${fmt(penalty)} lock-in penalty` : ''}.
+                            {netSaving3yr !== null && ` Over 3 years: ${netSaving3yr >= 0 ? '+' : '−'}${fmt(Math.abs(netSaving3yr))}.`}
+                        </p>
+                    )}
+                    {monthlySaving <= 0 && (
+                        <p className="text-xs text-red-700 mt-2 font-medium">⚠ The new rate does not save money — reconsider the package or whether refinancing is worthwhile.</p>
                     )}
                 </div>
             )}

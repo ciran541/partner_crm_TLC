@@ -1,22 +1,52 @@
 'use client'
 
+import { useEffect } from 'react'
 import { RefinancingStep3_RiskSuitability, RefinancingStep2_FactFind } from '@/lib/types/workflow'
 import { Question, RadioGroup, FieldInput, FieldTextarea, ExpandableCard, ActionList, StepActions, CheckItem } from '../WorkflowStep'
+import { tdsrRatioForLoan, isMsrApplicable, TDSR_LIMIT, MSR_LIMIT } from '@/lib/insurance/loanCalc'
 
 interface Props {
     data: RefinancingStep3_RiskSuitability
     factFind: RefinancingStep2_FactFind
+    qualify: { outstanding_loan?: number; remaining_tenure?: number; lock_in_expiry?: string; current_bank?: string; year_rates?: string[] }
+    clientName?: string | null
     onChange: (patch: Partial<RefinancingStep3_RiskSuitability>) => void
     isComplete: boolean
     onMarkComplete: () => void
     onMarkIncomplete: () => void
 }
 
-export default function Step3RiskSuitability({ data, factFind, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
-    // Auto-compute TDSR if income is available
+function fmt(n: number) { return `$${Math.round(n).toLocaleString()}` }
+
+export default function Step3RiskSuitability({ data, factFind, qualify, clientName, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
+    const name = clientName || 'the client'
+    const clawback = factFind.clawback_amount
+    const clawbackEnd = factFind.clawback_end_date
+        ? new Date(factFind.clawback_end_date).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' })
+        : null
+    // Auto-compute TDSR. If we know the loan + tenure, compute the full TDSR
+    // including the stressed mortgage payment; otherwise fall back to existing-debt headroom.
     const income = (factFind.gross_monthly_income ?? 0) + (factFind.co_borrower_income ?? 0)
     const existingDebts = factFind.other_monthly_debts ?? 0
-    const tdsr = income > 0 ? Math.round(((existingDebts / income) * 100) * 10) / 10 : null
+    const loan = qualify.outstanding_loan
+    const tenure = qualify.remaining_tenure
+    const msrApplies = isMsrApplicable(factFind.property_type)
+
+    const tdsr = income > 0
+        ? (loan && tenure
+            ? Math.round(tdsrRatioForLoan({ loanAmount: loan, tenureYears: tenure, grossMonthlyIncome: income, existingMonthlyDebts: existingDebts }) * 10) / 10
+            : Math.round(((existingDebts / income) * 100) * 10) / 10)
+        : null
+
+    // Persist the computed TDSR + concern flag into workflow data
+    useEffect(() => {
+        if (tdsr === null) return
+        const concern = tdsr > 45
+        if (tdsr !== data.tdsr_computed || concern !== data.tdsr_concern) {
+            onChange({ tdsr_computed: tdsr, tdsr_concern: concern })
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tdsr])
 
     return (
         <div className="space-y-5 pt-4">
@@ -38,9 +68,11 @@ Floating rate means your payment moves with market rates — right now floating 
 Which do you think suits your situation better — certainty and stability, or flexibility and potentially lower cost?"`}
                 </ExpandableCard>
                 <ExpandableCard variant="script" title="Raising the clawback conversation">
-                    {`"I want to be upfront with you: because you received a [subsidy amount] subsidy, if you refinance before [clawback end date], you'd need to return that amount to your current bank. So we need to make sure the savings from the new rate more than cover that cost.
+                    {factFind.subsidy_received && clawback
+                        ? `"${name}, I want to be upfront about something important. Because of the ${fmt(clawback)} subsidy${qualify.current_bank ? ` from ${qualify.current_bank}` : ''}, if you refinance before ${clawbackEnd || 'the clawback expiry date'}, you'd need to return that ${fmt(clawback)} to your current bank.
 
-I've run the rough numbers — [explain net savings] — and [it does/does not] stack up. Let me show you exactly how I calculated that."`}
+So the new rate needs to save you more than ${fmt(clawback)} over the clawback period to make this worthwhile. I've run the rough numbers and [explain result]. Let me show you exactly how I calculated that."`
+                        : `"I want to be upfront with you: because you received a [subsidy amount] subsidy, if you refinance before [clawback end date], you'd need to return that to your current bank. We need to make sure the savings more than cover that cost. Fill in the clawback details in Step 2 to get the personalised version of this script."`}
                 </ExpandableCard>
                 <ExpandableCard variant="script" title="Handling the selling objection">
                     {`"If you're planning to sell in, say, 2 years, I want to make sure you're not taking a loan with a 3-year lock-in — because breaking out would cost you a penalty again.
@@ -61,27 +93,37 @@ TDSR concern: if TDSR is above 45% (not yet hard-stop at 55%, but approaching), 
                 <ExpandableCard variant="knowledge" title="How SORA works for floating packages">
                     {`SORA is the Singapore Overnight Rate Average, published daily by MAS. It replaced SIBOR as the benchmark for floating-rate mortgages from 2024.
 
-Most floating packages are quoted as "3M Compounded SORA + spread". Example: 3M SORA at 3.2% + spread 0.6% = effective rate 3.8%.
+Most floating packages are quoted as "1M Compounded SORA + spread" or "3M Compounded SORA + spread". Example: 3M SORA at 3.2% + spread 0.6% = effective rate 3.8%.
 
-SORA-linked packages have no floor rate, so they can drop when SORA drops — unlike old SIBOR/board rate packages. Clients with existing board rate packages are often significantly overpaying.`}
+1M SORA resets monthly — more responsive to rate changes. 3M SORA resets quarterly — slightly more stable month-to-month.
+
+SORA-linked packages have no floor rate, so they benefit when SORA drops. FD Rate packages are tied to a bank's fixed deposit rate — less transparent but sometimes competitive.`}
                 </ExpandableCard>
             </div>
 
-            {/* TDSR indicator */}
+            {/* TDSR / MSR indicator — auto-computed */}
             {tdsr !== null && (
-                <div className={`rounded-lg px-4 py-3 flex items-center gap-3 ${
-                    tdsr > 45 ? 'bg-amber-50 border border-amber-200' : 'bg-emerald-50 border border-emerald-200'
+                <div className={`rounded-lg px-4 py-3 ${
+                    tdsr > TDSR_LIMIT * 100 ? 'bg-red-50 border border-red-200'
+                    : tdsr > 45 ? 'bg-amber-50 border border-amber-200'
+                    : 'bg-emerald-50 border border-emerald-200'
                 }`}>
-                    <div>
-                        <p className={`text-sm font-semibold ${tdsr > 45 ? 'text-amber-800' : 'text-emerald-800'}`}>
-                            Estimated TDSR (existing debts only): {tdsr}%
-                        </p>
-                        <p className={`text-xs mt-0.5 ${tdsr > 45 ? 'text-amber-700' : 'text-emerald-700'}`}>
-                            {tdsr > 45
-                                ? 'Approaching the 55% limit — verify new mortgage payment fits within TDSR before proposing.'
-                                : 'Within safe range. Verify after adding the new mortgage payment.'}
-                        </p>
-                    </div>
+                    <p className={`text-sm font-semibold ${
+                        tdsr > TDSR_LIMIT * 100 ? 'text-red-800' : tdsr > 45 ? 'text-amber-800' : 'text-emerald-800'
+                    }`}>
+                        {loan && tenure ? 'TDSR with this refinancing' : 'TDSR (existing debts only)'}: {tdsr}%
+                        <span className="font-normal text-xs"> (limit {TDSR_LIMIT * 100}%)</span>
+                    </p>
+                    <p className={`text-xs mt-0.5 ${
+                        tdsr > TDSR_LIMIT * 100 ? 'text-red-700' : tdsr > 45 ? 'text-amber-700' : 'text-emerald-700'
+                    }`}>
+                        {tdsr > TDSR_LIMIT * 100
+                            ? '⚠ Exceeds the 55% TDSR limit — the bank will likely not approve at this loan/income. Consider a co-borrower or lower quantum.'
+                            : tdsr > 45
+                                ? 'Approaching the 55% limit — workable but limited headroom.'
+                                : 'Comfortably within the 55% limit.'}
+                        {msrApplies && ` Note: MSR (${MSR_LIMIT * 100}%) also applies for ${factFind.property_type?.toUpperCase()} — mortgage alone must stay under 30% of income.`}
+                    </p>
                 </div>
             )}
 
@@ -125,24 +167,21 @@ SORA-linked packages have no floor rate, so they can drop when SORA drops — un
                 </div>
 
                 <div className="sm:col-span-2">
-                    <Question label="Rate preference" required>
+                    <Question label="For the new package — rate preference?" required>
                         <RadioGroup
                             value={data.rate_preference}
-                            onChange={v => onChange({ rate_preference: v as any, fixed_tenure_preference: v !== 'fixed' ? undefined : data.fixed_tenure_preference })}
-                            options={[{ value: 'fixed', label: 'Fixed' }, { value: 'floating', label: 'Floating / SORA' }, { value: 'dont_mind', label: "Don't mind" }]}
+                            onChange={v => onChange({ rate_preference: v as any })}
+                            options={[
+                                { value: 'fixed', label: 'Fixed (first few years)' },
+                                { value: 'floating', label: 'Floating / SORA' },
+                                { value: 'dont_mind', label: "Don't mind" },
+                            ]}
                         />
                     </Question>
+                    <p className="text-xs text-slate-400 mt-1.5">
+                        "Fixed" means rate is fixed for the first 1–3 years, then reverts to floating.
+                    </p>
                 </div>
-
-                {data.rate_preference === 'fixed' && (
-                    <Question label="Preferred fixed tenure">
-                        <RadioGroup
-                            value={data.fixed_tenure_preference}
-                            onChange={v => onChange({ fixed_tenure_preference: v as any })}
-                            options={[{ value: '1yr', label: '1 year' }, { value: '2yr', label: '2 years' }, { value: '3yr', label: '3 years' }]}
-                        />
-                    </Question>
-                )}
 
                 <Question label="Payment sensitivity">
                     <RadioGroup

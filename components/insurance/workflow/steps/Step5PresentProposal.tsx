@@ -5,13 +5,26 @@ import { Question, RadioGroup, FieldInput, FieldTextarea, ExpandableCard, Action
 
 interface Props {
     data: RefinancingStep5_PresentProposal
+    qualify: { current_bank?: string; year_rates?: string[]; rough_monthly_payment?: number; outstanding_loan?: number; lock_in_expiry?: string }
+    factFind: { clawback_amount?: number; clawback_end_date?: string }
+    proposal: { recommended_package?: string; new_rate?: number; new_monthly_payment?: number; monthly_saving?: number; net_saving_2yr?: number }
+    clientName?: string | null
     onChange: (patch: Partial<RefinancingStep5_PresentProposal>) => void
     isComplete: boolean
     onMarkComplete: () => void
     onMarkIncomplete: () => void
 }
 
-export default function Step5PresentProposal({ data, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
+function fmt(n: number) { return `$${Math.round(n).toLocaleString()}` }
+
+export default function Step5PresentProposal({ data, qualify, factFind, proposal, clientName, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
+    const name = clientName || 'the client'
+    const currentRateDisplay = qualify.year_rates?.filter(r => r).length
+        ? qualify.year_rates.map((r, i) => `Yr${i + 1}: ${r}%`).join(' / ')
+        : null
+    const hasNumbers = !!(currentRateDisplay && qualify.rough_monthly_payment && proposal.new_rate && proposal.new_monthly_payment && proposal.monthly_saving)
+    const clawback = factFind.clawback_amount ?? 0
+
     return (
         <div className="space-y-5 pt-4">
             <ActionList actions={[
@@ -25,11 +38,21 @@ export default function Step5PresentProposal({ data, onChange, isComplete, onMar
 
             <div className="space-y-2">
                 <ExpandableCard variant="script" title="The recommendation opening">
-                    {`"I've done the full analysis for you. Here's where you are right now: [Bank], at [current rate]%, paying around $[monthly] per month.
+                    {hasNumbers
+                        ? `"${name}, I've done the full analysis for you. Here's where you are right now: ${qualify.current_bank || '[current bank]'} (${currentRateDisplay}), paying around ${fmt(qualify.rough_monthly_payment!)} per month.
 
-I've found a package that brings you to [new rate]% with [new bank] — that's $[saving] less per month. After accounting for the $[clawback] clawback, you're still saving $[net] net over [period].
+I've found a package — ${proposal.recommended_package || '[package]'} at ${proposal.new_rate}% — that brings your monthly payment down to ${fmt(proposal.new_monthly_payment!)}. That's ${fmt(proposal.monthly_saving!)} less every month.${
+    clawback > 0
+        ? ` After accounting for the ${fmt(clawback)} clawback, you're still saving ${proposal.net_saving_2yr !== undefined ? fmt(Math.max(0, proposal.net_saving_2yr)) : '[net saving]'} net over 2 years.`
+        : ` Over 2 years, that's ${fmt(proposal.monthly_saving! * 24)} in total savings.`
+}
 
-I'd recommend you take this. Would you like to proceed?"`}
+I'd recommend you take this. Would you like to proceed?"`
+                        : `"[Name], I've done the full analysis for you. Here's where you are right now: [Bank], at [current rate]%, paying around $[monthly] per month.
+
+I've found a package that brings you to [new rate]% — that's $[saving] less per month.${clawback > 0 ? ` After accounting for the $${clawback.toLocaleString()} clawback, you're still saving $[net] net over 2 years.` : ''}
+
+Complete Steps 1–4 to get the personalised version of this script with actual numbers."`}
                 </ExpandableCard>
                 <ExpandableCard variant="script" title='When they say "Let me think about it"'>
                     {`"Absolutely, take your time. The one thing I'd flag is: if your lock-in expires in [date], we ideally need to start the process [X weeks] before that to avoid any gap. The bank submission and approval process takes about 4–6 weeks.

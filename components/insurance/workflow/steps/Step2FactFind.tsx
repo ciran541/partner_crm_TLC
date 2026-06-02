@@ -1,17 +1,49 @@
 'use client'
 
-import { RefinancingStep2_FactFind } from '@/lib/types/workflow'
+import { RefinancingStep2_FactFind, FloatingRateType } from '@/lib/types/workflow'
 import { Question, RadioGroup, FieldInput, FieldTextarea, ExpandableCard, ActionList, StepActions, CheckItem } from '../WorkflowStep'
+
+const FLOATING_RATE_TYPES: FloatingRateType[] = ['1M SORA', '3M SORA', 'FD Rate']
+const MAX_FIXED_YEARS = 5
+
+function YearPills({ max, value, onChange, minValue = 1 }: {
+    max: number; value?: number; onChange: (v: number) => void; minValue?: number
+}) {
+    return (
+        <div className="flex flex-wrap gap-2">
+            {Array.from({ length: max }, (_, i) => i + 1)
+                .filter(yr => yr >= minValue)
+                .map(yr => (
+                    <button key={yr} type="button" onClick={() => onChange(yr)}
+                        className={`w-10 h-9 rounded-lg border text-sm font-semibold transition-all ${
+                            value === yr
+                                ? 'bg-[#052d4a] border-[#052d4a] text-white'
+                                : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
+                        }`}>{yr}</button>
+                ))}
+        </div>
+    )
+}
 
 interface Props {
     data: RefinancingStep2_FactFind
+    qualify: { outstanding_loan?: number; lock_in_expiry?: string; current_bank?: string }
+    clientName?: string | null
     onChange: (patch: Partial<RefinancingStep2_FactFind>) => void
     isComplete: boolean
     onMarkComplete: () => void
     onMarkIncomplete: () => void
 }
 
-export default function Step2FactFind({ data, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
+function fmt(n: number) { return `$${Math.round(n).toLocaleString()}` }
+
+export default function Step2FactFind({ data, qualify, clientName, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
+    const name = clientName || 'the client'
+    const clawbackAmt = data.clawback_amount
+    const clawbackEnd = data.clawback_end_date
+        ? new Date(data.clawback_end_date).toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' })
+        : null
+
     return (
         <div className="space-y-5 pt-4">
             <ActionList actions={[
@@ -25,16 +57,19 @@ export default function Step2FactFind({ data, onChange, isComplete, onMarkComple
 
             <div className="space-y-2">
                 <ExpandableCard variant="script" title="How to ask about income without making it feel like an interrogation">
-                    {`"For the bank application, they'll need to verify your income — don't worry, at this stage I just need a rough figure so I can check the numbers make sense before we go any further. What's your approximate gross monthly income? That's before CPF deductions."
+                    {`"${name}, for the bank application they'll need to verify your income — don't worry, at this stage I just need a rough figure to check the numbers make sense before we go further. What's your approximate gross monthly income? That's before CPF deductions."
 
 If self-employed:
 "For self-employed clients, banks typically use your Notice of Assessment from IRAS for the last 2 years. Do you have a rough idea of your declared annual income?"`}
                 </ExpandableCard>
                 <ExpandableCard variant="script" title="The clawback question — how to handle it if they don't know">
-                    {`"When you first took this loan, did the bank give you any cashback, legal fee subsidy, or any other payment? Sometimes it's $1,000, $2,000, even $3,000 depending on the loan size. If they did, there's usually a clawback clause — meaning if you refinance before a certain date, you'd have to return that money."
+                    {data.subsidy_received && clawbackAmt
+                        ? `${name} has a clawback of ${fmt(clawbackAmt)}${clawbackEnd ? ` expiring on ${clawbackEnd}` : ''}. When presenting any refinancing option, factor this cost into the net savings — the new rate needs to save more than ${fmt(clawbackAmt)} to make the switch worthwhile.
 
-If they're unsure:
-"Don't worry — it'll be in your original Letter of Offer or a separate subsidy letter from the bank. Could you dig that out? It's important because we need to factor it into whether refinancing actually makes financial sense."`}
+Script: "I want to be upfront — because of the ${fmt(clawbackAmt)} subsidy from ${qualify.current_bank || 'your current bank'}, if you refinance before ${clawbackEnd || 'the clawback expiry'}, you'd need to return that amount. So we need the savings to cover that first. Let me run those numbers for you."`
+                        : `"When you first took this loan, did the bank give you any cashback, legal fee subsidy, or any other payment? Sometimes it's $1,000, $2,000, even $3,000 depending on the loan size. If they did, there's usually a clawback clause.
+
+If unsure: 'It'll be in your original Letter of Offer or a separate subsidy letter. Could you dig that out? It's important because we need to factor it into whether refinancing makes financial sense.'"`}
                 </ExpandableCard>
                 <ExpandableCard variant="knowledge" title="TDSR calculation — what you need to know">
                     {`TDSR (Total Debt Servicing Ratio) is capped at 55% of gross monthly income.
@@ -77,17 +112,89 @@ Note whether CPF is used monthly, as this affects cashflow analysis.`}
                     />
                 </Question>
 
-                <Question label="Current interest type">
-                    <RadioGroup
-                        value={data.interest_type}
-                        onChange={v => onChange({ interest_type: v as any })}
-                        options={[
-                            { value: 'fixed', label: 'Fixed' },
-                            { value: 'floating', label: 'Floating / SORA' },
-                            { value: 'board_rate', label: 'Board Rate' },
-                        ]}
-                    />
-                </Question>
+                <div className="sm:col-span-2">
+                    <Question label="Current package type">
+                        <RadioGroup
+                            value={data.interest_type}
+                            onChange={v => onChange({
+                                interest_type: v as any,
+                                fixed_years: v === 'floating' ? undefined : data.fixed_years,
+                                lock_in_years: undefined,
+                                year_rates: [],
+                                floating_rate_type: v === 'fixed' ? undefined : data.floating_rate_type,
+                            })}
+                            options={[
+                                { value: 'fixed', label: 'Fixed' },
+                                { value: 'floating', label: 'Floating / SORA' },
+                            ]}
+                        />
+                    </Question>
+                </div>
+
+                {data.interest_type === 'fixed' && (
+                    <div className="sm:col-span-2 pl-4 border-l-2 border-slate-200 space-y-1">
+                        <Question label="Fixed for how many years?">
+                            <YearPills max={MAX_FIXED_YEARS} value={data.fixed_years}
+                                onChange={yr => onChange({ fixed_years: yr, lock_in_years: undefined, year_rates: [] })} />
+                        </Question>
+                    </div>
+                )}
+
+                {data.interest_type && (data.interest_type === 'floating' || data.fixed_years) && (
+                    <div className="sm:col-span-2 pl-4 border-l-2 border-slate-200 space-y-1">
+                        <Question label="Total lock-in period">
+                            <YearPills max={MAX_FIXED_YEARS} value={data.lock_in_years}
+                                minValue={data.interest_type === 'fixed' ? (data.fixed_years ?? 1) : 1}
+                                onChange={yr => onChange({ lock_in_years: yr, year_rates: Array(yr).fill('') })} />
+                        </Question>
+                        <p className="text-xs text-slate-400">Total years locked in with the current bank.</p>
+                    </div>
+                )}
+
+                {data.interest_type && data.lock_in_years && (
+                    (data.interest_type === 'floating' || (data.fixed_years !== undefined && data.lock_in_years > data.fixed_years))
+                ) && (
+                    <div className="sm:col-span-2 pl-4 border-l-2 border-slate-200">
+                        <Question label="Floating rate benchmark (for floating years)">
+                            <RadioGroup
+                                value={data.floating_rate_type}
+                                onChange={v => onChange({ floating_rate_type: v as FloatingRateType })}
+                                options={FLOATING_RATE_TYPES.map(rt => ({ value: rt, label: rt }))}
+                            />
+                        </Question>
+                    </div>
+                )}
+
+                {data.lock_in_years && data.lock_in_years > 0 && (
+                    <div className="sm:col-span-2 space-y-2">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Interest Rate by Year</p>
+                        {Array.from({ length: data.lock_in_years }, (_, i) => {
+                            const isFixed = data.interest_type === 'fixed' && i < (data.fixed_years ?? 0)
+                            return (
+                                <div key={i} className="flex items-center gap-3">
+                                    <span className="text-xs font-bold text-slate-400 w-10 shrink-0">Yr {i + 1}</span>
+                                    <div className="relative flex-1">
+                                        <input
+                                            type="number" step="0.01"
+                                            value={data.year_rates?.[i] ?? ''}
+                                            onChange={e => {
+                                                const rates = [...(data.year_rates ?? Array(data.lock_in_years).fill(''))]
+                                                rates[i] = e.target.value
+                                                onChange({ year_rates: rates })
+                                            }}
+                                            placeholder="0.00"
+                                            className="w-full py-2 pl-3 pr-8 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-semibold pointer-events-none">%</span>
+                                    </div>
+                                    <span className={`text-xs font-bold w-28 shrink-0 ${isFixed ? 'text-[#052d4a]' : 'text-sky-600'}`}>
+                                        {isFixed ? 'Fixed' : (data.floating_rate_type ?? 'Floating')}
+                                    </span>
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
 
                 <Question label="Property address">
                     <FieldInput value={data.property_address} onChange={v => onChange({ property_address: v })} placeholder="Block / street…" />
