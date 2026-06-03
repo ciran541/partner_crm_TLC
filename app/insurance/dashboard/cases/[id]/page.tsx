@@ -13,6 +13,8 @@ import {
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
+import Skeleton from '@/components/shared/Skeleton'
+import { refreshCases } from '@/lib/insurance/useCases'
 
 type TabKey = 'overview' | 'workflow' | 'closure'
 
@@ -74,7 +76,7 @@ export default function CaseDetailPage() {
     const loadCase = async () => {
         setLoading(true)
         const { data: { user } } = await supabase.auth.getUser()
-        if (!user) { router.push('/login'); return }
+        if (!user) { router.push('/insurance/login'); return }
 
         const { data: profile } = await supabase
             .from('profiles').select('role').eq('id', user.id).single()
@@ -121,6 +123,7 @@ export default function CaseDetailPage() {
             setAlert({ type: 'error', message: err })
         } else {
             await loadCase()
+            refreshCases() // keep dashboard / cases-list cache in sync
             setIsEditing(false)
             setAlert({ type: 'success', message: 'Case updated successfully.' })
         }
@@ -191,6 +194,7 @@ export default function CaseDetailPage() {
         setCaseData(prev => prev ? { ...prev, stage: newStage as PipelineStage } : prev)
         const err = await persistCaseUpdate({ stage: newStage })
         if (err) setAlert({ type: 'error', message: `Stage update failed: ${err}` })
+        else refreshCases() // keep dashboard / cases-list cache in sync
     }, [caseData, persistCaseUpdate])
 
     const handleSave = () => {
@@ -210,8 +214,12 @@ export default function CaseDetailPage() {
     }
 
     if (loading) return (
-        <div className="flex items-center justify-center py-20">
-            <Spinner size="md" color="#03a9e7" label="Loading case…" />
+        <div className="max-w-4xl mx-auto" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <Skeleton height={18} width={130} radius={6} />
+            <Skeleton height={36} width={260} radius={8} />
+            <Skeleton height={92} radius={14} />
+            <Skeleton height={42} width={300} radius={12} />
+            <Skeleton height={220} radius={14} />
         </div>
     )
     if (!caseData) return null
@@ -240,7 +248,7 @@ export default function CaseDetailPage() {
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
                         <div className="flex items-center gap-3 flex-wrap">
-                            <h1 className="text-2xl font-bold text-[#052d4a]">
+                            <h1 className="ios-page-title">
                                 {caseData.client_name || 'Unnamed Case'}
                             </h1>
                             <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-100">

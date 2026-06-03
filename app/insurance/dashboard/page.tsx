@@ -1,192 +1,245 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabaseClient'
-import { Case } from '@/lib/types'
-import { Plus, Briefcase, TrendingUp, Clock, ChevronRight, AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import {
+    Plus, Briefcase, TrendingUp, Clock, ChevronRight,
+    AlertTriangle, AlertCircle, ArrowRight,
+} from 'lucide-react'
+import StatsCard from '@/components/shared/StatsCard'
+import UrgencyBanner from '@/components/shared/UrgencyBanner'
+import Skeleton from '@/components/shared/Skeleton'
+import EmptyState from '@/components/shared/EmptyState'
+import { formatDate } from '@/lib/utils/formatDate'
+import { useCases } from '@/lib/insurance/useCases'
+import type { Case } from '@/lib/types'
+
+const STAGE_BADGE: Record<string, { bg: string; text: string }> = {
+    'Closed Won': { bg: '#d1fae5', text: '#065f46' },
+    'Closed Lost': { bg: '#fee2e2', text: '#991b1b' },
+    'Pending Approval': { bg: '#fff7ed', text: '#9a3412' },
+    'Pending Signature': { bg: '#fef3c7', text: '#92400e' },
+}
+const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
+
+function stageBadge(stage: string) {
+    return STAGE_BADGE[stage] ?? DEFAULT_STAGE_BADGE
+}
+
+function computeStats(cases: Case[]) {
+    const now = new Date()
+    const in90Days = new Date(now)
+    in90Days.setDate(now.getDate() + 90)
+
+    return {
+        total: cases.length,
+        active: cases.filter(c => c.stage !== 'Closed Won' && c.stage !== 'Closed Lost').length,
+        closedWon: cases.filter(c => c.stage === 'Closed Won').length,
+        upcomingLockIns: cases.filter(c => {
+            if (!c.lock_in_end_date || c.stage === 'Closed Lost') return false
+            const d = new Date(c.lock_in_end_date)
+            return d >= now && d <= in90Days
+        }).length,
+    }
+}
 
 export default function DashboardHome() {
     const router = useRouter()
-    const [stats, setStats] = useState({
-        totalCases: 0,
-        activeCases: 0,
-        closedWon: 0,
-        upcomingLockIns: 0
-    })
-    const [recentCases, setRecentCases] = useState<Case[]>([])
-    const [loading, setLoading] = useState(true)
-    const [user, setUser] = useState<any>(null)
+    const { cases, loading, error } = useCases()
 
-    useEffect(() => {
-        loadDashboardData()
-    }, [])
+    const stats = computeStats(cases)
+    const recentCases = cases.slice(0, 5)
 
-    const loadDashboardData = async () => {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-            router.push('/login')
-            return
-        }
-        setUser(user)
-
-        // Fetch metrics
-        const { data: cases } = await supabase
-            .from('cases')
-            .select('*')
-            .order('updated_at', { ascending: false })
-
-        if (cases) {
-            const now = new Date()
-            const ninetyDaysFromNow = new Date()
-            ninetyDaysFromNow.setDate(now.getDate() + 90)
-
-            const lockIns = cases.filter(c => {
-                if (!c.lock_in_end_date || c.stage === 'Closed Lost') return false
-                const d = new Date(c.lock_in_end_date)
-                return d >= now && d <= ninetyDaysFromNow
-            })
-
-            setStats({
-                totalCases: cases.length,
-                activeCases: cases.filter(c => c.stage !== 'Closed Won' && c.stage !== 'Closed Lost').length,
-                closedWon: cases.filter(c => c.stage === 'Closed Won').length,
-                upcomingLockIns: lockIns.length
-            })
-            setRecentCases(cases.slice(0, 5)) // Top 5 recent
-        }
-        setLoading(false)
-    }
-
-    if (loading) return <div>Loading dashboard...</div>
+    const hour = new Date().getHours()
+    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
 
     return (
-        <div className="space-y-8">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                 <div>
-                    <h1 className="text-2xl font-bold text-[#052d4a]">Dashboard</h1>
-                    <p className="text-slate-500">Welcome back, {user?.email?.split('@')[0]}</p>
+                    <h1 className="ios-page-title">{greeting}</h1>
+                    <p className="page-subtitle">Here&apos;s your pipeline overview.</p>
                 </div>
                 <button
                     onClick={() => router.push('/insurance/dashboard/cases/new')}
-                    className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
+                    className="btn-primary btn-sm"
+                    style={{ flexShrink: 0 }}
                 >
-                    <Plus size={18} />
-                    <span>New Case</span>
+                    <Plus size={15} />
+                    New Case
                 </button>
             </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                <StatsCard
-                    title="Total Cases"
-                    value={stats.totalCases}
-                    icon={Briefcase}
-                    color="#03a9e7"
-                />
-                <StatsCard
-                    title="Active Pipeline"
-                    value={stats.activeCases}
-                    icon={Clock}
-                    color="#f59e0b"
-                />
-                <StatsCard
-                    title="Closed Won"
-                    value={stats.closedWon}
-                    icon={TrendingUp}
-                    color="#10b981"
-                />
-                <div onClick={() => router.push('/insurance/dashboard/cases/lock-in-end')} className="cursor-pointer">
-                    <StatsCard
-                        title="Upcoming Lock-ins"
-                        value={stats.upcomingLockIns}
-                        icon={AlertTriangle}
-                        color="#ef4444"
-                    />
+            {loading && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }} className="lg:grid-cols-4">
+                        {[0, 1, 2, 3].map(i => <Skeleton key={i} height={104} radius={14} />)}
+                    </div>
+                    <div style={{ display: 'grid', gap: 20 }} className="lg:grid-cols-2">
+                        <Skeleton height={300} radius={14} />
+                        <Skeleton height={300} radius={14} />
+                    </div>
                 </div>
-            </div>
+            )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Recent Cases Widget */}
-                <div className="card p-6">
-                    <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-lg font-bold text-[#052d4a]">Recent Cases</h2>
-                        <a href="/insurance/dashboard/cases" className="text-sm font-medium text-[#03a9e7] hover:underline">View All</a>
+            {error && !loading && (
+                <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626', fontSize: 14 }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                    {error}
+                </div>
+            )}
+
+            {!loading && !error && (
+                <>
+                    {/* Stats grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }} className="lg:grid-cols-4">
+                        <StatsCard
+                            title="Total Cases"
+                            value={stats.total}
+                            icon={Briefcase}
+                            color="#03a9e7"
+                            onClick={() => router.push('/insurance/dashboard/cases')}
+                        />
+                        <StatsCard
+                            title="Active Pipeline"
+                            value={stats.active}
+                            icon={Clock}
+                            color="#f59e0b"
+                            onClick={() => router.push('/insurance/dashboard/cases')}
+                        />
+                        <StatsCard
+                            title="Closed Won"
+                            value={stats.closedWon}
+                            icon={TrendingUp}
+                            color="#10b981"
+                        />
+                        <StatsCard
+                            title="Upcoming Lock-ins"
+                            value={stats.upcomingLockIns}
+                            icon={AlertTriangle}
+                            color="#f59e0b"
+                            subtitle="within 90 days"
+                            variant="alert"
+                            onClick={() => router.push('/insurance/dashboard/cases/lock-in-end')}
+                        />
                     </div>
 
-                    {recentCases.length === 0 ? (
-                        <div className="text-center py-8 text-slate-400">
-                            No recent activity.
-                        </div>
-                    ) : (
-                        <div className="space-y-4">
-                            {recentCases.map(c => (
-                                <div key={c.id}
-                                    onClick={() => router.push(`/insurance/dashboard/cases/${c.id}`)}
-                                    className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors group"
+                    {/* Urgency banner */}
+                    <UrgencyBanner
+                        count={stats.upcomingLockIns}
+                        onAction={() => router.push('/insurance/dashboard/cases/lock-in-end')}
+                        actionLabel="Review"
+                    />
+
+                    {/* Bottom two-column */}
+                    <div style={{ display: 'grid', gap: 20 }} className="lg:grid-cols-2">
+                        {/* Recent Cases */}
+                        <div className="card" style={{ padding: 24 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                                <span className="section-label" style={{ marginBottom: 0 }}>Recent Cases</span>
+                                <button
+                                    onClick={() => router.push('/insurance/dashboard/cases')}
+                                    style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                                        background: 'none', border: 'none', cursor: 'pointer',
+                                        color: '#03a9e7', fontSize: 12, fontWeight: 600,
+                                    }}
                                 >
-                                    <div className="flex items-center gap-3 min-w-0">
-                                        <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center font-bold shrink-0">
-                                            {c.client_name ? c.client_name[0].toUpperCase() : '?'}
-                                        </div>
-                                        <div className="min-w-0">
-                                            <div className="font-semibold text-slate-900 truncate">{c.client_name || 'Unnamed Client'}</div>
-                                            <div className="text-xs text-slate-500">{c.stage}</div>
-                                        </div>
-                                    </div>
-                                    <ChevronRight size={16} className="text-slate-300 group-hover:text-slate-400 transition-colors" />
+                                    View all <ArrowRight size={12} />
+                                </button>
+                            </div>
+
+                            {recentCases.length === 0 ? (
+                                <EmptyState
+                                    icon={Briefcase}
+                                    iconColor="#03a9e7"
+                                    title="No cases yet"
+                                    description="Create your first case to start tracking your pipeline."
+                                    action={{ label: 'Create First Case', onClick: () => router.push('/insurance/dashboard/cases/new') }}
+                                />
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    {recentCases.map(c => {
+                                        const badge = stageBadge(c.stage)
+                                        return (
+                                            <button
+                                                key={c.id}
+                                                onClick={() => router.push(`/insurance/dashboard/cases/${c.id}`)}
+                                                className="pressable"
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: 12,
+                                                    padding: '10px 12px', borderRadius: 10,
+                                                    background: 'none', border: 'none', cursor: 'pointer',
+                                                    textAlign: 'left', width: '100%',
+                                                }}
+                                                onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                                                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                                            >
+                                                <div style={{
+                                                    width: 38, height: 38, borderRadius: '50%',
+                                                    background: '#e0f2fe', color: '#0369a1',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    fontWeight: 700, flexShrink: 0,
+                                                }}>
+                                                    {c.client_name ? c.client_name[0].toUpperCase() : '?'}
+                                                </div>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <p style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        {c.client_name || 'Unnamed Client'}
+                                                    </p>
+                                                    <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+                                                        {c.case_type} · {formatDate(c.created_at)}
+                                                    </p>
+                                                </div>
+                                                <span className="status-badge" style={{ color: badge.text, background: badge.bg, flexShrink: 0 }}>
+                                                    {c.stage}
+                                                </span>
+                                                <ChevronRight size={16} color="#cbd5e1" style={{ flexShrink: 0 }} />
+                                            </button>
+                                        )
+                                    })}
                                 </div>
-                            ))}
+                            )}
                         </div>
-                    )}
-                </div>
 
-                {/* Quick Actions / Promo Widget */}
-                <div className="card" style={{ padding: '24px', background: 'linear-gradient(135deg, #052d4a 0%, #0284c7 100%)', color: 'white' }}>
-                    <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px' }}>Grow Your Business</h2>
-                    <p style={{ opacity: 0.9, marginBottom: '24px', lineHeight: 1.5 }}>
-                        Track your mortgage cases efficiently. Ensure you follow up with "Pending Signature" cases to close deals faster.
-                    </p>
-                    <button
-                        onClick={() => router.push('/insurance/dashboard/cases')}
-                        style={{
-                            background: 'white',
-                            color: '#052d4a',
-                            padding: '10px 20px',
-                            borderRadius: '6px',
-                            border: 'none',
-                            fontWeight: '600',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        Go to Pipeline
-                    </button>
-                </div>
-            </div>
-        </div>
-    )
-}
-
-function StatsCard({ title, value, icon: Icon, color }: { title: string, value: number, icon: any, color: string }) {
-    return (
-        <div className="card" style={{ padding: '24px', display: 'flex', alignItems: 'center', gap: '20px' }}>
-            <div style={{
-                width: 56,
-                height: 56,
-                borderRadius: '12px',
-                background: `${color}15`,
-                color: color,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-            }}>
-                <Icon size={28} />
-            </div>
-            <div>
-                <div style={{ fontSize: '14px', color: '#64748b', fontWeight: '500' }}>{title}</div>
-                <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#0f172a', lineHeight: 1.2 }}>{value}</div>
-            </div>
+                        {/* Promo / quick action */}
+                        <div
+                            className="card"
+                            style={{
+                                padding: 24,
+                                background: 'linear-gradient(135deg, #052d4a 0%, #0284c7 100%)',
+                                display: 'flex', flexDirection: 'column', gap: 16,
+                            }}
+                        >
+                            <div style={{
+                                width: 42, height: 42, borderRadius: 11,
+                                background: 'rgba(255,255,255,0.18)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            }}>
+                                <Briefcase size={20} color="white" />
+                            </div>
+                            <div>
+                                <h3 style={{ fontSize: 18, fontWeight: 700, color: 'white' }}>Grow Your Business</h3>
+                                <p style={{ fontSize: 13, color: '#e0f2fe', marginTop: 6, lineHeight: 1.5 }}>
+                                    Track your mortgage cases efficiently. Follow up with &quot;Pending Signature&quot; cases to close deals faster.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => router.push('/insurance/dashboard/cases')}
+                                className="pressable"
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                    width: '100%', padding: '12px 0', borderRadius: 9,
+                                    background: 'white', color: '#052d4a',
+                                    fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
+                                }}
+                            >
+                                Go to Pipeline <ArrowRight size={14} />
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 }

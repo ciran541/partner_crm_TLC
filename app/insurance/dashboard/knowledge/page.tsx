@@ -8,6 +8,8 @@ import KnowledgeAsk from '@/components/insurance/knowledge/KnowledgeAsk'
 import KnowledgeEditorModal from '@/components/insurance/knowledge/KnowledgeEditorModal'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
+import Skeleton from '@/components/shared/Skeleton'
+import EmptyState from '@/components/shared/EmptyState'
 import { BookOpen, Plus, Pencil, Trash2, Search, RefreshCcw, HelpCircle } from 'lucide-react'
 
 export default function KnowledgePage() {
@@ -38,10 +40,10 @@ function AgentSearchView() {
     return (
         <div className="max-w-2xl mx-auto space-y-5">
             <div>
-                <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
+                <h1 className="ios-page-title flex items-center gap-2">
                     <BookOpen size={24} className="text-[#03a9e7]" /> Knowledge
                 </h1>
-                <p className="text-sm text-slate-500 mt-1">Ask anything about the mortgage process — you&apos;ll get a direct answer from TLC&apos;s playbook.</p>
+                <p className="page-subtitle">Ask anything about the mortgage process — you&apos;ll get a direct answer from TLC&apos;s playbook.</p>
             </div>
             <div className="card p-5">
                 <KnowledgeAsk autoFocus />
@@ -143,10 +145,10 @@ function AdminRepository() {
         <div className="max-w-5xl mx-auto space-y-5">
             <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
-                    <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
+                    <h1 className="ios-page-title flex items-center gap-2">
                         <BookOpen size={24} className="text-[#03a9e7]" /> Knowledge Repository
                     </h1>
-                    <p className="text-sm text-slate-500 mt-1">The master library. Agents only see this via contextual surfacing and search.</p>
+                    <p className="page-subtitle">The master library. Agents only see this via contextual surfacing and search.</p>
                 </div>
                 <div className="flex items-center gap-2">
                     <button onClick={handleReindex} disabled={reindexing} title="Rebuild semantic search embeddings for all articles"
@@ -210,9 +212,17 @@ function AdminRepository() {
             </div>
 
             {loading ? (
-                <div className="flex justify-center py-16"><Spinner size="md" color="#03a9e7" label="Loading articles…" /></div>
+                <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={44} radius={10} />)}
+                </div>
             ) : filtered.length === 0 ? (
-                <div className="card p-10 text-center text-slate-400 text-sm">No articles found.</div>
+                <EmptyState
+                    icon={BookOpen}
+                    iconColor="#03a9e7"
+                    title={search || categoryFilter ? 'No articles match' : 'No articles yet'}
+                    description={search || categoryFilter ? 'Try a different search term or category filter.' : 'Create your first knowledge article to get started.'}
+                    action={search || categoryFilter ? undefined : { label: '+ New Article', onClick: () => { setEditing(null); setEditorOpen(true) } }}
+                />
             ) : (
                 <div className="card overflow-hidden">
                     <table className="w-full text-sm">

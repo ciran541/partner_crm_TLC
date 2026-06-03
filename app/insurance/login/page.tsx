@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { Lock, Mail, ArrowRight } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
+import InlineAlert from '@/components/shared/InlineAlert'
 
 export default function InsuranceLogin() {
     const router = useRouter()
@@ -75,13 +76,8 @@ export default function InsuranceLogin() {
                 {/* Card */}
                 <div className="card-elevated" style={{ padding: '36px 32px' }}>
                     {error && (
-                        <div style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '10px 14px', borderRadius: 9,
-                            background: '#fef2f2', border: '1px solid #fecaca',
-                            color: '#991b1b', fontSize: 13, fontWeight: 500, marginBottom: 20,
-                        }}>
-                            {error}
+                        <div style={{ marginBottom: 20 }}>
+                            <InlineAlert type="error" message={error} onDismiss={() => setError(null)} />
                         </div>
                     )}
 

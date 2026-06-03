@@ -247,7 +247,7 @@ function PropertyCasesContent() {
                     </div>
 
                     {/* Mobile card list */}
-                    <div className="md:hidden" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div className="md:hidden flex flex-col gap-2.5">
                         {cases.map(c => {
                             const isOpDue = c.status === 'opportunity_due'
                             return (

@@ -7,6 +7,7 @@ import { CaseType } from '@/lib/types'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
+import { refreshCases } from '@/lib/insurance/useCases'
 import { ArrowLeft, Zap, RefreshCcw, ShoppingCart, Users, TrendingUp, Scale } from 'lucide-react'
 
 const CASE_TYPES: { type: CaseType; icon: React.ElementType; description: string }[] = [
@@ -42,7 +43,7 @@ export default function NewCasePage() {
 
         try {
             const { data: { user } } = await supabase.auth.getUser()
-            if (!user) { router.push('/login'); return }
+            if (!user) { router.push('/insurance/login'); return }
 
             const payload: Record<string, unknown> = {
                 case_type: caseType,
@@ -70,6 +71,9 @@ export default function NewCasePage() {
 
             if (insertError) throw new Error(insertError.message)
 
+            // Keep the shared cases cache (dashboard / list) in sync with the new case.
+            refreshCases()
+
             if (openWorkflow && data.case_type === 'Refinancing') {
                 router.push(`/insurance/dashboard/cases/${data.id}?tab=workflow`)
             } else {
@@ -92,8 +96,8 @@ export default function NewCasePage() {
                 >
                     <ArrowLeft size={15} /> Back to Cases
                 </button>
-                <h1 className="text-2xl font-bold text-[#052d4a]">New Case</h1>
-                <p className="text-sm text-slate-500 mt-1">Cases start at <strong>Touched Base</strong>. All additional details can be filled in after creation.</p>
+                <h1 className="ios-page-title">New Case</h1>
+                <p className="page-subtitle">Cases start at <strong>Touched Base</strong>. All additional details can be filled in after creation.</p>
             </div>
 
             {error && <InlineAlert type="error" message={error} onDismiss={() => setError(null)} />}

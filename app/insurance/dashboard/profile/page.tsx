@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
-import { User, Mail, Shield, Lock, Check, Eye, EyeOff } from 'lucide-react'
+import { User, Mail, Shield, Lock, Check, Eye, EyeOff, Users, TrendingUp, ChevronRight } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
+import Skeleton from '@/components/shared/Skeleton'
 
 export default function InsuranceProfilePage() {
     const [loading, setLoading] = useState(true)
@@ -99,8 +101,11 @@ export default function InsuranceProfilePage() {
     }
 
     if (loading) return (
-        <div className="flex items-center justify-center py-20">
-            <Spinner size="md" color="#03a9e7" label="Loading profile…" />
+        <div className="space-y-6 max-w-2xl">
+            <Skeleton height={36} width={200} radius={8} />
+            <Skeleton height={140} radius={14} />
+            <Skeleton height={120} radius={14} />
+            <Skeleton height={260} radius={14} />
         </div>
     )
 
@@ -112,11 +117,11 @@ export default function InsuranceProfilePage() {
     return (
         <div className="space-y-6 max-w-2xl">
             <div>
-                <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
+                <h1 className="ios-page-title flex items-center gap-2">
                     <User size={26} className="text-[#03a9e7]" />
                     My Profile
                 </h1>
-                <p className="text-slate-500 text-sm mt-1">Manage your account details and password.</p>
+                <p className="page-subtitle">Manage your account details and password.</p>
             </div>
 
             {/* Account Info */}
@@ -141,6 +146,31 @@ export default function InsuranceProfilePage() {
                     </div>
                 </div>
             </div>
+
+            {/* Admin tools — surfaced here so mobile admins can reach them (not in the bottom tab bar) */}
+            {(role === 'admin' || role === 'super_admin') && (
+                <div className="card p-6">
+                    <h2 className="text-base font-semibold text-slate-800 mb-4">Admin Tools</h2>
+                    <div className="space-y-2">
+                        <Link href="/insurance/dashboard/users" className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:border-[#03a9e7] hover:bg-sky-50/50 transition-colors">
+                            <div className="w-9 h-9 rounded-lg bg-sky-50 text-[#03a9e7] flex items-center justify-center shrink-0"><Users size={18} /></div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-slate-800">User Management</p>
+                                <p className="text-xs text-slate-400">Manage agents and admins</p>
+                            </div>
+                            <ChevronRight size={16} className="text-slate-300" />
+                        </Link>
+                        <Link href="/insurance/dashboard/analytics" className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:border-[#03a9e7] hover:bg-sky-50/50 transition-colors">
+                            <div className="w-9 h-9 rounded-lg bg-sky-50 text-[#03a9e7] flex items-center justify-center shrink-0"><TrendingUp size={18} /></div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-slate-800">Analytics</p>
+                                <p className="text-xs text-slate-400">View performance metrics</p>
+                            </div>
+                            <ChevronRight size={16} className="text-slate-300" />
+                        </Link>
+                    </div>
+                </div>
+            )}
 
             {/* Edit Name */}
             <div className="card p-6">
