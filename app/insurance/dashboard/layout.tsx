@@ -45,8 +45,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     const [email, setEmail] = useState<string | null>(null)
     const [displayName, setDisplayName] = useState<string | null>(null)
 
-    const isRates = pathname === '/insurance/dashboard/rates'
-
     // Instant shell: read the email from the LOCAL session (no network round-trip)
     // so the chrome renders immediately instead of behind a full-screen spinner.
     useEffect(() => {
@@ -261,20 +259,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
             {/* Page Content */}
             <div className="md:pl-[260px]">
-                {isRates ? (
-                    <div className="h-[100dvh] overflow-hidden p-0">
-                        <div className="h-full flex flex-col pt-[calc(56px+env(safe-area-inset-top))] md:pt-0">
-                            {children}
-                        </div>
-                    </div>
-                ) : (
-                    <div
-                        className="px-4 pt-[calc(64px+env(safe-area-inset-top))] pb-[calc(72px+env(safe-area-inset-bottom))] md:px-8 md:py-7"
-                        style={{ minHeight: '100dvh' }}
-                    >
-                        <div className="max-w-[1200px] mx-auto">{children}</div>
-                    </div>
-                )}
+                <div
+                    className="px-4 pt-[calc(64px+env(safe-area-inset-top))] pb-[calc(72px+env(safe-area-inset-bottom))] md:px-8 md:py-7"
+                    style={{ minHeight: '100dvh' }}
+                >
+                    <div className="max-w-[1200px] mx-auto">{children}</div>
+                </div>
             </div>
         </div>
     )

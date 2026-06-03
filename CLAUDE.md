@@ -95,6 +95,16 @@ The core feature of the insurance app. Cases store workflow answers in the `work
 
 Closed Won and Closed Lost stage changes are intercepted by modals in the case detail page — they cannot be set without filling in required closure data.
 
+### Mortgage Packages (rates)
+
+In-app bank rate packages (`mortgage_packages` table), replacing the old external iframe (`mortgage-package.vercel.app`). Rates are stored **structured** — `rate_schedule` JSONB is an ordered array of per-year entries (`{year|thereafter, type:'fixed'|'floating', rate? , reference?, spread?}`) — so they are filterable/sortable now and computable by the workflow engine later (Step 4 auto-recommendation, phase 2).
+
+- Page: `app/insurance/dashboard/rates/page.tsx` (shared by both apps; the Property `/dashboard/rates` route redirects here). Agents browse + filter published packages; admins also get create / edit / **duplicate** / delete and see drafts.
+- Editor: `components/insurance/rates/RatePackageEditorModal.tsx` — year-by-year rate builder (fixed % or floating reference + spread).
+- Helpers: `lib/insurance/rateSchedule.ts` — `parseLegacyRates` (free-text → structured), `formatRateSchedule` (structured → display lines), `deriveFirstYearRate` (sort key). Types in `lib/types/rates.ts`.
+- APIs: `GET /api/insurance/rates` (insurance **or** property auth; agents see published only), `POST/PATCH/DELETE /api/admin/rates` (`requireAdminUser()`; POST `{duplicateId}` clones as a draft).
+- `first_year_rate` is a rough sort key derived on save (fixed→rate, floating→spread).
+
 ### Emails
 
 Resend is used for transactional email (`lib/email/sendFollowUpReminder.ts`). Configured via `RESEND_API_KEY` and `RESEND_FROM_EMAIL` env vars. Currently only the property app sends emails.
