@@ -12,10 +12,13 @@
 import type { MortgagePackageInput, RateScheduleEntry } from '@/lib/types/rates'
 import { cleanReference } from '@/lib/insurance/rateSchedule'
 
-// Extraction is mechanical + enum-constrained + human-reviewed, so the lighter,
-// less-loaded model is the better primary here (the heavier flash 503s often on
-// free tier). Knowledge answer-synthesis keeps flash first — different trade-off.
-const DEFAULT_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash-lite']
+// Flash is primary: extraction needs judgment (which section header applies to a
+// package; telling a loan-size THRESHOLD note apart from a package CONDITION like
+// "No min spend") and flash-lite repeatedly got those wrong where flash got them
+// right. flash-lite / 2.0-flash-lite are availability fallbacks for when flash
+// 503s on free tier — the retry chain below + the mandatory human-review screen
+// cover the rest. (Knowledge answer-synthesis uses its own chain — different job.)
+const DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite']
 
 function modelChain(): string[] {
     const primary = process.env.GEMINI_MODEL
@@ -27,7 +30,7 @@ const SYSTEM_INSTRUCTION = `You convert a pasted Singapore mortgage rate block (
 
 STRICT RULES:
 1. Extract ONLY what is written. Never invent rates, spreads, features, subsidies, or loan sizes. If something isn't stated, leave it out (do not guess).
-2. Output one package per distinct price tier. A single heading like "1 Year Fixed >$600k or >$800k (Premier)" with one set of rates = ONE package.
+2. Output one package object per distinct price tier — even if it serves several property types at different minimums (use min_entries for that, rule 5; never duplicate the package yourself).
 3. Rate schedule:
    - "Year 1: 2.00% Fixed" / "Y1: 2.00% Fixed" → { year:1, type:"fixed", rate:2.00 }
    - "Y1&2: 1.50% Fixed" → TWO entries: { year:1, type:"fixed", rate:1.50 } and { year:2, type:"fixed", rate:1.50 }
@@ -35,11 +38,18 @@ STRICT RULES:
    - "TA:" or "Thereafter:" → { thereafter:true, ... } (omit year)
    - Normalize benchmarks: "1m"→"1M SORA", "3m"→"3M SORA". KEEP combined ones as "1M/3M SORA". Keep "1M Compounded SORA" / "FD Rate" verbatim in reference.
 4. category: "Fixed" if year-1 is a fixed rate; "Floating (Completed)" if all-floating for a completed property; "BUC" only if the block clearly says BUC / Building Under Construction / new launch / no-lock progressive. Infer from headings/context.
-5. min_loan_size (SGD, numeric lower bound). IMPORTANT: a standalone line such as "100K", "200K", "500K", "Min 1M", "Min 1.5m", "Min 2m" is a SECTION HEADER for minimum loan size — it applies to EVERY package listed below it until the next such header/separator. Convert suffixes: K = thousand, M/m = million (100K→100000, 500K→500000, 1M→1000000, 1.5m→1500000, 2m→2000000). For a Premier/dual threshold ("≥$600k Premier or ≥$800k") use the lower number; for a parenthetical like "(No min loan for Treasures customers with $350k AUM)" keep the section number as min_loan_size and put the wording in min_loan_note.
-6. lockin_years: integer from the package (e.g. "2 Years Lock-in" → 2; "No Lock-in" → 0).
-7. property_type: one of "HDB", "Private", "HDB / Private", "Executive Condominium". Infer from the name when stated — "(HDB Exclusive)" → "HDB". If not stated, use "HDB / Private".
-8. package_name: use the name in the block if present; otherwise build a short one like "<n>Y Fixed - <lockin>Y Lock-in".
-9. features: bullet lines under the package (free conversion, funding requirement, cash incentive, etc). Empty array if none.`
+5. min_entries — the minimum loan size(s), read from the SECTION HEADER above the package (a header applies to EVERY package below it until the next header/separator). Each entry = { property_type, min } where "min" is the size token COPIED EXACTLY AS WRITTEN — do NOT convert it to a number, the system does that:
+   - "HDB (Min 200K)" → [{ "property_type":"HDB", "min":"200K" }]
+   - "PTE (Min 300K)" (PTE = private) → [{ "property_type":"Private", "min":"300K" }]
+   - COMBINED "HDB (Min 200K)/ PTE (Min 300K)" → put BOTH in min_entries of the ONE package: [{ "property_type":"HDB","min":"200K" }, { "property_type":"Private","min":"300K" }]. The system creates the separate rows — do NOT duplicate the package.
+   - Plain header, no property type ("Min 500K", "500K", "Min 3M", "Min 1.5m") → [{ "property_type":"HDB / Private", "min":"500K" }] / [{ "property_type":"HDB / Private", "min":"3M" }]. Copy "3M", "1.5m", "200K" verbatim — never rewrite them.
+   - If the type is only in the package name ("(HDB Exclusive)") use that property_type with the section's min.
+   - CUSTOMER-SEGMENT minimums — when the header gives the SAME package two qualifying minimums by customer type ("Min loan size 500K (Normal customer)" + "Min loan size 300K (Priority customer)"), this is ONE package, NOT a property split. Use the NORMAL (higher) token as min → [{ "property_type":"HDB / Private", "min":"500K" }], and put the lower Priority threshold in min_loan_note (rule 6): "Priority Banking: min $300K". If both are equal (100K/100K) omit the note. Property type stays "HDB / Private" unless a type is stated.
+6. min_loan_note: ONLY for loan-SIZE threshold wording. For a Premier/dual threshold ("≥$600k Premier or ≥$800k") set min to the lower token ("600K") and put the full wording in min_loan_note. For "(No min loan for Treasures customers with $350k AUM)" keep the section token as min and put the wording in min_loan_note. Customer-segment ranges (Normal vs Priority/Premier, see rule 5) also belong here as "Priority Banking: min $X". A package CONDITION is NOT a min_loan_note — e.g. "Need to have BOC credit card", "No min spend", salary crediting, insurance bundling. Those go in features. ("No min spend" is about credit-card spend, NOT the loan minimum.)
+7. lockin_years: integer from the package ("2 Years Lock-in" → 2; "No Lock-in" → 0).
+8. property_type values allowed: "HDB", "Private", "HDB / Private", "Executive Condominium".
+9. package_name: use the name in the block if present; otherwise build a short one like "<n>Y Fixed - <lockin>Y Lock-in".
+10. features: bullet lines under the package (free conversion, funding requirement, cash incentive, etc). Empty array if none.`
 
 const ALLOWED_CATEGORIES = ['Fixed', 'Floating (Completed)', 'BUC']
 const ALLOWED_PROPERTY = ['HDB', 'Private', 'HDB / Private', 'Executive Condominium']
@@ -52,9 +62,20 @@ const RESPONSE_SCHEMA = {
             items: {
                 type: 'object',
                 properties: {
-                    property_type: { type: 'string', enum: ALLOWED_PROPERTY },
                     category: { type: 'string', enum: ALLOWED_CATEGORIES },
-                    min_loan_size: { type: 'number' },
+                    // One entry per property type the package serves. `min` is the RAW
+                    // size token from the header ("200K", "3M", "1.5m") — code parses it.
+                    min_entries: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                property_type: { type: 'string', enum: ALLOWED_PROPERTY },
+                                min: { type: 'string' },
+                            },
+                            required: ['property_type', 'min'],
+                        },
+                    },
                     min_loan_note: { type: 'string' },
                     package_name: { type: 'string' },
                     lockin_years: { type: 'integer' },
@@ -76,7 +97,7 @@ const RESPONSE_SCHEMA = {
                     features: { type: 'array', items: { type: 'string' } },
                     subsidies: { type: 'string' },
                 },
-                required: ['package_name', 'category', 'rate_schedule'],
+                required: ['package_name', 'category', 'rate_schedule', 'min_entries'],
             },
         },
     },
@@ -141,7 +162,6 @@ function normalize(packages: unknown, bank: string): MortgagePackageInput[] | nu
         const o = p as Record<string, any>
 
         const category = ALLOWED_CATEGORIES.includes(o.category) ? o.category : 'Fixed'
-        const property_type = ALLOWED_PROPERTY.includes(o.property_type) ? o.property_type : 'HDB / Private'
 
         const schedule: RateScheduleEntry[] = Array.isArray(o.rate_schedule)
             ? o.rate_schedule.map((e: any): RateScheduleEntry => {
@@ -172,20 +192,65 @@ function normalize(packages: unknown, bank: string): MortgagePackageInput[] | nu
             else e.year = ++yc
         }
 
-        result.push({
+        const features = Array.isArray(o.features) ? o.features.map((f: any) => String(f).trim()).filter(Boolean) : []
+        const base = {
             bank,
-            property_type,
             category: category as MortgagePackageInput['category'],
-            min_loan_size: Number(o.min_loan_size) || 0,
             package_name: String(o.package_name || 'Untitled package').trim(),
             lockin_years: Number(o.lockin_years) || 0,
-            rate_schedule: schedule,
-            features: Array.isArray(o.features) ? o.features.map((f: any) => String(f).trim()).filter(Boolean) : [],
+            features,
             subsidies: o.subsidies ? String(o.subsidies).trim() : null,
-            min_loan_note: o.min_loan_note ? String(o.min_loan_note).trim() : null,
-            status: 'draft',   // extracted rows start as draft until the admin publishes via replace
-        })
+            min_loan_note: siftLoanNote(o.min_loan_note, features),
+            status: 'draft' as const,   // extracted rows start as draft until the admin publishes via replace
+        }
+
+        // Deterministic split: one row per property type the package serves.
+        // Code (not the model) parses the K/M size token and creates the rows,
+        // so a "twin" can't be missed and "3M" can't become 300k.
+        const entries: { property_type?: string; min?: unknown }[] =
+            Array.isArray(o.min_entries) && o.min_entries.length
+                ? o.min_entries
+                : [{ property_type: 'HDB / Private', min: o.min_loan_size }]
+
+        for (const e of entries) {
+            const property_type = ALLOWED_PROPERTY.includes(e?.property_type as string) ? (e!.property_type as string) : 'HDB / Private'
+            result.push({
+                ...base,
+                property_type,
+                min_loan_size: parseMinSize(e?.min),
+                rate_schedule: schedule.map(x => ({ ...x })),   // clone per row so edits don't bleed across rows
+            })
+        }
     }
 
     return result
+}
+
+// min_loan_note is ONLY for loan-size *threshold* wording (e.g. "≥$600k Premier
+// or ≥$800k", "$350k AUM Treasures"). Weaker models sometimes misfile a package
+// CONDITION here — classically "No min spend", where the word "min" trips them,
+// which then masks the real loan size in the UI. A genuine note references money
+// (a digit) or a banking tier; anything else is a stray condition → fold it into
+// features so nothing is lost, and clear the note. Keeps junk out regardless of
+// which model ran, so we never depend on the model getting this right.
+function siftLoanNote(rawNote: unknown, features: string[]): string | null {
+    const note = rawNote ? String(rawNote).trim() : ''
+    if (!note) return null
+    const isThreshold = /\d/.test(note) || /premier|treasures|priority|privilege|private bank|\baum\b|wealth/i.test(note)
+    if (isThreshold) return note
+    if (!features.some(f => f.toLowerCase() === note.toLowerCase())) features.push(note)
+    return null
+}
+
+/** Parse a raw size token ("200K", "3M", "1.5m", "500000", "$1,000,000") to SGD. */
+function parseMinSize(token: unknown): number {
+    if (token == null) return 0
+    const s = String(token).replace(/[,$\s]/g, '').toLowerCase()
+    const m = s.match(/^([\d.]+)\s*(k|m)?/)
+    if (!m) return 0
+    let n = parseFloat(m[1])
+    if (!Number.isFinite(n)) return 0
+    if (m[2] === 'k') n *= 1_000
+    else if (m[2] === 'm') n *= 1_000_000
+    return Math.round(n)
 }

@@ -223,7 +223,7 @@ function ReviewRow({ row, onEdit, onRemove }: { row: MortgagePackageInput; onEdi
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${row.category === 'Fixed' ? 'bg-[#052d4a] text-white' : row.category === 'Floating (Completed)' ? 'bg-[#03a9e7] text-white' : 'bg-amber-500 text-white'}`}>{row.category}</span>
                         <span className="text-[11px] text-slate-400">{row.property_type}</span>
                         <span className="text-[11px] text-slate-400">{row.lockin_years === 0 ? 'No lock-in' : `${row.lockin_years}Y lock-in`}</span>
-                        <span className="text-[11px] text-slate-400">{row.min_loan_note || fmtLoan(row.min_loan_size)}</span>
+                        <span className="text-[11px] text-slate-400">{fmtLoan(row.min_loan_size)}{row.min_loan_note ? ` · ${row.min_loan_note}` : ''}</span>
                     </div>
                     <p className="text-[13px] font-medium text-slate-700 mt-1">{row.package_name}</p>
                 </div>

@@ -327,7 +327,7 @@ function PackageCard({ pkg, sora, admin, busy, confirming, onEdit, onDuplicate, 
                 <div className="flex flex-wrap gap-1.5 mb-3">
                     <Chip icon={Building2}>{pkg.property_type}</Chip>
                     <Chip icon={locked ? Lock : LockOpen}>{locked ? `${pkg.lockin_years}Y lock-in` : 'No lock-in'}</Chip>
-                    <Chip icon={Wallet}>{pkg.min_loan_note || `Min $${pkg.min_loan_size.toLocaleString()}`}</Chip>
+                    <Chip icon={Wallet}>Min ${pkg.min_loan_size.toLocaleString()}{pkg.min_loan_note ? ` · ${pkg.min_loan_note}` : ''}</Chip>
                 </div>
 
                 {/* Rate timeline */}

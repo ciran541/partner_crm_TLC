@@ -13,12 +13,18 @@ export function effectiveRate(entry: RateScheduleEntry, sora: SoraRates | null):
 
     if (entry.spread == null) return { rate: null }
     const ref = (entry.reference || '').toLowerCase()
+
+    // Bank-set benchmarks (FHR / FDR / FD / board rates) are NOT published by MAS —
+    // each bank sets them. We have no value for them, so we never guess. Show the
+    // formula, no resolved number, until an admin provides the value (future).
+    if (/fhr|fdr|\bfd\b|board|fixed deposit/.test(ref)) {
+        return { rate: null, note: `${entry.reference} is a bank-set rate — not auto-priced` }
+    }
+    if (!sora) return { rate: null }
+
     const has1m = ref.includes('1m')
     const has3m = ref.includes('3m')
     const has6m = ref.includes('6m')
-
-    if (ref.includes('fd')) return { rate: null, note: 'FD-pegged — not auto-computed' }
-    if (!sora) return { rate: null }
 
     let base: number | null = null
     let note: string | undefined
@@ -29,7 +35,8 @@ export function effectiveRate(entry: RateScheduleEntry, sora: SoraRates | null):
     } else if (has1m) base = sora.comp_sora_1m
     else if (has3m) base = sora.comp_sora_3m
     else if (has6m) base = sora.comp_sora_6m
-    else base = sora.comp_sora_3m   // bare "SORA" → 3M compounded (most common bank peg)
+    else if (ref.includes('sora')) base = sora.comp_sora_3m   // bare "SORA" → 3M compounded (common peg)
+    else return { rate: null, note: `${entry.reference || 'reference'} — not a SORA benchmark, not auto-priced` }
 
     if (base == null) return { rate: null }
     return { rate: base + entry.spread, note }
