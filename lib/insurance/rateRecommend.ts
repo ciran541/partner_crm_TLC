@@ -118,6 +118,18 @@ export interface RecommendCriteria {
     includeBuc?: boolean                  // refinancing = completed property, so default false
     grossMonthlyIncome?: number
     existingMonthlyDebts?: number
+    // Step-3 suitability signals (sharpen the ranking beyond price alone)
+    holdingPeriod?: 'short' | 'medium' | 'long'
+    paymentSensitivity?: 'low' | 'medium' | 'high'
+    sellingPlan?: 'no' | 'yes' | 'unsure'
+}
+
+export interface FitReason { kind: 'good' | 'warn'; text: string }
+
+export interface Fit {
+    score: number              // higher = better suitability for this client
+    reasons: FitReason[]
+    hardConflict: boolean      // strong mismatch (e.g. long lock-in but selling soon) → demoted
 }
 
 export interface RecommendedPackage {
@@ -126,7 +138,55 @@ export interface RecommendedPackage {
     savings: RefiSavings | null
     tdsrRatioPct: number | null
     eligible: boolean | null
-    reasons: string[]                     // why it ranked / caveats
+    fit: Fit                              // suitability vs the client's profile
+    reasons: string[]                     // technical notes / caveats
+}
+
+// Weighting kept as named deltas so it's easy to tune.
+function assessSuitability(
+    pkg: MortgagePackage,
+    sora: SoraRates | null,
+    criteria: RecommendCriteria,
+): Fit {
+    let score = 0
+    const reasons: FitReason[] = []
+    let hardConflict = false
+
+    const lockin = pkg.lockin_years || 0
+    const shortHolder = criteria.holdingPeriod === 'short' || criteria.sellingPlan === 'yes'
+    const longHolder = criteria.holdingPeriod === 'long'
+
+    // 1. Lock-in length vs how long they'll hold / whether they may sell.
+    if (shortHolder) {
+        if (lockin === 0) { score += 15; reasons.push({ kind: 'good', text: 'No lock-in — flexible if selling or refinancing early' }) }
+        else if (lockin >= 3) { score -= 30; hardConflict = true; reasons.push({ kind: 'warn', text: `${lockin}Y lock-in — penalty risk if they sell soon` }) }
+        else { score -= 8; reasons.push({ kind: 'warn', text: `${lockin}Y lock-in to consider` }) }
+    }
+
+    // 2. Payment sensitivity vs rate stability during the lock-in.
+    if (criteria.paymentSensitivity === 'high' && lockin > 0) {
+        const lockinFixed = pkg.rate_schedule
+            .filter(e => !e.thereafter && typeof e.year === 'number' && e.year <= lockin)
+            .every(e => e.type === 'fixed')
+        if (lockinFixed) { score += 12; reasons.push({ kind: 'good', text: 'Fixed during lock-in — predictable payments' }) }
+        else { score -= 15; reasons.push({ kind: 'warn', text: 'Payments vary during lock-in (client is rate-sensitive)' }) }
+    }
+
+    // 3. Reversion (thereafter) rate quality — matters most for long holders.
+    const ta = pkg.rate_schedule.find(e => e.thereafter)
+    if (ta && longHolder && ta.spread != null) {
+        const taRate = effectiveRate(ta, sora).rate
+        const shown = taRate != null ? ` (~${taRate.toFixed(2)}%)` : ''
+        if (ta.spread <= 0.6) { score += 10; reasons.push({ kind: 'good', text: `Low reversion rate${shown} — good for a long hold` }) }
+        else if (ta.spread >= 0.9) { score -= 12; reasons.push({ kind: 'warn', text: `High reversion rate${shown} after lock-in` }) }
+    }
+
+    // 4. Subsidy / rebate (text-only in our data, so a soft plus, not dollar-precise).
+    if (pkg.subsidies && !/^\s*(no\b|none|nil)/i.test(pkg.subsidies)) {
+        score += 6; reasons.push({ kind: 'good', text: 'Subsidy / rebate available' })
+    }
+
+    return { score, reasons, hardConflict }
 }
 
 export function matchesPropertyType(pkgType: string, clientType?: string): boolean {
@@ -189,15 +249,25 @@ export function recommendPackages(
             if (eligible === false) reasons.push(`TDSR ${tdsrRatioPct.toFixed(0)}% exceeds 55%`)
         }
 
-        return { pkg, projection, savings, tdsrRatioPct, eligible, reasons }
+        const fit = assessSuitability(pkg, sora, criteria)
+
+        return { pkg, projection, savings, tdsrRatioPct, eligible, fit, reasons }
     })
 
-    // Rank: computable first, then highest monthly saving, then lowest lock-in avg rate.
+    // Rank, in order of precedence:
+    //  1. packages we can actually price
+    //  2. genuine fit (a hard mismatch — e.g. long lock-in but selling soon — is
+    //     demoted regardless of price; recommending it would be wrong)
+    //  3. highest monthly saving (money stays the lead factor among suitable options)
+    //  4. better suitability score (breaks near-ties)
+    //  5. lowest lock-in average rate
     return scored.sort((a, b) => {
         if (a.projection.computable !== b.projection.computable) return a.projection.computable ? -1 : 1
+        if (a.fit.hardConflict !== b.fit.hardConflict) return a.fit.hardConflict ? 1 : -1
         const sa = a.savings?.monthlySaving ?? -Infinity
         const sb = b.savings?.monthlySaving ?? -Infinity
         if (sb !== sa) return sb - sa
+        if (b.fit.score !== a.fit.score) return b.fit.score - a.fit.score
         const ra = a.projection.avgRateLockinPct ?? Infinity
         const rb = b.projection.avgRateLockinPct ?? Infinity
         return ra - rb

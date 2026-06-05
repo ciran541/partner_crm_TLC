@@ -59,6 +59,10 @@ export default function Step4ResearchProposal({ data, qualify, factFind, risk, c
         includeBuc: false,   // refinancing = completed property
         grossMonthlyIncome: income > 0 ? income : undefined,
         existingMonthlyDebts: commitments,
+        // Step-3 suitability signals — sharpen ranking beyond price
+        holdingPeriod: risk.holding_period,
+        paymentSensitivity: risk.payment_sensitivity,
+        sellingPlan: risk.selling_plan,
     }
 
     const canRecommend = (outstandingLoan ?? 0) > 0 && (tenure ?? 0) > 0

@@ -162,6 +162,17 @@ function RecCard({ rec, rank, selected, onSelect }: { rec: RecommendedPackage; r
                 {eligible === true && <span className="text-emerald-600">✓ Within TDSR</span>}
             </div>
 
+            {/* Suitability (fit) reasons — why it fits this client, or what to watch */}
+            {rec.fit.reasons.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {rec.fit.reasons.map((r, i) => (
+                        <span key={i} className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${r.kind === 'good' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {r.kind === 'good' ? '✓' : '⚠'} {r.text}
+                        </span>
+                    ))}
+                </div>
+            )}
+
             {rec.reasons.length > 0 && (
                 <p className="mt-1.5 text-[10px] text-slate-400">{rec.reasons.join(' · ')}</p>
             )}
