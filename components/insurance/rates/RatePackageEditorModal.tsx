@@ -11,6 +11,7 @@ import Spinner from '@/components/shared/Spinner'
 
 interface Props {
     initial?: MortgagePackage | null
+    defaultBank?: string
     onSave: (input: MortgagePackageInput) => Promise<void>
     onClose: () => void
     saving: boolean
@@ -19,11 +20,19 @@ interface Props {
 const inputCls = 'w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
 const labelCls = 'block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5'
 
-export default function RatePackageEditorModal({ initial, onSave, onClose, saving }: Props) {
-    const [bank, setBank] = useState(initial?.bank ?? '')
+// Rate schedules are always sequential (Year 1, 2, 3…), so the year follows row
+// order. This also auto-corrects duplicate-year typos from imported data.
+function sequenceYears(schedule: RateScheduleEntry[]): RateScheduleEntry[] {
+    let y = 0
+    return schedule.map(e => e.thereafter ? { ...e, year: undefined } : { ...e, year: ++y })
+}
+
+export default function RatePackageEditorModal({ initial, defaultBank, onSave, onClose, saving }: Props) {
+    const [bank, setBank] = useState(initial?.bank ?? defaultBank ?? '')
     const [propertyType, setPropertyType] = useState(initial?.property_type ?? 'HDB / Private')
     const [category, setCategory] = useState<RateCategory>(initial?.category ?? 'Fixed')
     const [minLoan, setMinLoan] = useState(String(initial?.min_loan_size ?? ''))
+    const [minLoanNote, setMinLoanNote] = useState(initial?.min_loan_note ?? '')
     const [packageName, setPackageName] = useState(initial?.package_name ?? '')
     const [lockin, setLockin] = useState(initial?.lockin_years ?? 0)
     const [schedule, setSchedule] = useState<RateScheduleEntry[]>(
@@ -63,10 +72,11 @@ export default function RatePackageEditorModal({ initial, onSave, onClose, savin
             min_loan_size: Number(minLoan) || 0,
             package_name: packageName.trim(),
             lockin_years: lockin,
-            rate_schedule: schedule,
+            rate_schedule: sequenceYears(schedule),
             features: features.map(f => f.trim()).filter(Boolean),
             subsidies: subsidies.trim() || null,
             remarks: remarks.trim() || null,
+            min_loan_note: minLoanNote.trim() || null,
             status,
         })
     }
@@ -121,13 +131,19 @@ export default function RatePackageEditorModal({ initial, onSave, onClose, savin
                         </div>
                     </div>
 
+                    <div>
+                        <label className={labelCls}>Min. loan note <span className="text-slate-400 normal-case">(Premier / threshold wording)</span></label>
+                        <input value={minLoanNote} onChange={e => setMinLoanNote(e.target.value)}
+                            placeholder="e.g. ≥$600k Premier / ≥$800k" className={inputCls} />
+                    </div>
+
                     {/* Rate schedule builder */}
                     <div>
                         <label className={labelCls}>Rate schedule</label>
                         <div className="space-y-2">
                             {schedule.map((e, i) => (
                                 <RateRow key={i} entry={e}
-                                    label={e.thereafter ? 'Thereafter' : `Year ${e.year ?? i + 1}`}
+                                    label={e.thereafter ? 'Thereafter' : `Year ${schedule.slice(0, i).filter(x => !x.thereafter).length + 1}`}
                                     onChange={patch => updateEntry(i, patch)}
                                     onRemove={() => removeEntry(i)}
                                     canRemove={schedule.length > 1} />

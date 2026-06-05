@@ -104,6 +104,15 @@ In-app bank rate packages (`mortgage_packages` table), replacing the old externa
 - Helpers: `lib/insurance/rateSchedule.ts` — `parseLegacyRates` (free-text → structured), `formatRateSchedule` (structured → display lines), `deriveFirstYearRate` (sort key). Types in `lib/types/rates.ts`.
 - APIs: `GET /api/insurance/rates` (insurance **or** property auth; agents see published only), `POST/PATCH/DELETE /api/admin/rates` (`requireAdminUser()`; POST `{duplicateId}` clones as a draft).
 - `first_year_rate` is a rough sort key derived on save (fixed→rate, floating→spread).
+- **Ingestion ("Import from sheet")**: admins paste a bank's block from their Google Sheet → Gemini extracts structured packages (`lib/insurance/extractPackages.ts`, JSON-mode, temp 0, transcribe-only) → **human review** screen (`RateIngestionModal.tsx`, editable rows + per-category diff) → confirm → **atomic replace by bank+category** via the `replace_bank_packages()` SQL function (`POST /api/admin/rates/extract` then `/replace`). The admin picks the bank (the LLM never decides the delete target); replace scope = the categories present in the reviewed rows. `min_loan_note` holds Premier/threshold wording.
+
+### Decision Support — live SORA + Step 4 auto-recommendation
+
+Phase 2 of rates: structured packages become *computable*.
+
+- **Daily SORA** from the MAS "Domestic Interest Rates – Daily" API (`lib/insurance/sora.ts`, `sora_rates` table). Auth = `keyid` header (`MAS_API_KEY`). The gateway ignores field/date filters and returns the full history, so we fetch all and take the latest non-null compounded row. A daily Vercel cron (`/api/cron/sora`, `vercel.json`) upserts it; admins can also "Refresh SORA" from the Rates page (`POST /api/admin/rates/sora`). Reads are instant via `getCurrentSora()`, and it travels with `GET /api/insurance/rates` so Step 4 gets packages + SORA in one call.
+- **Rate computation** (`lib/insurance/rateRecommend.ts`): `effectiveRate(entry, sora)` (fixed→rate; floating→SORA+spread; `1M/3M`→**lower** of 1M/3M; FD-pegged→not computed), `projectPackage()` re-amortises per-year installments, `recommendPackages()` filters by loan/tenure/property/preference, computes net savings (`computeRefiSavings` in `loanCalc.ts`) + TDSR eligibility, and ranks best-first.
+- **Step 4 UI**: `Step4Recommendations.tsx` shows the ranked list; selecting one fills the proposal and stores a **frozen `selected_package_snapshot`** in `workflow_data` (so an admin editing the package later can't silently change a client's proposal). Dual-benchmark / FD packages degrade gracefully (shown, not auto-priced).
 
 ### Emails
 
@@ -129,6 +138,8 @@ NEXT_PUBLIC_APP_URL
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
 GEMINI_API_KEY          # Google AI Studio (free tier) — knowledge assistant answer synthesis
+MAS_API_KEY             # MAS Data API (keyid header) — daily SORA fetch for Step 4 rate computation
+CRON_SECRET             # optional — Vercel cron auth (Bearer) for /api/cron/* routes
 ```
 
 ### Insurance CRM — Knowledge Engine (Layer 4)

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getServerUser } from '@/lib/auth/getUser'
 import { canAccessInsurance, canAccessProperty, isAdmin } from '@/lib/permissions'
+import { getCurrentSora } from '@/lib/insurance/sora'
 
 // GET /api/insurance/rates
 // Shared resource: any authenticated insurance OR property user can read.
@@ -41,5 +42,9 @@ export async function GET(request: Request) {
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    return NextResponse.json({ data: data ?? [], isAdmin: isAdmin(profile.role) })
+    // Current SORA travels with the packages so Step 4 can compute floating rates
+    // in one round-trip. Cheap (single latest-row read); harmless for the browse page.
+    const sora = await getCurrentSora()
+
+    return NextResponse.json({ data: data ?? [], isAdmin: isAdmin(profile.role), sora })
 }

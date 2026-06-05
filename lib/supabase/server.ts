@@ -20,6 +20,18 @@ export async function createServerSupabaseClient() {
                 getAll() {
                     return cookieStore.getAll()
                 },
+                setAll(cookiesToSet) {
+                    // Persist refreshed-session cookies. In Route Handlers / Server
+                    // Actions this writes them; in Server Components `.set` throws,
+                    // which is safe to ignore because middleware refreshes sessions.
+                    try {
+                        cookiesToSet.forEach(({ name, value, options }) =>
+                            cookieStore.set(name, value, options)
+                        )
+                    } catch {
+                        /* called from a Server Component — ignore */
+                    }
+                },
             },
         }
     )

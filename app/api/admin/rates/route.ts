@@ -24,6 +24,7 @@ function toRow(input: MortgagePackageInput) {
         features: input.features ?? [],
         subsidies: input.subsidies?.trim() || null,
         remarks: input.remarks?.trim() || null,
+        min_loan_note: input.min_loan_note?.trim() || null,
         status: input.status ?? 'published',
         last_updated: new Date().toISOString().slice(0, 10),
     }

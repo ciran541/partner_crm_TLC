@@ -1,18 +1,22 @@
 'use client'
 
 import { useEffect } from 'react'
-import { RefinancingStep4_ResearchProposal, RefinancingStep1_Qualify, RefinancingStep2_FactFind } from '@/lib/types/workflow'
+import { RefinancingStep4_ResearchProposal, RefinancingStep1_Qualify, RefinancingStep2_FactFind, RefinancingStep3_RiskSuitability } from '@/lib/types/workflow'
 import { Question, FieldInput, FieldTextarea, ExpandableCard, ActionList, StepActions, CheckItem } from '../WorkflowStep'
 import { ExternalLink, Calculator } from 'lucide-react'
 import {
     monthlyInstallment, maxEligibleLoan, tdsrRatioForLoan, isMsrApplicable,
     TDSR_LIMIT, MSR_LIMIT,
 } from '@/lib/insurance/loanCalc'
+import Step4Recommendations from './Step4Recommendations'
+import type { RecommendCriteria, RecommendedPackage } from '@/lib/insurance/rateRecommend'
+import type { SoraRates } from '@/lib/insurance/sora'
 
 interface Props {
     data: RefinancingStep4_ResearchProposal
     qualify: RefinancingStep1_Qualify
     factFind: RefinancingStep2_FactFind
+    risk: RefinancingStep3_RiskSuitability
     clientName?: string | null
     onChange: (patch: Partial<RefinancingStep4_ResearchProposal>) => void
     isComplete: boolean
@@ -22,7 +26,7 @@ interface Props {
 
 function fmt(n: number) { return `$${Math.round(n).toLocaleString()}` }
 
-export default function Step4ResearchProposal({ data, qualify, factFind, clientName, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
+export default function Step4ResearchProposal({ data, qualify, factFind, risk, clientName, onChange, isComplete, onMarkComplete, onMarkIncomplete }: Props) {
     const name = clientName || 'the client'
     const clawback = factFind.clawback_amount ?? 0
 
@@ -38,6 +42,51 @@ export default function Step4ResearchProposal({ data, qualify, factFind, clientN
         const rates = (qualify.year_rates ?? []).map(r => parseFloat(r)).filter(r => !isNaN(r))
         return rates.length ? rates[0] : undefined
     })()
+
+    // ── Build the recommendation criteria from earlier steps ──
+    const preference: RecommendCriteria['preference'] =
+        risk.rate_preference === 'fixed' ? 'fixed'
+        : risk.rate_preference === 'floating' ? 'floating'
+        : 'either'
+
+    const criteria: RecommendCriteria = {
+        outstandingLoan: outstandingLoan ?? 0,
+        remainingTenureYears: tenure ?? 0,
+        currentRatePct: currentRate,
+        clawbackAmount: clawback,
+        propertyType: factFind.property_type,
+        preference,
+        includeBuc: false,   // refinancing = completed property
+        grossMonthlyIncome: income > 0 ? income : undefined,
+        existingMonthlyDebts: commitments,
+    }
+
+    const canRecommend = (outstandingLoan ?? 0) > 0 && (tenure ?? 0) > 0
+
+    // ── Selecting a recommended package populates the proposal fields + a snapshot ──
+    const handleSelect = (rec: RecommendedPackage, sora: SoraRates | null) => {
+        const avg = rec.projection.avgRateLockinPct
+        onChange({
+            recommended_package: `${rec.pkg.bank} — ${rec.pkg.package_name}`,
+            new_rate: avg != null ? Math.round(avg * 100) / 100 : data.new_rate,
+            selected_package_id: rec.pkg.id,
+            selected_package_snapshot: {
+                id: rec.pkg.id,
+                bank: rec.pkg.bank,
+                package_name: rec.pkg.package_name,
+                category: rec.pkg.category,
+                lockin_years: rec.pkg.lockin_years,
+                rate_schedule: rec.pkg.rate_schedule,
+                avg_rate_lockin_pct: avg,
+                new_monthly: rec.projection.newMonthly,
+                monthly_saving: rec.savings?.monthlySaving ?? null,
+                net_saving_2yr: rec.savings?.netSaving2yr ?? null,
+                net_saving_3yr: rec.savings?.netSaving3yr ?? null,
+                sora_as_of: sora?.value_date ?? null,
+                selected_at: new Date().toISOString(),
+            },
+        })
+    }
 
     // ── Auto-calculations ──
     // Current monthly: prefer the agent-entered actual figure, else compute it
@@ -87,24 +136,30 @@ export default function Step4ResearchProposal({ data, qualify, factFind, clientN
     return (
         <div className="space-y-5 pt-4">
             <ActionList actions={[
-                'Open the Rates page (link below) and filter by property type and rate preference.',
-                'Note 2–3 packages: one "best savings", one "most stability", one backup option.',
-                'Calculate new monthly payment for the recommended package.',
-                'Compute monthly saving: current monthly payment minus new monthly payment.',
-                'Compute net saving: (monthly saving × months) minus clawback amount.',
-                'If client is still in lock-in, also subtract the penalty (1.5% of outstanding) from net savings.',
-                'Mark proposal ready only if net savings justify the switch.',
+                'Review the recommended packages below — filtered for this client\'s loan, tenure, and rate preference, with savings auto-computed.',
+                'Pick the best fit (it fills the proposal below). Compare 2–3 if you like — best savings vs. most stability.',
+                'Check the net savings (after clawback / lock-in penalty) justify the switch.',
+                'Mark the proposal ready only once the numbers hold up.',
             ]} />
 
-            {/* Link to rates page */}
+            {/* Live, computed recommendations for this client */}
+            {canRecommend ? (
+                <Step4Recommendations criteria={criteria} selectedId={data.selected_package_id} onSelect={handleSelect} />
+            ) : (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+                    Fill in the outstanding loan and remaining tenure in Step 1 to get computed package recommendations.
+                </div>
+            )}
+
+            {/* Fallback: browse the full rates catalogue */}
             <a
                 href="/insurance/dashboard/rates"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#03a9e7]/40 bg-sky-50 text-sm font-semibold text-[#03a9e7] hover:bg-sky-100 transition-colors w-fit"
+                className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-[#03a9e7] transition-colors w-fit"
             >
-                <ExternalLink size={15} />
-                Open Rates Page
+                <ExternalLink size={13} />
+                Browse all packages on the Rates page
             </a>
 
             <div className="space-y-2">

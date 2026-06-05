@@ -93,6 +93,24 @@ export interface RefinancingStep3_RiskSuitability {
 
 // ─── Step 4: Research & Proposal ─────────────────────────────────────────────
 
+// Frozen copy of the chosen package at selection time. The proposal must not
+// silently change if an admin later edits the package's rates.
+export interface SelectedPackageSnapshot {
+    id: string
+    bank: string
+    package_name: string
+    category: string
+    lockin_years: number
+    rate_schedule: import('./rates').RateScheduleEntry[]
+    avg_rate_lockin_pct: number | null
+    new_monthly: number | null
+    monthly_saving: number | null
+    net_saving_2yr: number | null
+    net_saving_3yr: number | null
+    sora_as_of: string | null
+    selected_at: string
+}
+
 export interface RefinancingStep4_ResearchProposal {
     packages_reviewed?: number
     recommended_package?: string
@@ -102,6 +120,8 @@ export interface RefinancingStep4_ResearchProposal {
     net_saving_2yr?: number
     net_saving_3yr?: number
     penalty_if_in_lockin?: number
+    selected_package_id?: string
+    selected_package_snapshot?: SelectedPackageSnapshot
     proposal_notes?: string
     proposal_ready?: boolean
 }

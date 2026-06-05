@@ -3,6 +3,10 @@
     {
       "path": "/api/property/reminders/process",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/sora",
+      "schedule": "0 2 * * *"
     }
   ]
 }

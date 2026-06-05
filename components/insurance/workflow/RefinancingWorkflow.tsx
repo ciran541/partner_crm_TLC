@@ -287,7 +287,7 @@ export default function RefinancingWorkflowPanel({
                                 isComplete={isStepComplete(data, 'risk_suitability')} onMarkComplete={() => markComplete('risk_suitability')} onMarkIncomplete={() => markIncomplete('risk_suitability')} />
                         )}
                         {activeStep === 'research_proposal' && (
-                            <Step4ResearchProposal data={rp} qualify={q} factFind={ff} clientName={caseData.client_name} onChange={p => handleStepChange('research_proposal', p)}
+                            <Step4ResearchProposal data={rp} qualify={q} factFind={ff} risk={rs} clientName={caseData.client_name} onChange={p => handleStepChange('research_proposal', p)}
                                 isComplete={isStepComplete(data, 'research_proposal')} onMarkComplete={() => markComplete('research_proposal')} onMarkIncomplete={() => markIncomplete('research_proposal')} />
                         )}
                         {activeStep === 'present_proposal' && (

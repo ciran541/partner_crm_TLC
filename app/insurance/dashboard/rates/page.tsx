@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MortgagePackage, MortgagePackageInput, RateScheduleEntry, RATE_CATEGORIES, RateCategory } from '@/lib/types/rates'
 import { formatRateEntry } from '@/lib/insurance/rateSchedule'
+import { effectiveRate } from '@/lib/insurance/rateRecommend'
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
+import RateIngestionModal from '@/components/insurance/rates/RateIngestionModal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
 import EmptyState from '@/components/shared/EmptyState'
-import { Percent, Plus, Pencil, Copy, Trash2, Search, Lock, LockOpen, Wallet, Building2, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Percent, Plus, Pencil, Copy, Trash2, Search, Lock, LockOpen, Wallet, Building2, X, ChevronLeft, ChevronRight, RefreshCcw, Upload, Eye } from 'lucide-react'
+import type { SoraRates } from '@/lib/insurance/sora'
 
 const CATEGORY_STYLE: Record<RateCategory, string> = {
     'Fixed': 'bg-[#052d4a] text-white',
@@ -16,22 +19,22 @@ const CATEGORY_STYLE: Record<RateCategory, string> = {
     'BUC': 'bg-amber-500 text-white',
 }
 
-// Headline figure for a package: the Year-1 rate, shown big.
-function headlineRate(schedule: RateScheduleEntry[]): { big: string; sub: string } {
+// Headline figure for a package: the Year-1 rate, resolved with live SORA.
+function headlineRate(schedule: RateScheduleEntry[], sora: SoraRates | null): { big: string; sub: string } {
     const first = schedule?.[0]
     if (!first) return { big: '—', sub: '' }
-    if (first.type === 'fixed') {
-        return { big: first.rate != null ? `${first.rate.toFixed(2)}%` : '—', sub: 'Year 1 · Fixed' }
-    }
-    return {
-        big: first.spread != null ? `+${first.spread.toFixed(2)}%` : (first.reference || 'SORA'),
-        sub: `Year 1 · ${first.reference || 'Floating'}`,
-    }
+    const { rate } = effectiveRate(first, sora)
+    const sub = first.type === 'fixed' ? 'Year 1 · Fixed' : `Year 1 · ${first.reference || 'Floating'}`
+    if (rate != null) return { big: `${rate.toFixed(2)}%`, sub }
+    // Can't resolve (no SORA / FD-pegged) → fall back to the spread.
+    return { big: first.spread != null ? `+${first.spread.toFixed(2)}%` : (first.reference || '—'), sub }
 }
 
 export default function RatesPage() {
     const [admin, setAdmin] = useState(false)
     const [packages, setPackages] = useState<MortgagePackage[]>([])
+    const [sora, setSora] = useState<SoraRates | null>(null)
+    const [refreshingSora, setRefreshingSora] = useState(false)
     const [loading, setLoading] = useState(true)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
@@ -43,6 +46,7 @@ export default function RatesPage() {
     const PAGE_SIZE = 8
 
     const [editorOpen, setEditorOpen] = useState(false)
+    const [ingestOpen, setIngestOpen] = useState(false)
     const [editing, setEditing] = useState<MortgagePackage | null>(null)
     const [saving, setSaving] = useState(false)
     const [busyId, setBusyId] = useState<string | null>(null)
@@ -60,6 +64,7 @@ export default function RatesPage() {
         if (res.ok) {
             setPackages(json.data ?? [])
             setAdmin(!!json.isAdmin)
+            setSora(json.sora ?? null)
         } else {
             setAlert({ type: 'error', message: json.error || 'Failed to load packages' })
         }
@@ -112,6 +117,38 @@ export default function RatesPage() {
         } finally { setBusyId(null) }
     }
 
+    const handleRefreshSora = async () => {
+        setRefreshingSora(true)
+        try {
+            const res = await fetch('/api/admin/rates/sora', { method: 'POST' })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error || 'Refresh failed')
+            setSora(json.sora)
+            setAlert({ type: 'success', message: `SORA updated — 1M ${json.sora.comp_sora_1m}% · 3M ${json.sora.comp_sora_3m}% (as of ${json.sora.value_date}).` })
+        } catch (e: any) {
+            setAlert({ type: 'error', message: e.message })
+        } finally {
+            setRefreshingSora(false)
+        }
+    }
+
+    const draftIds = useMemo(() => packages.filter(p => p.status === 'draft').map(p => p.id), [packages])
+
+    const handlePublish = async (ids: string[]) => {
+        if (ids.length === 0) return
+        try {
+            const res = await fetch('/api/admin/rates/publish', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error || 'Publish failed')
+            setAlert({ type: 'success', message: `Published ${ids.length} package${ids.length !== 1 ? 's' : ''} — agents can now see ${ids.length !== 1 ? 'them' : 'it'}.` })
+            await load()
+        } catch (e: any) {
+            setAlert({ type: 'error', message: e.message })
+        }
+    }
+
     const handleDelete = async (id: string) => {
         setBusyId(id)
         try {
@@ -137,11 +174,39 @@ export default function RatesPage() {
                     </h1>
                     <p className="page-subtitle">Live bank packages and rates. {admin ? 'Add, edit, or duplicate to keep them current.' : 'Filter to find the right fit for your client.'}</p>
                 </div>
-                {admin && (
-                    <button onClick={() => { setEditing(null); setEditorOpen(true) }} className="btn-primary px-4 py-2.5 text-sm flex items-center gap-2 shadow-sm">
-                        <Plus size={16} /> New Package
-                    </button>
-                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                    {/* SORA status — drives Step 4 floating-rate computation */}
+                    <div className="inline-flex items-center gap-2 text-[11px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+                        <span className="font-semibold text-slate-500">SORA</span>
+                        {sora ? (
+                            <span className="text-slate-600 tabular-nums">1M {sora.comp_sora_1m}% · 3M {sora.comp_sora_3m}% <span className="text-slate-400">({sora.value_date})</span></span>
+                        ) : (
+                            <span className="text-amber-600">not fetched yet</span>
+                        )}
+                        {admin && (
+                            <button onClick={handleRefreshSora} disabled={refreshingSora} title="Fetch latest SORA from MAS"
+                                className="ml-1 text-slate-400 hover:text-[#03a9e7] disabled:opacity-50">
+                                <RefreshCcw size={13} className={refreshingSora ? 'animate-spin' : ''} />
+                            </button>
+                        )}
+                    </div>
+                    {admin && draftIds.length > 0 && (
+                        <button onClick={() => handlePublish(draftIds)}
+                            className="px-3 py-2.5 text-sm flex items-center gap-2 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-700 transition-colors">
+                            <Eye size={15} /> Publish {draftIds.length} draft{draftIds.length !== 1 ? 's' : ''}
+                        </button>
+                    )}
+                    {admin && (
+                        <button onClick={() => setIngestOpen(true)} className="btn-ghost px-3 py-2.5 text-sm flex items-center gap-2 border border-slate-200">
+                            <Upload size={15} /> Import from sheet
+                        </button>
+                    )}
+                    {admin && (
+                        <button onClick={() => { setEditing(null); setEditorOpen(true) }} className="btn-primary px-4 py-2.5 text-sm flex items-center gap-2 shadow-sm">
+                            <Plus size={16} /> New Package
+                        </button>
+                    )}
+                </div>
             </div>
 
             {alert && <div className="mb-4"><InlineAlert type={alert.type} message={alert.message} onDismiss={() => setAlert(null)} /></div>}
@@ -185,10 +250,11 @@ export default function RatesPage() {
                     {!hasFilters && <p className="text-xs text-slate-400 mb-3">{packages.length} package{packages.length !== 1 ? 's' : ''}</p>}
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                         {pageItems.map(pkg => (
-                            <PackageCard key={pkg.id} pkg={pkg} admin={admin} busy={busyId === pkg.id}
+                            <PackageCard key={pkg.id} pkg={pkg} sora={sora} admin={admin} busy={busyId === pkg.id}
                                 confirming={confirmDelete === pkg.id}
                                 onEdit={() => { setEditing(pkg); setEditorOpen(true) }}
                                 onDuplicate={() => handleDuplicate(pkg.id)}
+                                onPublish={() => handlePublish([pkg.id])}
                                 onAskDelete={() => setConfirmDelete(pkg.id)}
                                 onCancelDelete={() => setConfirmDelete(null)}
                                 onConfirmDelete={() => handleDelete(pkg.id)} />
@@ -208,22 +274,31 @@ export default function RatesPage() {
                 <RatePackageEditorModal initial={editing} saving={saving}
                     onSave={handleSave} onClose={() => { setEditorOpen(false); setEditing(null) }} />
             )}
+
+            {ingestOpen && (
+                <RateIngestionModal
+                    onClose={() => setIngestOpen(false)}
+                    onDone={() => { setIngestOpen(false); setAlert({ type: 'success', message: 'Packages replaced from sheet.' }); load() }}
+                />
+            )}
         </div>
     )
 }
 
-function PackageCard({ pkg, admin, busy, confirming, onEdit, onDuplicate, onAskDelete, onCancelDelete, onConfirmDelete }: {
+function PackageCard({ pkg, sora, admin, busy, confirming, onEdit, onDuplicate, onPublish, onAskDelete, onCancelDelete, onConfirmDelete }: {
     pkg: MortgagePackage
+    sora: SoraRates | null
     admin: boolean
     busy: boolean
     confirming: boolean
     onEdit: () => void
     onDuplicate: () => void
+    onPublish: () => void
     onAskDelete: () => void
     onCancelDelete: () => void
     onConfirmDelete: () => void
 }) {
-    const head = headlineRate(pkg.rate_schedule)
+    const head = headlineRate(pkg.rate_schedule, sora)
     const locked = pkg.lockin_years > 0
 
     return (
@@ -252,7 +327,7 @@ function PackageCard({ pkg, admin, busy, confirming, onEdit, onDuplicate, onAskD
                 <div className="flex flex-wrap gap-1.5 mb-3">
                     <Chip icon={Building2}>{pkg.property_type}</Chip>
                     <Chip icon={locked ? Lock : LockOpen}>{locked ? `${pkg.lockin_years}Y lock-in` : 'No lock-in'}</Chip>
-                    <Chip icon={Wallet}>Min ${pkg.min_loan_size.toLocaleString()}</Chip>
+                    <Chip icon={Wallet}>{pkg.min_loan_note || `Min $${pkg.min_loan_size.toLocaleString()}`}</Chip>
                 </div>
 
                 {/* Rate timeline */}
@@ -260,13 +335,18 @@ function PackageCard({ pkg, admin, busy, confirming, onEdit, onDuplicate, onAskD
                     {pkg.rate_schedule.map((e, i) => {
                         const inLockin = !e.thereafter && typeof e.year === 'number' && e.year <= pkg.lockin_years
                         const [label, ...rest] = formatRateEntry(e).split(': ')
+                        // Resolve floating years to today's actual rate (fixed already shows its number).
+                        const { rate } = e.type === 'floating' ? effectiveRate(e, sora) : { rate: null }
                         return (
                             <div key={i} className="flex items-center justify-between px-3 py-1.5 text-[13px]">
                                 <span className={`flex items-center gap-1.5 ${e.thereafter ? 'text-slate-400' : 'text-slate-500'}`}>
                                     {inLockin && <span className="w-1.5 h-1.5 rounded-full bg-[#03a9e7]" title="Within lock-in" />}
                                     {label}
                                 </span>
-                                <span className="font-medium text-slate-700 tabular-nums">{rest.join(': ')}</span>
+                                <span className="font-medium text-slate-700 tabular-nums">
+                                    {rest.join(': ')}
+                                    {rate != null && <span className="text-[#0277a8]"> → {rate.toFixed(2)}%</span>}
+                                </span>
                             </div>
                         )
                     })}
@@ -294,6 +374,9 @@ function PackageCard({ pkg, admin, busy, confirming, onEdit, onDuplicate, onAskD
                             </div>
                         ) : (
                             <div className="flex items-center gap-1">
+                                {pkg.status === 'draft' && (
+                                    <button onClick={onPublish} disabled={busy} title="Publish to agents" className="px-2 py-1 mr-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 rounded-lg flex items-center gap-1"><Eye size={12} /> Publish</button>
+                                )}
                                 <button onClick={onEdit} title="Edit" className="p-1.5 text-slate-400 hover:text-[#03a9e7] hover:bg-slate-100 rounded-lg"><Pencil size={14} /></button>
                                 <button onClick={onDuplicate} disabled={busy} title="Duplicate" className="p-1.5 text-slate-400 hover:text-[#03a9e7] hover:bg-slate-100 rounded-lg disabled:opacity-40"><Copy size={14} /></button>
                                 <button onClick={onAskDelete} title="Delete" className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={14} /></button>

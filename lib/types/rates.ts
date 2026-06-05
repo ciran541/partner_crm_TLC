@@ -41,6 +41,7 @@ export interface MortgagePackage {
     features: string[]
     subsidies: string | null
     remarks: string | null
+    min_loan_note: string | null  // Premier/threshold wording, e.g. "≥$600k Premier / ≥$800k"
     status: 'published' | 'draft'
     last_updated: string          // YYYY-MM-DD
     created_at?: string
@@ -58,6 +59,7 @@ export interface MortgagePackageInput {
     features: string[]
     subsidies?: string | null
     remarks?: string | null
+    min_loan_note?: string | null
     status?: 'published' | 'draft'
 }
 
