@@ -279,7 +279,7 @@ export default function NewCasePage() {
     const lockInNum = parseInt(form.lock_in_period) || 0
     const fixedYearsNum = parseInt(form.fixed_years) || 0
     const loanAmount = parseFloat(form.outstanding_loan_amount) || 0
-    const tenureMonths = parseInt(form.balance_tenure_months) || 0
+    const tenureMonths = (parseInt(form.balance_tenure_months) || 0) * 12
     const commissionPreview = loanAmount > 0 ? calculateCommission(loanAmount) : null
 
     // Future refinancing projection (used in Step 4)
@@ -442,6 +442,10 @@ export default function NewCasePage() {
             setSubmitError('Please select a follow-up preference before submitting.')
             return
         }
+        if (!selectedFile) {
+            setSubmitError('Please attach a Letter of Offer or supporting document before submitting.')
+            return
+        }
         setSubmitting(true)
         setSubmitError(null)
 
@@ -456,7 +460,7 @@ export default function NewCasePage() {
                 ...(form.banker_name && { banker_name: form.banker_name }),
                 ...(form.property_type && { property_type: form.property_type }),
                 ...(form.outstanding_loan_amount && { outstanding_loan_amount: parseFloat(form.outstanding_loan_amount) }),
-                ...(form.balance_tenure_months && { balance_tenure_months: parseInt(form.balance_tenure_months, 10) }),
+                ...(form.balance_tenure_months && { balance_tenure_months: parseInt(form.balance_tenure_months, 10) * 12 }),
                 ...(form.subsidy_amount && { subsidy_amount: parseFloat(form.subsidy_amount) }),
                 ...(form.lock_in_period && { lock_in_period: parseInt(form.lock_in_period, 10) }),
                 ...(form.free_conversion && { free_conversion: parseInt(form.free_conversion, 10) }),
@@ -675,8 +679,8 @@ export default function NewCasePage() {
                                     <Field label="Loan Amount (S$)" required>
                                         <TextInput value={form.outstanding_loan_amount} onChange={v => set('outstanding_loan_amount', v)} placeholder="500000" type="number" />
                                     </Field>
-                                    <Field label="Tenure (months)" required>
-                                        <TextInput value={form.balance_tenure_months} onChange={v => set('balance_tenure_months', v)} placeholder="240" type="number" />
+                                    <Field label="Tenure (years)" required>
+                                        <TextInput value={form.balance_tenure_months} onChange={v => set('balance_tenure_months', v)} placeholder="20" type="number" />
                                     </Field>
                                     <Field label="Subsidy Provided (S$)">
                                         <TextInput value={form.subsidy_amount} onChange={v => set('subsidy_amount', v)} placeholder="e.g. 2000" type="number" />
@@ -863,7 +867,7 @@ export default function NewCasePage() {
                             {form.outstanding_loan_amount && (
                                 <SummaryRow label="Loan Amount" value={`S$${parseInt(form.outstanding_loan_amount).toLocaleString()}`} />
                             )}
-                            {form.balance_tenure_months && <SummaryRow label="Tenure" value={`${form.balance_tenure_months} months`} />}
+                            {form.balance_tenure_months && <SummaryRow label="Tenure" value={`${form.balance_tenure_months} ${parseInt(form.balance_tenure_months) === 1 ? 'year' : 'years'}`} />}
                             {form.subsidy_amount && <SummaryRow label="Subsidy" value={`S$${parseInt(form.subsidy_amount).toLocaleString()}`} />}
                             {form.lock_in_period && <SummaryRow label="Lock-in Period" value={`${form.lock_in_period} ${form.lock_in_period === '1' ? 'year' : 'years'}`} />}
                             {form.free_conversion && <SummaryRow label="Free Conversion" value={`${form.free_conversion} ${form.free_conversion === '1' ? 'year' : 'years'}`} />}
@@ -1040,7 +1044,7 @@ export default function NewCasePage() {
                         {/* ── Document upload ── */}
                         <div style={{ marginBottom: 24 }}>
                             <p style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
-                                Document <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 400 }}>(optional)</span>
+                                Document <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 500 }}>*</span>
                             </p>
                             <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>Attach a Letter of Offer or supporting document.</p>
                             <DocumentUploader onFileSelect={setSelectedFile} selectedFile={selectedFile} />

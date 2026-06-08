@@ -73,7 +73,7 @@ export default function Step4Recommendations({ criteria, selectedId, onSelect }:
                         <p className="text-sm font-bold text-[#052d4a]">Recommended packages</p>
                         <p className="text-[11px] text-slate-400">
                             {sora?.value_date
-                                ? <>Floating computed from SORA as of <span className="font-medium">{sora.value_date}</span> (1M {sora.comp_sora_1m}% · 3M {sora.comp_sora_3m}%)</>
+                                ? <>Floating computed from SORA as of <span className="font-medium">{sora.published_date ?? sora.value_date}</span> (1M {sora.comp_sora_1m}% · 3M {sora.comp_sora_3m}%)</>
                                 : 'Live SORA unavailable — floating estimates may be hidden'}
                         </p>
                     </div>

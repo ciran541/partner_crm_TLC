@@ -4,8 +4,9 @@ import { Suspense, useEffect, useState } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import {
     ArrowLeft, AlertCircle, Check, User, Phone, Mail,
-    Building2, Percent, BadgeCheck, Calendar,
+    Building2, Percent, Calendar,
     FileText, DollarSign, TrendingUp, Activity, Pencil, Plus,
+    Home, Tag, UserCheck, RefreshCw,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import { formatDate } from '@/lib/utils/formatDate'
@@ -37,6 +38,7 @@ interface CaseDetail extends Omit<PropertyCase, 'banks'> {
     banks?: { id: string; name: string } | null
     documents: PropertyCaseDocument[]
     activity_logs: PropertyCaseActivityLog[]
+    has_calendar_sync: boolean
 }
 
 function formatAction(action: string) {
@@ -94,6 +96,8 @@ function CaseDetailContent() {
     const [caseData, setCaseData] = useState<CaseDetail | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [syncing, setSyncing] = useState(false)
+    const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
     useEffect(() => {
         fetch(`/api/property/cases/${caseId}`)
@@ -124,6 +128,25 @@ function CaseDetailContent() {
                 </button>
             </div>
         )
+    }
+
+    async function handleSyncCalendar() {
+        setSyncing(true)
+        setSyncMessage(null)
+        try {
+            const res = await fetch(`/api/property/cases/${caseId}/sync-calendar`, { method: 'POST' })
+            const json = await res.json()
+            if (res.ok) {
+                setSyncMessage({ type: 'success', text: 'Synced to Google Calendar.' })
+                setCaseData(prev => prev ? { ...prev, has_calendar_sync: true } : prev)
+            } else {
+                setSyncMessage({ type: 'error', text: json.error ?? 'Sync failed.' })
+            }
+        } catch {
+            setSyncMessage({ type: 'error', text: 'Sync failed. Please try again.' })
+        } finally {
+            setSyncing(false)
+        }
     }
 
     if (!caseData) return null
@@ -307,7 +330,7 @@ function CaseDetailContent() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
                     <InfoRow icon={Building2} label="Bank" value={caseData.banks?.name} />
                     <InfoRow icon={Percent} label="Interest Rate" value={caseData.interest_rate != null ? `${caseData.interest_rate}%` : null} />
-                    <InfoRow icon={Calendar} label="Balance Tenure" value={caseData.balance_tenure_months != null ? `${caseData.balance_tenure_months} months` : null} />
+                    <InfoRow icon={Calendar} label="Balance Tenure" value={caseData.balance_tenure_months != null ? `${Math.round(caseData.balance_tenure_months / 12)} years` : null} />
                     <InfoRow icon={DollarSign} label="Outstanding Loan" value={caseData.outstanding_loan_amount ? formatCurrency(caseData.outstanding_loan_amount) : null} />
                     {caseData.subsidy_amount != null && (
                         <InfoRow icon={DollarSign} label="Subsidy Amount" value={formatCurrency(caseData.subsidy_amount)} />
@@ -315,14 +338,111 @@ function CaseDetailContent() {
                 </div>
             </Section>
 
-            {/* Lock-in & projection */}
-            <Section title="Lock-in & Projection">
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
-                    <InfoRow
-                        icon={BadgeCheck}
-                        label="Lock-in Confirmed Date"
-                        value={caseData.lockin_confirmed_date ? formatDate(caseData.lockin_confirmed_date) : 'Pending — TLC will confirm after review'}
-                    />
+            {/* Package Details */}
+            {(caseData.case_category || caseData.banker_name || caseData.property_type || caseData.package_type || caseData.year_rates?.length) && (
+                <Section title="Package Details">
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20 }}>
+                        {caseData.case_category && (
+                            <InfoRow icon={Tag} label="Category" value={caseData.case_category === 'residential' ? 'Residential' : 'Commercial'} />
+                        )}
+                        {caseData.banker_name && (
+                            <InfoRow icon={UserCheck} label="Banker" value={caseData.banker_name} />
+                        )}
+                        {caseData.property_type && (
+                            <InfoRow icon={Home} label="Property Type" value={caseData.property_type} />
+                        )}
+                        {caseData.package_type && (
+                            <InfoRow icon={Percent} label="Package Type" value={caseData.package_type === 'fixed' ? `Fixed${caseData.fixed_years ? ` (${caseData.fixed_years}yr fixed)` : ''}` : 'Floating'} />
+                        )}
+                        {caseData.lock_in_period != null && (
+                            <InfoRow icon={Calendar} label="Lock-in Period" value={`${caseData.lock_in_period} ${caseData.lock_in_period === 1 ? 'year' : 'years'}`} />
+                        )}
+                        {caseData.free_conversion != null && (
+                            <InfoRow icon={RefreshCw} label="Free Conversion" value={`${caseData.free_conversion} ${caseData.free_conversion === 1 ? 'year' : 'years'}`} />
+                        )}
+                        {caseData.letter_of_offer_date && (
+                            <InfoRow icon={FileText} label="Letter of Offer Date" value={formatDate(caseData.letter_of_offer_date)} />
+                        )}
+                    </div>
+
+                    {/* Year-by-year interest rates */}
+                    {caseData.year_rates && caseData.year_rates.length > 0 && (
+                        <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #f1f5f9' }}>
+                            <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>
+                                Interest Rates by Year
+                            </p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {caseData.year_rates.map((rate, i) => {
+                                    const isFixed = i < (caseData.fixed_years ?? 0)
+                                    const rateType = isFixed ? 'Fixed' : (caseData.floating_rate_type ?? 'Floating')
+                                    return (
+                                        <div key={i} style={{
+                                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                            padding: '10px 14px', borderRadius: 8,
+                                            background: isFixed ? '#f0fdf4' : '#f8fafc',
+                                            border: `1px solid ${isFixed ? '#bbf7d0' : '#e2e8f0'}`,
+                                        }}>
+                                            <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>Year {i + 1}</span>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                                <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{rate}%</span>
+                                                <span style={{
+                                                    fontSize: 11, fontWeight: 600,
+                                                    color: isFixed ? '#059669' : '#3b82f6',
+                                                    background: isFixed ? '#dcfce7' : '#eff6ff',
+                                                    padding: '2px 8px', borderRadius: 9999,
+                                                }}>{rateType}</span>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </Section>
+            )}
+
+            {/* Follow-up & projection */}
+            <Section title="Follow-up & Projection">
+                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: hasProjection ? 0 : undefined }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, flex: 1 }}>
+                        <InfoRow
+                            icon={Calendar}
+                            label="Follow-up Date"
+                            value={caseData.follow_up_date ? formatDate(caseData.follow_up_date) : null}
+                        />
+                        {caseData.followup_preference && (
+                            <InfoRow
+                                icon={UserCheck}
+                                label="Follow-up Handled By"
+                                value={caseData.followup_preference === 'self' ? 'Me (90% / 10% TLC)' : 'TLC (30% / 70% TLC)'}
+                            />
+                        )}
+                    </div>
+                    {caseData.follow_up_date && !caseData.followup_completed_at && !caseData.has_calendar_sync && (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                            <button
+                                onClick={handleSyncCalendar}
+                                disabled={syncing}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 6,
+                                    padding: '7px 14px', borderRadius: 9, fontSize: 13, fontWeight: 600,
+                                    border: '1px solid #e2e8f0', color: '#475569', background: 'white',
+                                    cursor: syncing ? 'not-allowed' : 'pointer', opacity: syncing ? 0.6 : 1,
+                                    transition: 'all 0.15s',
+                                }}
+                                onMouseEnter={e => { if (!syncing) { e.currentTarget.style.borderColor = '#34d399'; e.currentTarget.style.color = '#059669'; e.currentTarget.style.background = '#f0fdf4' } }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.background = 'white' }}
+                            >
+                                <RefreshCw size={13} style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
+                                {syncing ? 'Syncing…' : 'Sync to Calendar'}
+                            </button>
+                            {syncMessage && (
+                                <span style={{ fontSize: 12, color: syncMessage.type === 'success' ? '#059669' : '#dc2626' }}>
+                                    {syncMessage.text}
+                                </span>
+                            )}
+                        </div>
+                    )}
                 </div>
                 {hasProjection && (
                     <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #f1f5f9' }}>

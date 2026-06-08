@@ -85,6 +85,9 @@ export async function POST(request: Request) {
         property_address, bank_id, interest_rate, balance_tenure_months,
         outstanding_loan_amount, subsidy_amount, notes,
         followup_preference, letter_of_offer_date, lock_in_period,
+        case_category, banker_name, property_type,
+        package_type, free_conversion, fixed_years,
+        floating_rate_type,
     } = body as Record<string, unknown> & typeof body
 
     const year_rates = (body as any).year_rates as string[] | undefined
@@ -156,6 +159,15 @@ export async function POST(request: Request) {
             notes: notes?.trim() || null,
             followup_preference: (followup_preference as string) || null,
             follow_up_date,
+            case_category: (case_category as string) || null,
+            banker_name: (banker_name as string) || null,
+            property_type: (property_type as string) || null,
+            package_type: (package_type as string) || null,
+            free_conversion: free_conversion != null ? Number(free_conversion) : null,
+            fixed_years: fixed_years != null ? Number(fixed_years) : null,
+            floating_rate_type: (floating_rate_type as string) || null,
+            year_rates: year_rates ?? null,
+            letter_of_offer_date: (letter_of_offer_date as string) || null,
             ...commissionData,
             ...projectionData,
         })

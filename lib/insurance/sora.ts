@@ -49,10 +49,16 @@ export async function fetchLatestSoraFromMas(): Promise<SoraRates | null> {
         }
         const json = await res.json()
         const rows: MasRow[] = json?.elements ?? []
-        // rows are oldest-first; find the latest with a usable compounded SORA
+        // Don't assume the feed's row order — the gateway returns the full history
+        // and (as seen live) NOT reliably oldest-first. Taking "the last non-null
+        // row" therefore grabbed the OLDEST row (a 2006 date). Instead pick the row
+        // with the MAX end_of_day that has a usable compounded SORA. end_of_day is
+        // ISO "YYYY-MM-DD", so string comparison is chronological.
         let latest: MasRow | null = null
         for (const r of rows) {
-            if (r.comp_sora_1m != null || r.comp_sora_3m != null) latest = r
+            if (r.comp_sora_1m == null && r.comp_sora_3m == null) continue
+            if (typeof r.end_of_day !== 'string') continue
+            if (!latest || r.end_of_day > latest.end_of_day) latest = r
         }
         if (!latest) return null
         return {

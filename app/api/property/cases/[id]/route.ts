@@ -33,6 +33,13 @@ export async function GET(
     const activityLogs = ((raw.property_case_activity_logs as { created_at: string }[]) ?? [])
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
+    // Check whether a calendar event has been synced for this case
+    const { data: calendarEvent } = await admin
+        .from('property_calendar_events')
+        .select('id')
+        .eq('case_id', id)
+        .maybeSingle()
+
     // Generate signed URLs for each document (storage path → 1-hour signed URL)
     const rawDocs = (raw.property_case_documents as { file_url: string }[] | null) ?? []
     const documents = await Promise.all(
@@ -49,6 +56,7 @@ export async function GET(
             ...raw,
             documents,
             activity_logs: activityLogs,
+            has_calendar_sync: !!calendarEvent,
             property_case_documents: undefined,
             property_case_activity_logs: undefined,
         },

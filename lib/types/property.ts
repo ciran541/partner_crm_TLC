@@ -54,6 +54,17 @@ export interface PropertyCase {
     outstanding_loan_amount?: number
     subsidy_amount?: number
 
+    // Mortgage package detail
+    case_category?: 'residential' | 'commercial' | null
+    banker_name?: string | null
+    property_type?: string | null
+    package_type?: 'fixed' | 'floating' | null
+    free_conversion?: number | null
+    fixed_years?: number | null
+    floating_rate_type?: string | null
+    year_rates?: string[] | null
+    letter_of_offer_date?: string | null
+
     // Lock-in
     lock_in_period?: number | null
     lockin_confirmed_date?: string
@@ -137,6 +148,16 @@ export interface CreatePropertyCaseInput {
     outstanding_loan_amount?: number
     subsidy_amount?: number
     notes?: string
+    // Package detail fields
+    case_category?: string
+    banker_name?: string
+    property_type?: string
+    package_type?: string
+    free_conversion?: number | null
+    fixed_years?: number | null
+    floating_rate_type?: string
+    year_rates?: string[]
+    letter_of_offer_date?: string
 }
 
 export interface UpdatePropertyProfileInput {

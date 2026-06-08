@@ -184,7 +184,18 @@ function PropertyCasesContent() {
                     {/* Desktop table */}
                     <div className="hidden md:block card" style={{ overflow: 'hidden' }}>
                         <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                                <colgroup>
+                                    {isAdmin && <col style={{ width: '11%' }} />}
+                                    <col style={{ width: isAdmin ? '16%' : '20%' }} />
+                                    <col style={{ width: '11%' }} />
+                                    <col style={{ width: '12%' }} />
+                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '14%' }} />
+                                    <col style={{ width: '13%' }} />
+                                    <col style={{ width: '13%' }} />
+                                    <col style={{ width: '10%' }} />
+                                </colgroup>
                                 <thead>
                                     <tr style={{ background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
                                         {isAdmin && <th className="table-th">Agent</th>}
@@ -192,9 +203,9 @@ function PropertyCasesContent() {
                                         <th className="table-th">Type</th>
                                         <th className="table-th">Status</th>
                                         <th className="table-th">Bank</th>
-                                        <th className="table-th" style={{ textAlign: 'right' }}>Loan Amount</th>
-                                        <th className="table-th" style={{ textAlign: 'right' }}>Commission</th>
-                                        <th className="table-th">Lock-in</th>
+                                        <th className="table-th">Loan Amount</th>
+                                        <th className="table-th">Commission</th>
+                                        <th className="table-th">Follow-up</th>
                                         <th className="table-th">Created</th>
                                     </tr>
                                 </thead>
@@ -216,23 +227,41 @@ function PropertyCasesContent() {
                                                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = isOpDue ? 'rgba(255,247,237,0.7)' : isVerified ? 'rgba(240,253,244,0.5)' : '' }}
                                             >
                                                 {isAdmin && (
-                                                    <td className="table-td" style={{ fontWeight: 500, color: '#475569' }}>{c.agent_name ?? '—'}</td>
+                                                    <td className="table-td" style={{ fontWeight: 500, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.agent_name ?? '—'}</td>
                                                 )}
                                                 <td className="table-td">
-                                                    <p style={{ fontWeight: 600, color: '#0f172a' }}>{c.client_name}</p>
+                                                    <p style={{ fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.client_name}</p>
                                                     <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{c.client_mobile}</p>
                                                 </td>
-                                                <td className="table-td" style={{ color: '#475569' }}>{CASE_TYPE_LABELS[c.case_type]}</td>
+                                                <td className="table-td" style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{CASE_TYPE_LABELS[c.case_type]}</td>
                                                 <td className="table-td"><StatusBadge status={c.status} /></td>
-                                                <td className="table-td" style={{ color: '#475569' }}>{c.banks?.name ?? '—'}</td>
-                                                <td className="table-td" style={{ textAlign: 'right', fontWeight: 600, color: '#0f172a' }}>
+                                                <td className="table-td" style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.banks?.name ?? '—'}</td>
+                                                <td className="table-td" style={{ fontWeight: 600, color: '#0f172a' }}>
                                                     {c.outstanding_loan_amount ? formatCurrency(c.outstanding_loan_amount) : '—'}
                                                 </td>
-                                                <td className="table-td" style={{ textAlign: 'right', fontWeight: 700, color: '#059669', fontSize: 15 }}>
+                                                <td className="table-td" style={{ fontWeight: 700, color: '#059669', fontSize: 15 }}>
                                                     {c.agent_commission_amount ? formatCurrency(c.agent_commission_amount) : '—'}
                                                 </td>
-                                                <td className="table-td" style={{ color: '#475569' }}>
-                                                    {c.lockin_confirmed_date ? formatDate(c.lockin_confirmed_date) : '—'}
+                                                <td className="table-td">
+                                                    {(c as any).followup_preference === 'self' && (
+                                                        <>
+                                                            <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 9999, color: '#059669', background: '#ecfdf5', border: '1px solid #bbf7d0' }}>Me</span>
+                                                            {(c as any).follow_up_date && (
+                                                                <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>{formatDate((c as any).follow_up_date)}</p>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                    {(c as any).followup_preference === 'tlc' && (
+                                                        <>
+                                                            <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 9999, color: '#0284c7', background: '#e0f2fe', border: '1px solid #bae6fd' }}>TLC</span>
+                                                            {(c as any).follow_up_date && (
+                                                                <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>{formatDate((c as any).follow_up_date)}</p>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                    {!(c as any).followup_preference && (
+                                                        <span style={{ color: '#cbd5e1', fontSize: 13 }}>—</span>
+                                                    )}
                                                 </td>
                                                 <td className="table-td" style={{ fontSize: 12, color: '#94a3b8' }}>{formatDate(c.created_at)}</td>
                                             </tr>
@@ -281,7 +310,14 @@ function PropertyCasesContent() {
                                             <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Agent: {c.agent_name}</p>
                                         )}
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <span style={{ fontSize: 12, color: '#94a3b8' }}>{formatDate(c.created_at)}</span>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                                <span style={{ fontSize: 12, color: '#94a3b8' }}>{formatDate(c.created_at)}</span>
+                                                {(c as any).followup_preference && (c as any).follow_up_date && (
+                                                    <span style={{ fontSize: 11, color: (c as any).followup_preference === 'self' ? '#059669' : '#0284c7', fontWeight: 600 }}>
+                                                        {(c as any).followup_preference === 'self' ? 'Me' : 'TLC'} · {formatDate((c as any).follow_up_date)}
+                                                    </span>
+                                                )}
+                                            </div>
                                             {c.agent_commission_amount ? (
                                                 <span style={{ fontSize: 16, fontWeight: 800, color: '#059669', letterSpacing: '-0.02em' }}>
                                                     {formatCurrency(c.agent_commission_amount)}

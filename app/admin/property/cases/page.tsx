@@ -179,7 +179,6 @@ export default function AdminPropertyCasesPage() {
                                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Bank</th>
                                         <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Loan</th>
                                         <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Commission</th>
-                                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Lock-in</th>
                                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Follow-up</th>
                                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Submitted</th>
                                         <th className="px-4 py-3" />
@@ -206,9 +205,6 @@ export default function AdminPropertyCasesPage() {
                                             <td className="px-4 py-3 text-right font-medium text-emerald-700">
                                                 {c.agent_commission_amount ? formatCurrency(c.agent_commission_amount) : '—'}
                                             </td>
-                                            <td className="px-4 py-3 text-slate-600 text-xs">
-                                                {c.lockin_confirmed_date ? formatDate(c.lockin_confirmed_date) : '—'}
-                                            </td>
                                             <td className="px-4 py-3">
                                                 {(c as any).followup_preference === 'self' && (
                                                     <>
@@ -219,7 +215,12 @@ export default function AdminPropertyCasesPage() {
                                                     </>
                                                 )}
                                                 {(c as any).followup_preference === 'tlc' && (
-                                                    <span className="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: '#0284c7', background: '#e0f2fe', border: '1px solid #bae6fd' }}>TLC</span>
+                                                    <>
+                                                        <span className="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: '#0284c7', background: '#e0f2fe', border: '1px solid #bae6fd' }}>TLC</span>
+                                                        {(c as any).follow_up_date && (
+                                                            <p className="text-xs text-slate-400 mt-1">{formatDate((c as any).follow_up_date)}</p>
+                                                        )}
+                                                    </>
                                                 )}
                                                 {!(c as any).followup_preference && (
                                                     <span className="text-slate-300 text-xs">—</span>

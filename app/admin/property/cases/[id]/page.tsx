@@ -4,9 +4,9 @@ import { Suspense, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
     ArrowLeft, AlertCircle, Check, User, Phone, Mail,
-    MapPin, Building2, Percent, Calendar, BadgeCheck,
+    Building2, Percent, Calendar,
     FileText, Clock, DollarSign, TrendingUp, Activity,
-    ChevronDown, Save,
+    ChevronDown, Save, Home, Tag, UserCheck, RefreshCw,
 } from 'lucide-react'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
@@ -42,7 +42,7 @@ interface CaseDetail extends Omit<PropertyCase, 'banks'> {
 
 interface AdminFormState {
     status: PropertyCaseStatus
-    lockin_confirmed_date: string
+    follow_up_date: string
     commission_status: PropertyCommissionStatus
     gross_commission_amount: string
     agent_commission_amount: string
@@ -89,7 +89,7 @@ function AdminDetailContent() {
 
     const [form, setForm] = useState<AdminFormState>({
         status: 'submitted',
-        lockin_confirmed_date: '',
+        follow_up_date: '',
         commission_status: 'pending',
         gross_commission_amount: '',
         agent_commission_amount: '',
@@ -112,7 +112,7 @@ function AdminDetailContent() {
                 setCaseData(data)
                 setForm({
                     status: data.status,
-                    lockin_confirmed_date: data.lockin_confirmed_date ?? '',
+                    follow_up_date: data.follow_up_date ?? '',
                     commission_status: data.commission_status,
                     gross_commission_amount: data.gross_commission_amount != null ? String(data.gross_commission_amount) : '',
                     agent_commission_amount: data.agent_commission_amount != null ? String(data.agent_commission_amount) : '',
@@ -138,12 +138,12 @@ function AdminDetailContent() {
         const payload: Record<string, unknown> = {
             id: caseId,
             status: form.status,
+            ...(caseData?.followup_preference === 'tlc' && { follow_up_date: form.follow_up_date || null }),
             commission_status: form.commission_status,
             gross_commission_amount: form.gross_commission_amount ? parseFloat(form.gross_commission_amount) : null,
             agent_commission_amount: form.agent_commission_amount ? parseFloat(form.agent_commission_amount) : null,
             tlc_commission_amount: form.tlc_commission_amount ? parseFloat(form.tlc_commission_amount) : null,
             notes: form.notes.trim() || null,
-            lockin_confirmed_date: form.lockin_confirmed_date || null,
             recurring_converted: form.recurring_converted,
         }
 
@@ -261,7 +261,6 @@ function AdminDetailContent() {
                             <InfoRow icon={User} label="Full Name" value={caseData.client_name} />
                             <InfoRow icon={Phone} label="Mobile" value={caseData.client_mobile} />
                             {caseData.client_email && <InfoRow icon={Mail} label="Email" value={caseData.client_email} />}
-                            <InfoRow icon={MapPin} label="Property Address" value={caseData.property_address} />
                         </div>
                     </Section>
 
@@ -270,21 +269,73 @@ function AdminDetailContent() {
                         <div className="grid sm:grid-cols-2 gap-4">
                             <InfoRow icon={Building2} label="Bank" value={caseData.banks?.name} />
                             <InfoRow icon={Percent} label="Interest Rate" value={caseData.interest_rate != null ? `${caseData.interest_rate}%` : null} />
-                            <InfoRow icon={Calendar} label="Balance Tenure" value={caseData.balance_tenure_months != null ? `${caseData.balance_tenure_months} months` : null} />
+                            <InfoRow icon={Calendar} label="Balance Tenure" value={caseData.balance_tenure_months != null ? `${Math.round(caseData.balance_tenure_months / 12)} years` : null} />
                             <InfoRow icon={DollarSign} label="Outstanding Loan" value={caseData.outstanding_loan_amount ? formatCurrency(caseData.outstanding_loan_amount) : null} />
                             {caseData.subsidy_amount != null && <InfoRow icon={DollarSign} label="Subsidy" value={formatCurrency(caseData.subsidy_amount)} />}
                         </div>
                     </Section>
 
-                    {/* Lock-in + Projection */}
-                    <Section title="Lock-in & Projection">
+                    {/* Package Details */}
+                    {(caseData.case_category || caseData.banker_name || caseData.property_type || caseData.package_type || (caseData.year_rates as string[] | null)?.length) && (
+                        <Section title="Package Details">
+                            <div className="grid sm:grid-cols-2 gap-4">
+                                {caseData.case_category && (
+                                    <InfoRow icon={Tag} label="Category" value={caseData.case_category === 'residential' ? 'Residential' : 'Commercial'} />
+                                )}
+                                {caseData.banker_name && (
+                                    <InfoRow icon={UserCheck} label="Banker" value={caseData.banker_name} />
+                                )}
+                                {caseData.property_type && (
+                                    <InfoRow icon={Home} label="Property Type" value={caseData.property_type} />
+                                )}
+                                {caseData.package_type && (
+                                    <InfoRow icon={Percent} label="Package Type" value={caseData.package_type === 'fixed' ? `Fixed${caseData.fixed_years ? ` (${caseData.fixed_years}yr fixed)` : ''}` : 'Floating'} />
+                                )}
+                                {caseData.lock_in_period != null && (
+                                    <InfoRow icon={Calendar} label="Lock-in Period" value={`${caseData.lock_in_period} ${caseData.lock_in_period === 1 ? 'year' : 'years'}`} />
+                                )}
+                                {caseData.free_conversion != null && (
+                                    <InfoRow icon={RefreshCw} label="Free Conversion" value={`${caseData.free_conversion} ${caseData.free_conversion === 1 ? 'year' : 'years'}`} />
+                                )}
+                                {caseData.letter_of_offer_date && (
+                                    <InfoRow icon={FileText} label="Letter of Offer Date" value={formatDate(caseData.letter_of_offer_date)} />
+                                )}
+                            </div>
+                            {(caseData.year_rates as string[] | null) && (caseData.year_rates as string[]).length > 0 && (
+                                <div className="mt-4 pt-4 border-t border-slate-100">
+                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Interest Rates by Year</p>
+                                    <div className="space-y-2">
+                                        {(caseData.year_rates as string[]).map((rate, i) => {
+                                            const isFixed = i < ((caseData.fixed_years as number | null) ?? 0)
+                                            const rateType = isFixed ? 'Fixed' : ((caseData.floating_rate_type as string | null) ?? 'Floating')
+                                            return (
+                                                <div key={i} className="flex items-center justify-between px-3 py-2.5 rounded-lg" style={{ background: isFixed ? '#f0fdf4' : '#f8fafc', border: `1px solid ${isFixed ? '#bbf7d0' : '#e2e8f0'}` }}>
+                                                    <span className="text-sm font-semibold text-slate-600">Year {i + 1}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-sm font-bold text-slate-900">{rate}%</span>
+                                                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color: isFixed ? '#059669' : '#3b82f6', background: isFixed ? '#dcfce7' : '#eff6ff' }}>{rateType}</span>
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+                        </Section>
+                    )}
+
+                    {/* Follow-up & Projection */}
+                    <Section title="Follow-up & Projection">
                         <div className="grid sm:grid-cols-2 gap-4">
-                            <InfoRow icon={BadgeCheck} label="Confirmed Lock-in Date" value={caseData.lockin_confirmed_date ? formatDate(caseData.lockin_confirmed_date) : null} />
+                            <InfoRow icon={Calendar} label="Follow-up Date" value={caseData.follow_up_date ? formatDate(caseData.follow_up_date) : null} />
+                            {caseData.followup_preference && (
+                                <InfoRow icon={UserCheck} label="Follow-up Handled By" value={caseData.followup_preference === 'self' ? 'Agent (90% / 10% TLC)' : 'TLC (30% / 70% TLC)'} />
+                            )}
                         </div>
                         {hasProjection && (
                             <div className="mt-2 pt-4 border-t border-slate-100">
                                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                                    <TrendingUp size={12} />Projected at Lock-in Maturity
+                                    <TrendingUp size={12} />Projected at Lock-in Maturity{caseData.lock_in_period ? ` (${caseData.lock_in_period}yr lock-in)` : ''}
                                 </p>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                     {[
@@ -394,6 +445,22 @@ function AdminDetailContent() {
                             </div>
                         </div>
 
+                        {/* Follow-up Date — editable for TLC-managed cases */}
+                        {caseData?.followup_preference === 'tlc' && (
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                                    Follow-up Date
+                                    <span className="ml-1.5 text-xs font-normal text-blue-500">(TLC managed)</span>
+                                </label>
+                                <input
+                                    type="date"
+                                    value={form.follow_up_date}
+                                    onChange={e => setField('follow_up_date', e.target.value)}
+                                    className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-colors"
+                                />
+                            </div>
+                        )}
+
                         {/* Commission Status */}
                         <div>
                             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Commission Status</label>
@@ -431,17 +498,6 @@ function AdminDetailContent() {
                                 </div>
                             ))}
                             <p className="text-xs text-slate-400">Pre-filled from case. Edit only if the actual amount differs.</p>
-                        </div>
-
-                        {/* Lock-in Confirmed Date */}
-                        <div>
-                            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Lock-in Confirmed Date</label>
-                            <input
-                                type="date"
-                                value={form.lockin_confirmed_date}
-                                onChange={e => setField('lockin_confirmed_date', e.target.value)}
-                                className="w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 bg-white focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 transition-colors"
-                            />
                         </div>
 
                         {/* Recurring */}

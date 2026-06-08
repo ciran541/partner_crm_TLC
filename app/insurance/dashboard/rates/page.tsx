@@ -124,7 +124,7 @@ export default function RatesPage() {
             const json = await res.json()
             if (!res.ok) throw new Error(json.error || 'Refresh failed')
             setSora(json.sora)
-            setAlert({ type: 'success', message: `SORA updated — 1M ${json.sora.comp_sora_1m}% · 3M ${json.sora.comp_sora_3m}% (as of ${json.sora.value_date}).` })
+            setAlert({ type: 'success', message: `SORA updated — 1M ${json.sora.comp_sora_1m}% · 3M ${json.sora.comp_sora_3m}% (as of ${json.sora.published_date ?? json.sora.value_date}).` })
         } catch (e: any) {
             setAlert({ type: 'error', message: e.message })
         } finally {
@@ -179,7 +179,7 @@ export default function RatesPage() {
                     <div className="inline-flex items-center gap-2 text-[11px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
                         <span className="font-semibold text-slate-500">SORA</span>
                         {sora ? (
-                            <span className="text-slate-600 tabular-nums">1M {sora.comp_sora_1m}% · 3M {sora.comp_sora_3m}% <span className="text-slate-400">({sora.value_date})</span></span>
+                            <span className="text-slate-600 tabular-nums">1M {sora.comp_sora_1m}% · 3M {sora.comp_sora_3m}% <span className="text-slate-400">({sora.published_date ?? sora.value_date})</span></span>
                         ) : (
                             <span className="text-amber-600">not fetched yet</span>
                         )}

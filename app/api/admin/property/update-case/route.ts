@@ -3,11 +3,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
 import type { PropertyCaseStatus, PropertyCommissionStatus } from '@/lib/types/property'
 import { syncCaseToSheets } from '@/lib/services/sheets-sync'
+import { syncFollowUpToCalendar } from '@/lib/google/syncFollowUp'
 
 interface UpdatePropertyCaseInput {
     id: string
     status?: PropertyCaseStatus
-    lockin_confirmed_date?: string | null
+    follow_up_date?: string | null
     commission_status?: PropertyCommissionStatus
     gross_commission_amount?: number | null
     agent_commission_amount?: number | null
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
     // Fetch existing values for the activity log diff
     const { data: oldCase } = await admin
         .from('property_cases')
-        .select('status, lockin_confirmed_date, commission_status')
+        .select('status, commission_status')
         .eq('id', id)
         .single()
 
@@ -46,7 +47,7 @@ export async function POST(request: Request) {
     // Build update payload — only include explicitly provided fields
     const payload: Record<string, unknown> = {}
     if (updates.status !== undefined) payload.status = updates.status
-    if (updates.lockin_confirmed_date !== undefined) payload.lockin_confirmed_date = updates.lockin_confirmed_date
+    if (updates.follow_up_date !== undefined) payload.follow_up_date = updates.follow_up_date
     if (updates.commission_status !== undefined) payload.commission_status = updates.commission_status
     if (updates.gross_commission_amount !== undefined) payload.gross_commission_amount = updates.gross_commission_amount
     if (updates.agent_commission_amount !== undefined) payload.agent_commission_amount = updates.agent_commission_amount
@@ -74,37 +75,35 @@ export async function POST(request: Request) {
     let action = 'admin_update'
     if (updates.status !== undefined && updates.status !== oldCase.status) {
         action = 'status_changed'
-    } else if (updates.lockin_confirmed_date) {
-        action = 'lockin_confirmed'
     } else if (updates.commission_status !== undefined && updates.commission_status !== oldCase.commission_status) {
         action = 'commission_updated'
-    }
-
-    // Auto-create 90-day reminder when lockin_confirmed_date is newly set or changed
-    if (updates.lockin_confirmed_date !== undefined) {
-        const oldDate = oldCase.lockin_confirmed_date as string | null
-        const newDate = updates.lockin_confirmed_date
-        if (newDate !== oldDate) {
-            await admin.from('property_reminders').delete().eq('case_id', id).eq('is_sent', false)
-            if (newDate) {
-                const trigger = new Date(newDate)
-                trigger.setDate(trigger.getDate() - 90)
-                await admin.from('property_reminders').insert({
-                    case_id: id,
-                    reminder_type: 'lockin_90_day',
-                    trigger_date: trigger.toISOString().split('T')[0],
-                })
-            }
-        }
     }
 
     await admin.from('property_case_activity_logs').insert({
         case_id: id,
         actor_id: auth.userId,
         action,
-        old_value: { status: oldCase.status, lockin_confirmed_date: oldCase.lockin_confirmed_date, commission_status: oldCase.commission_status },
+        old_value: { status: oldCase.status, commission_status: oldCase.commission_status },
         new_value: payload,
     })
+
+    // Re-sync calendar when follow_up_date is explicitly changed
+    if (updates.follow_up_date !== undefined) {
+        const u2 = updated as Record<string, unknown>
+        const newDate = u2.follow_up_date as string | null
+        const preference = u2.followup_preference as 'self' | 'tlc' | null
+        if (newDate && preference) {
+            syncFollowUpToCalendar(
+                u2.agent_id as string,
+                id,
+                preference,
+                'upsert',
+                newDate,
+                u2.client_name as string,
+                `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${id}`
+            ).catch(err => console.error('[Calendar sync] admin date change:', err))
+        }
+    }
 
     const { data: agentProfile } = await admin
         .from('profiles')

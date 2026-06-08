@@ -86,7 +86,7 @@ export default function Step4ResearchProposal({ data, qualify, factFind, risk, c
                 monthly_saving: rec.savings?.monthlySaving ?? null,
                 net_saving_2yr: rec.savings?.netSaving2yr ?? null,
                 net_saving_3yr: rec.savings?.netSaving3yr ?? null,
-                sora_as_of: sora?.value_date ?? null,
+                sora_as_of: sora?.published_date ?? sora?.value_date ?? null,
                 selected_at: new Date().toISOString(),
             },
         })
