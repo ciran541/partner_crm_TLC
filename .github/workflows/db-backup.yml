@@ -1,0 +1,126 @@
+name: Daily DB Backup
+
+# Faithful logical backup of the Supabase Postgres database to Cloudflare R2.
+# This is the disaster-recovery source of truth. The Google Sheet mirror is now
+# only an ops/reporting view, not a backup.
+#
+# Setup (one-time):  docs/BACKUP_SETUP.md
+# Restore procedure: docs/DISASTER_RECOVERY.md
+
+on:
+  schedule:
+    # 18:30 UTC = 02:30 SGT daily — overnight, low traffic.
+    - cron: '30 18 * * *'
+  workflow_dispatch: {} # lets you run it by hand from the Actions tab (use this to test)
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Install PostgreSQL 17 client
+        run: |
+          set -euo pipefail
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          STAMP="$(date -u +%Y%m%d_%H%M%S)"
+          DIR="dump_${STAMP}"
+          mkdir -p "$DIR"
+
+          # Supabase's documented logical-backup trio (restored in this order):
+          #   roles.sql  -> DB roles
+          #   schema.sql -> tables, types, functions, RLS policies (public schema)
+          #   data.sql   -> all row data
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f "$DIR/roles.sql"  --role-only
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f "$DIR/schema.sql"
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f "$DIR/data.sql" --data-only --use-copy
+
+          # Agent login accounts — exactly the two tables needed to restore logins
+          # (users + their email identities). This is what lets a restore skip
+          # agent re-registration. Restricted to these tables so the restore is
+          # clean (no stray session/token rows). Non-fatal: a backup must never
+          # fail just because this step can't run.
+          pg_dump "$SUPABASE_DB_URL" --data-only --no-owner --no-privileges \
+            -t auth.users -t auth.identities -f "$DIR/auth.sql" \
+            || echo "::warning::auth dump skipped — agents will re-register on restore"
+
+          # Safety net: a real data dump is never tiny. Abort rather than ship an
+          # empty backup that would silently overwrite good ones in R2.
+          if [ "$(wc -c < "$DIR/data.sql")" -lt 1000 ]; then
+            echo "::error::data.sql looks empty (<1KB) — aborting backup"
+            exit 1
+          fi
+
+          ARCHIVE="backup_${STAMP}.tar.gz"
+          tar -czf "$ARCHIVE" -C "$DIR" .
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          ls -lh "$ARCHIVE"
+
+      - name: Upload to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          YEAR="${STAMP:0:4}"
+          MONTH="${STAMP:4:2}"
+          KEY="db/${YEAR}/${MONTH}/${ARCHIVE}"
+          aws s3 cp "$ARCHIVE" "s3://${R2_BUCKET}/${KEY}" --endpoint-url "$R2_ENDPOINT"
+          echo "✅ Uploaded s3://${R2_BUCKET}/${KEY}"
+
+  # ---------------------------------------------------------------------------
+  # Backs up the uploaded PDFs (Supabase Storage bucket "property-documents")
+  # to R2. Runs independently of the DB dump. Uses `rclone copy` (additive — it
+  # never deletes from R2), so an accidental delete in the app can't wipe the
+  # backup. This replaces the old Google Drive document mirror.
+  # ---------------------------------------------------------------------------
+  documents:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rclone
+        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Sync Supabase Storage -> R2
+        env:
+          # Source — Supabase Storage (S3-compatible endpoint)
+          RCLONE_CONFIG_SUPA_TYPE: s3
+          RCLONE_CONFIG_SUPA_PROVIDER: Other
+          RCLONE_CONFIG_SUPA_ENDPOINT: ${{ secrets.SUPABASE_S3_ENDPOINT }}
+          RCLONE_CONFIG_SUPA_REGION: ${{ secrets.SUPABASE_S3_REGION }}
+          RCLONE_CONFIG_SUPA_ACCESS_KEY_ID: ${{ secrets.SUPABASE_S3_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_SUPA_SECRET_ACCESS_KEY: ${{ secrets.SUPABASE_S3_SECRET_ACCESS_KEY }}
+          # Destination — Cloudflare R2 (reuses the same R2 token as the DB backup)
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          RCLONE_CONFIG_R2_REGION: auto
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          rclone copy SUPA:property-documents "R2:${R2_BUCKET}/documents" \
+            --fast-list --transfers 8 --checkers 16 -v
+          echo "✅ Documents synced to R2:${R2_BUCKET}/documents"

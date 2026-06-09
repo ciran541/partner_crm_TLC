@@ -1,7 +1,8 @@
 # Disaster Recovery Guide
 
 > Use this guide if the Supabase project is lost, corrupted, or needs to be migrated to a new project.
-> All case data is mirrored to Google Sheets and all documents to Google Drive in real-time.
+> The **primary backup** is a full daily database dump stored in Cloudflare R2
+> (see `docs/BACKUP_SETUP.md`). Documents are mirrored to Google Drive.
 
 ---
 
@@ -9,12 +10,71 @@
 
 | Data | Where | Recovery |
 |------|-------|----------|
-| All property cases (34 fields) | Google Sheets → "Property Cases" tab | Automated via `restoreToApp()` |
-| Agent profiles | Google Sheets → "Agent Profiles" tab | Automated via `restoreAgents()` |
-| Uploaded documents (PDFs) | Google Drive → `Property CRM Backup/Cases/` | Manual re-upload |
-| Database schema | `supabase/migrations/` folder in this repo | `supabase db push` |
-| Activity logs | ❌ Not backed up | Audit trail only — not restorable |
-| Reminders | ❌ Not backed up | Regenerate from lock-in dates |
+| **Entire database** (all tables, exact IDs/types) | Cloudflare R2 → `db/<year>/<month>/backup_*.tar.gz` (daily) | **Primary** — restore via `pg_restore`/`psql` (Part A below) |
+| Activity logs, reminders, knowledge, rates, commissions | included in the R2 dump | restored with the database |
+| Agent login accounts | `auth.sql` inside the R2 dump | optional — restore to skip re-registration |
+| Uploaded documents (PDFs) | Cloudflare R2 → `documents/` (daily copy of the Storage bucket) | Restore via `rclone`/`aws s3` (Part A) |
+| Database schema | also in `supabase/migrations/` | `supabase db push` |
+| Property cases + agent profiles (ops view) | Google Sheets | **Legacy fallback** — Part B below |
+
+> The Google Sheet + Apps Script path (Part B) still works and is kept as a
+> fallback, but the R2 dump is the source of truth: it captures **everything**
+> (logs, reminders, exact UUIDs), not just 34 case fields.
+
+---
+
+## Part A — Restore from the R2 dump (primary)
+
+Use this whenever the database is lost or you're moving to a new project.
+
+### A1. Create a new Supabase project
+Same as Step 1 below — note the new **Project Ref** and **database password**.
+
+### A2. Download the latest backup
+From the Cloudflare R2 bucket, grab the newest `db/<year>/<month>/backup_*.tar.gz`, then:
+
+```bash
+tar -xzf backup_<timestamp>.tar.gz
+# yields: roles.sql  schema.sql  data.sql  auth.sql
+```
+
+### A3. Restore into the new project
+Use the new project's **Session pooler** connection string (port 5432):
+
+```bash
+DB="postgresql://postgres.<new-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+
+psql "$DB" -f roles.sql       # (skip errors for roles that already exist)
+psql "$DB" -f schema.sql      # tables, types, functions, RLS
+psql "$DB" -f data.sql        # all row data — same IDs as before
+```
+
+That brings back **all application data** — cases, commissions, activity logs,
+reminders, knowledge, rates — with original IDs and foreign keys intact.
+
+### A4. (Optional) Restore agent logins to skip re-registration
+```bash
+psql "$DB" -f auth.sql        # restores auth.users with original UUIDs
+```
+If this restores cleanly, agents keep their accounts and you can **skip Steps 5–6**.
+If it errors (auth schema conflicts), don't fight it — fall back to the
+re-registration + UUID re-map in **Steps 5–6** below, which always works.
+
+### A5. Finish
+- Update env vars + redeploy → **Step 3** below.
+- Restore document PDFs from R2 → **Step 7** below.
+- Verify → **Step 8** below.
+
+> ⚠️ **A backup you haven't restored isn't a backup.** Do one test restore into a
+> throwaway Supabase project after setup, and re-test after any major schema change.
+
+---
+
+## Part B — Restore from Google Sheets (legacy fallback)
+
+Steps 1–8 below are the original Google Sheets / Apps Script procedure. Use it
+only if the R2 dump is unavailable. It recovers the 34 case fields + agent
+profiles, but **not** activity logs or reminders.
 
 ---
 
@@ -140,22 +200,22 @@ Repeat this step after any remaining agents re-register.
 
 ---
 
-## Step 7 — Restore Documents (Manual)
+## Step 7 — Restore Documents (from R2)
 
-Documents are stored in Google Drive under:
+The PDFs are backed up daily to Cloudflare R2 under `documents/`. Restore them by
+copying that folder back into the **new** project's Supabase Storage bucket
+(`property-documents`). Because `data.sql` already restored the
+`property_case_documents` rows (with the same file paths), the documents re-link
+automatically — no manual per-case re-upload.
+
+```bash
+# Configure rclone remotes for R2 (source) and the NEW Supabase Storage (dest),
+# then copy the whole documents folder back:
+rclone copy R2:<bucket>/documents NEWSUPA:property-documents --fast-list -v
 ```
-Property CRM Backup/
-  └── Cases/
-       └── {Client Name} — {case-id}/
-            └── document.pdf
-```
 
-To re-link documents:
-1. Open the app → navigate to each case
-2. Re-upload the relevant documents from the Google Drive folder
-3. The app will store the new Supabase Storage URLs and resume normal operation
-
-> Document re-upload is the only manual step in the entire restore process.
+> The remote configs are the same S3 settings as the backup (see
+> `docs/BACKUP_SETUP.md`); `NEWSUPA` uses the **new** project's Storage S3 keys.
 
 ---
 
@@ -168,7 +228,7 @@ Run through this checklist to confirm everything is working:
 - [ ] Each case is assigned to the correct agent (check Agent Name)
 - [ ] Log in as an agent — can see only their own cases
 - [ ] Create a new case — it appears in Google Sheets within seconds
-- [ ] Upload a document — it appears in Google Drive within seconds
+- [ ] Upload a document — it is stored in Supabase Storage (and copied to R2 on the next daily backup)
 - [ ] Agent profile data (full name, mobile, CEA number) is correct
 
 ---

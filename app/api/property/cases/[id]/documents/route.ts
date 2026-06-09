@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 import { isAdmin } from '@/lib/permissions'
-import { syncDocumentToDrive } from '@/lib/services/drive-sync'
 
 export async function POST(
     request: Request,
@@ -59,19 +58,8 @@ export async function POST(
         return NextResponse.json({ error: 'Failed to save document' }, { status: 500 })
     }
 
-    const { data: signed } = await admin.storage
-        .from('property-documents')
-        .createSignedUrl(file_url, 3600)
-
-    if (signed?.signedUrl) {
-        syncDocumentToDrive({
-            signedUrl: signed.signedUrl,
-            file_name,
-            file_type,
-            case_id: caseId,
-            client_name: (caseData as { client_name: string }).client_name,
-        })
-    }
-
+    // PDFs live in Supabase Storage (bucket: property-documents) and are backed
+    // up to Cloudflare R2 by the daily db-backup workflow. The old Google Drive
+    // mirror has been retired.
     return NextResponse.json({ data: doc }, { status: 201 })
 }
