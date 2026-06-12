@@ -1,6 +1,6 @@
 'use client'
 
-import React, { ReactNode, useState } from 'react'
+import { ReactNode, useRef, useState } from 'react'
 import { CheckCircle2, ChevronDown, AlertTriangle, Info, Lightbulb, BookOpen } from 'lucide-react'
 
 // ─── Step wrapper ─────────────────────────────────────────────────────────────
@@ -240,36 +240,42 @@ export function CheckItem({ checked, onChange, label, hint }: CheckItemProps) {
 
 interface FieldInputProps { value?: string | number; onChange: (v: string) => void; placeholder?: string; type?: string; prefix?: string; suffix?: string; commas?: boolean }
 export function FieldInput({ value, onChange, placeholder, type = 'text', prefix, suffix, commas }: FieldInputProps) {
-    const [focused, setFocused] = useState(false)
+    const inputRef = useRef<HTMLInputElement>(null)
 
-    let inputType = type
-    let inputMode: React.InputHTMLAttributes<HTMLInputElement>['inputMode']
     let displayValue: string
-
     if (commas) {
-        inputType = 'text'
-        inputMode = 'numeric'
         const raw = value !== undefined && value !== '' ? String(value).replace(/,/g, '') : ''
-        if (focused || raw === '') {
-            displayValue = raw
-        } else {
-            const n = parseFloat(raw)
-            displayValue = isNaN(n) ? raw : n.toLocaleString()
-        }
+        const n = raw !== '' ? parseFloat(raw) : NaN
+        displayValue = !isNaN(n) ? n.toLocaleString() : raw
     } else {
         displayValue = value !== undefined ? String(value) : ''
+    }
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!commas) { onChange(e.target.value); return }
+        const el = e.target
+        const stripped = el.value.replace(/,/g, '')
+        // preserve cursor position relative to digits (commas shift the offset)
+        const cursorFromEnd = el.value.length - (el.selectionEnd ?? el.value.length)
+        onChange(stripped)
+        // restore cursor after React re-render
+        requestAnimationFrame(() => {
+            if (!inputRef.current) return
+            const newLen = inputRef.current.value.length
+            const pos = Math.max(0, newLen - cursorFromEnd)
+            inputRef.current.setSelectionRange(pos, pos)
+        })
     }
 
     return (
         <div className="relative">
             {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">{prefix}</span>}
             <input
-                type={inputType}
-                inputMode={inputMode}
+                ref={inputRef}
+                type={commas ? 'text' : type}
+                inputMode={commas ? 'numeric' : undefined}
                 value={displayValue}
-                onFocus={commas ? () => setFocused(true) : undefined}
-                onBlur={commas ? () => setFocused(false) : undefined}
-                onChange={e => onChange(commas ? e.target.value.replace(/,/g, '') : e.target.value)}
+                onChange={handleChange}
                 placeholder={placeholder}
                 className={`w-full py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all ${prefix ? 'pl-7 pr-3' : suffix ? 'pl-3 pr-8' : 'px-3'}`}
             />
