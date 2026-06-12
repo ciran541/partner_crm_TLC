@@ -1,475 +1,651 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ReactNode, useMemo, useState } from 'react'
+import type { RefinancingWorkflow, RefiBorrower } from '@/lib/types/workflow'
 import {
-    RefinancingWorkflow as RefinancingWorkflowData,
-    RefinancingStepKey,
-    REFINANCING_STEP_META,
-    computeRefinancingFlags,
-    isStepComplete,
-    getCurrentStep,
-} from '@/lib/types/workflow'
-import type { Case } from '@/lib/types'
-import { validateRefinancingStep } from '@/lib/insurance/workflowValidation'
-import { StageAdvancePrompt, FlagBanners } from './WorkflowStep'
-import NextActionBanner from './NextActionBanner'
-import ContextualKnowledge from '@/components/insurance/knowledge/ContextualKnowledge'
-import KnowledgeAsk from '@/components/insurance/knowledge/KnowledgeAsk'
-import Step1Qualify from './steps/Step1Qualify'
-import Step2FactFind from './steps/Step2FactFind'
-import Step3RiskSuitability from './steps/Step3RiskSuitability'
-import Step4ResearchProposal from './steps/Step4ResearchProposal'
-import Step5PresentProposal from './steps/Step5PresentProposal'
-import Step6CollectDocuments from './steps/Step6CollectDocuments'
-import Step7SubmitBank from './steps/Step7SubmitBank'
-import Step8FollowupApproval from './steps/Step8FollowupApproval'
-import Step9LetterOffer from './steps/Step9LetterOffer'
-import Step10CloseRetention from './steps/Step10CloseRetention'
-import { CheckCircle2, Save, ChevronLeft, ChevronRight, BookOpen, X } from 'lucide-react'
-import Spinner from '@/components/shared/Spinner'
+    computeRefi,
+    inputsFromWorkflow,
+    REFI_PROPERTY_TYPES,
+    refiPropertyMeta,
+    ratesPropertyType,
+    type RefiPropertyType,
+} from '@/lib/insurance/refiCalc'
+import { buildRefiRemarks, refiNextActions, type RefiRemarks } from '@/lib/insurance/refiRemarks'
+import type { RefiProposalPackage } from '@/lib/insurance/refiProposal'
+import { buildRefiProposalText } from '@/lib/insurance/refiProposal'
+import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
+import type { SoraRates } from '@/lib/insurance/sora'
+import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
+import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
+import Modal from '@/components/shared/Modal'
+import RefiPackages from './RefiPackages'
+import RefiPresentation from './RefiPresentation'
+import {
+    Building2, CheckCircle2, AlertTriangle, Info, Lightbulb, Save, Wallet, Receipt,
+    ArrowRight, ClipboardList, CalendarClock, CalendarRange, Copy, Printer, Circle,
+    Presentation, MessageSquare, Percent,
+} from 'lucide-react'
 
 interface Props {
-    data: RefinancingWorkflowData
-    caseData: Case
-    onChange: (updated: RefinancingWorkflowData) => void
-    saving: boolean
-    saved: boolean
-    onSave: () => void
-    onStageAdvance: (toStage: string) => void
-    currentPipelineStage: string
+    data: RefinancingWorkflow
+    onChange: (updated: RefinancingWorkflow) => void
+    clientName?: string
+    embedded?: boolean
+    saving?: boolean
+    saved?: boolean
+    currentStage?: string
+    onStageAdvance?: (toStage: string) => void
+    onSetFollowUp?: (date: string) => void
+    followUpDate?: string
 }
+
+const STAGE_ORDER = ['Touched Base', 'Proposal Given', 'Referred to Bank', 'Pending Approval', 'Pending Signature']
+const SUBSIDY_PRESETS = ['0', '2000', '2500']
+
+const money = (n: number) => `$${Math.floor(n).toLocaleString()}`
+const num = (v: string) => (v.trim() === '' ? undefined : parseFloat(v.replace(/,/g, '')))
 
 export default function RefinancingWorkflowPanel({
-    data, caseData, onChange, saving, saved, onSave, onStageAdvance, currentPipelineStage,
+    data, onChange, clientName, embedded, saving, saved,
+    currentStage, onStageAdvance, onSetFollowUp, followUpDate,
 }: Props) {
-    const [activeStep, setActiveStep] = useState<RefinancingStepKey>(() => getCurrentStep(data))
-    const [dismissedStage, setDismissedStage] = useState<string | null>(null)
-    const [validation, setValidation] = useState<{ step: RefinancingStepKey; errors: string[]; warnings: string[] } | null>(null)
-    const [searchOpen, setSearchOpen] = useState(false)
-    const autoPopulated = useRef(false)
-
-    // Pipeline stage order for forward-only advancement checks
-    const STAGE_ORDER: Record<string, number> = {
-        'Touched Base': 0, 'Proposal Given': 1, 'Referred to Bank': 2,
-        'Pending Approval': 3, 'Pending Signature': 4, 'Closed Won': 5, 'Closed Lost': 6,
-    }
-
-    // Derived — computed from completed steps vs current stage.
-    // Persists across tab switches and page reloads. Only shows if moving forward.
-    const stageSuggestion = useMemo<{ from: string; to: string } | null>(() => {
-        const currentIdx = STAGE_ORDER[currentPipelineStage] ?? 0
-        let best: { from: string; to: string } | null = null
-
-        for (const key of (data.completed_steps ?? [])) {
-            const meta = REFINANCING_STEP_META.find(s => s.key === key)
-            if (!meta?.suggestStageTo) continue
-            const suggestIdx = STAGE_ORDER[meta.suggestStageTo] ?? 0
-            // Only forward moves; pick the furthest suggestion
-            if (suggestIdx > currentIdx && (!best || suggestIdx > (STAGE_ORDER[best.to] ?? 0))) {
-                best = { from: currentPipelineStage, to: meta.suggestStageTo }
-            }
-        }
-        // Hide if the agent dismissed this exact target
-        if (best && best.to === dismissedStage) return null
-        return best
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [data.completed_steps, currentPipelineStage, dismissedStage])
-
-    // On first load, pre-populate Step 1 from case data if those fields are empty
-    useEffect(() => {
-        if (autoPopulated.current) return
-        autoPopulated.current = true
-
-        const q = data.qualify ?? {}
-        const patch: Partial<typeof q> = {}
-
-        if (!q.current_bank && caseData.current_bank)
-            patch.current_bank = caseData.current_bank
-        if (!q.outstanding_loan && caseData.existing_loan_amount)
-            patch.outstanding_loan = caseData.existing_loan_amount
-        if (!q.lock_in_expiry && caseData.lock_in_end_date) {
-            patch.lock_in_expiry = caseData.lock_in_end_date
-            patch.lock_in_status = 'in_lock_in'
-        }
-        if (!q.rough_monthly_payment && (q.outstanding_loan || caseData.existing_loan_amount)) {
-            // Leave payment blank — agent should confirm with client
-        }
-
-        if (Object.keys(patch).length > 0) {
-            onChange({ ...data, qualify: { ...q, ...patch } })
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    const completed = data.completed_steps ?? []
-    const flags = computeRefinancingFlags(data)
-    const completedCount = completed.length
-
-    // Clear any validation panel when the visible step changes
-    useEffect(() => { setValidation(null) }, [activeStep])
-
-    const handleStepChange = useCallback(<T,>(
-        stepKey: keyof RefinancingWorkflowData,
-        patch: Partial<T>
-    ) => {
-        const updated = {
-            ...data,
-            [stepKey]: { ...(data[stepKey] as object ?? {}), ...patch },
-        }
-        updated.flags = computeRefinancingFlags(updated)
-        onChange(updated)
-    }, [data, onChange])
-
-    // Verification: validate the step before allowing completion.
-    // Errors block; warnings require an explicit "Complete anyway".
-    const markComplete = (step: RefinancingStepKey) => {
-        if (completed.includes(step)) return
-        const v = validateRefinancingStep(step, data)
-        if (v.errors.length > 0 || v.warnings.length > 0) {
-            setValidation({ step, errors: v.errors, warnings: v.warnings })
-            return
-        }
-        doComplete(step)
-    }
-
-    const doComplete = (step: RefinancingStepKey) => {
-        setValidation(null)
-        if (completed.includes(step)) return
-        const newCompleted = [...completed, step]
-        const updated = { ...data, completed_steps: newCompleted, flags: computeRefinancingFlags(data) }
-        onChange(updated)
-
-        // Stage-advance suggestion is derived from completed_steps (see stageSuggestion useMemo)
-
-        // Auto-advance to next step
-        const allKeys = REFINANCING_STEP_META.map(s => s.key)
-        const nextKey = allKeys.find(k => k !== step && !newCompleted.includes(k))
-        if (nextKey) setActiveStep(nextKey)
-    }
-
-    const markIncomplete = (step: RefinancingStepKey) => {
-        setValidation(null)
-        onChange({ ...data, completed_steps: completed.filter(s => s !== step) })
-    }
-
-    const isLocked = (step: RefinancingStepKey) => {
-        const meta = REFINANCING_STEP_META.find(s => s.key === step)
-        if (!meta || meta.stepNumber === 1) return false
-        const prevKey = REFINANCING_STEP_META[meta.stepNumber - 2].key
-        return !completed.includes(prevKey)
-    }
-
-    const activeFlagBanners = [
-        flags.urgent_lock_in && { key: 'urgent_lock_in', label: '⚡ Urgent: Lock-in Expiring Soon', description: 'Lock-in expires within 90 days. Prioritise rate comparison and bank submission immediately to avoid missing the window.' },
-        flags.clawback_risk && { key: 'clawback_risk', label: '⚠ Clawback Risk', description: 'Client received a subsidy with remaining clawback. Factor this into the net savings calculation before recommending refinancing.' },
-        flags.selling_risk && { key: 'selling_risk', label: '⚠ Selling Risk', description: 'Client may sell the property. Recommend shortest possible lock-in — or reconsider refinancing if selling very soon.' },
-        flags.income_risk && { key: 'income_risk', label: '⚠ Income Change Expected', description: 'Anticipated income changes may affect loan serviceability. Verify TDSR compliance with the projected income level.' },
-        flags.tdsr_concern && { key: 'tdsr_concern', label: '⚠ TDSR Concern', description: 'Computed TDSR is approaching 45%. Verify the new mortgage payment keeps total debt obligations within the 55% cap.' },
-    ].filter(Boolean) as { key: string; label: string; description: string }[]
-
-    const q = data.qualify ?? {}
-    const ff = data.fact_find ?? {}
-
-    // Pre-fill Step 2 (fact_find) from Step 1 (qualify) for overlapping package fields.
-    // Only fills in if the Step 2 field is still empty — explicit Step 2 entries always win.
-    const effectiveFF = {
-        ...ff,
-        interest_type:      ff.interest_type      ?? q.interest_type,
-        fixed_years:        ff.fixed_years        ?? q.fixed_years,
-        lock_in_years:      ff.lock_in_years      ?? q.lock_in_years,
-        year_rates:         ff.year_rates?.length  ? ff.year_rates : (q.year_rates ?? []),
-        floating_rate_type: ff.floating_rate_type ?? q.floating_rate_type,
-    }
-    const rs = data.risk_suitability ?? {}
-    const rp = data.research_proposal ?? {}
-    const pp = data.present_proposal ?? {}
-    const cd = data.collect_documents ?? {}
-    const sb = data.submit_bank ?? {}
-    const fa = data.followup_approval ?? {}
-    const lo = data.letter_offer ?? {}
-    const cr = data.close_retention ?? {}
-
-    // Wizard navigation
-    const activeIndex = REFINANCING_STEP_META.findIndex(s => s.key === activeStep)
-    const activeMeta = REFINANCING_STEP_META[activeIndex]
-    const nextMeta = REFINANCING_STEP_META[activeIndex + 1]
-    const nextLocked = nextMeta ? isLocked(nextMeta.key) : true
-    const goPrev = () => { if (activeIndex > 0) setActiveStep(REFINANCING_STEP_META[activeIndex - 1].key) }
-    const goNext = () => { if (nextMeta && !nextLocked) setActiveStep(nextMeta.key) }
-
-    return (
-        <div className="space-y-4">
-            {/* Save bar */}
-            <div className="flex items-center justify-between">
-                <button onClick={() => setSearchOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:border-[#03a9e7] hover:text-[#03a9e7] transition-colors">
-                    <BookOpen size={13} /> Look something up
-                </button>
-                <div className="flex items-center gap-2">
-                    {saving && <span className="text-xs text-slate-400 flex items-center gap-1"><Spinner size="sm" color="#94a3b8" /> Saving…</span>}
-                    {saved && !saving && <span className="text-xs text-emerald-600 flex items-center gap-1.5"><CheckCircle2 size={12} /> Saved</span>}
-                    <button onClick={onSave} disabled={saving} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#052d4a] text-white text-xs font-semibold hover:bg-[#0f4a75] transition-colors">
-                        <Save size={13} /> Save
-                    </button>
-                </div>
-            </div>
-
-            {/* Knowledge search overlay */}
-            {searchOpen && (
-                <div className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-20" style={{ background: 'rgba(5,45,74,0.5)', backdropFilter: 'blur(4px)' }} onClick={() => setSearchOpen(false)}>
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[75vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-                        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                            <p className="font-bold text-[#052d4a] flex items-center gap-2"><BookOpen size={17} className="text-[#03a9e7]" /> Knowledge Search</p>
-                            <button onClick={() => setSearchOpen(false)} className="p-1 hover:bg-slate-200 rounded-full text-slate-400"><X size={18} /></button>
-                        </div>
-                        <div className="p-5 overflow-y-auto">
-                            <KnowledgeAsk autoFocus />
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Next action banner */}
-            <NextActionBanner
-                currentStep={getCurrentStep(data)}
-                completedCount={completedCount}
-                flags={flags}
-            />
-
-            {/* Risk flags */}
-            <FlagBanners flags={activeFlagBanners} />
-
-            {/* Stage advance prompt */}
-            {stageSuggestion && (
-                <StageAdvancePrompt
-                    fromStage={stageSuggestion.from}
-                    toStage={stageSuggestion.to}
-                    onConfirm={() => onStageAdvance(stageSuggestion.to)}
-                    onDismiss={() => setDismissedStage(stageSuggestion.to)}
-                />
-            )}
-
-            {/* Step rail — compact clickable navigation */}
-            <StepRail
-                activeStep={activeStep}
-                isComplete={(k) => isStepComplete(data, k)}
-                isLocked={isLocked}
-                onSelect={(k) => setActiveStep(k)}
-            />
-
-            {/* Single active step card (wizard) */}
-            <div key={activeStep} className="wf-slide">
-                <div className="rounded-xl border border-[#03a9e7]/30 bg-white shadow-sm overflow-hidden">
-                    {/* Step header */}
-                    <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                            isStepComplete(data, activeStep) ? 'bg-emerald-500 text-white' : 'bg-[#03a9e7] text-white'
-                        }`}>
-                            {isStepComplete(data, activeStep) ? <CheckCircle2 size={16} /> : activeMeta?.stepNumber}
-                        </div>
-                        <div className="min-w-0">
-                            <p className="font-semibold text-[#052d4a] text-sm">{activeMeta?.title}</p>
-                            <p className="text-[11px] text-slate-400">Step {activeMeta?.stepNumber} of 10</p>
-                        </div>
-                    </div>
-
-                    {/* Step content */}
-                    <div className="px-5 pb-6">
-                        {activeStep === 'qualify' && (
-                            <Step1Qualify data={q} clientName={caseData.client_name} onChange={p => handleStepChange('qualify', p)}
-                                isComplete={isStepComplete(data, 'qualify')} onMarkComplete={() => markComplete('qualify')} onMarkIncomplete={() => markIncomplete('qualify')} />
-                        )}
-                        {activeStep === 'fact_find' && (
-                            <Step2FactFind data={effectiveFF} qualify={q} clientName={caseData.client_name} onChange={p => handleStepChange('fact_find', p)}
-                                isComplete={isStepComplete(data, 'fact_find')} onMarkComplete={() => markComplete('fact_find')} onMarkIncomplete={() => markIncomplete('fact_find')} />
-                        )}
-                        {activeStep === 'risk_suitability' && (
-                            <Step3RiskSuitability data={rs} factFind={ff} qualify={q} clientName={caseData.client_name} onChange={p => handleStepChange('risk_suitability', p)}
-                                isComplete={isStepComplete(data, 'risk_suitability')} onMarkComplete={() => markComplete('risk_suitability')} onMarkIncomplete={() => markIncomplete('risk_suitability')} />
-                        )}
-                        {activeStep === 'research_proposal' && (
-                            <Step4ResearchProposal data={rp} qualify={q} factFind={ff} risk={rs} clientName={caseData.client_name} onChange={p => handleStepChange('research_proposal', p)}
-                                isComplete={isStepComplete(data, 'research_proposal')} onMarkComplete={() => markComplete('research_proposal')} onMarkIncomplete={() => markIncomplete('research_proposal')} />
-                        )}
-                        {activeStep === 'present_proposal' && (
-                            <Step5PresentProposal data={pp} qualify={q} factFind={ff} proposal={rp} clientName={caseData.client_name} onChange={p => handleStepChange('present_proposal', p)}
-                                isComplete={isStepComplete(data, 'present_proposal')} onMarkComplete={() => markComplete('present_proposal')} onMarkIncomplete={() => markIncomplete('present_proposal')} />
-                        )}
-                        {activeStep === 'collect_documents' && (
-                            <Step6CollectDocuments data={cd} factFind={ff} onChange={p => handleStepChange('collect_documents', p)}
-                                isComplete={isStepComplete(data, 'collect_documents')} onMarkComplete={() => markComplete('collect_documents')} onMarkIncomplete={() => markIncomplete('collect_documents')} />
-                        )}
-                        {activeStep === 'submit_bank' && (
-                            <Step7SubmitBank data={sb} onChange={p => handleStepChange('submit_bank', p)}
-                                isComplete={isStepComplete(data, 'submit_bank')} onMarkComplete={() => markComplete('submit_bank')} onMarkIncomplete={() => markIncomplete('submit_bank')} />
-                        )}
-                        {activeStep === 'followup_approval' && (
-                            <Step8FollowupApproval data={fa} onChange={p => handleStepChange('followup_approval', p)}
-                                isComplete={isStepComplete(data, 'followup_approval')} onMarkComplete={() => markComplete('followup_approval')} onMarkIncomplete={() => markIncomplete('followup_approval')} />
-                        )}
-                        {activeStep === 'letter_offer' && (
-                            <Step9LetterOffer data={lo} onChange={p => handleStepChange('letter_offer', p)}
-                                isComplete={isStepComplete(data, 'letter_offer')} onMarkComplete={() => markComplete('letter_offer')} onMarkIncomplete={() => markIncomplete('letter_offer')} />
-                        )}
-                        {activeStep === 'close_retention' && (
-                            <Step10CloseRetention data={cr} onChange={p => handleStepChange('close_retention', p)}
-                                isComplete={isStepComplete(data, 'close_retention')} onMarkComplete={() => markComplete('close_retention')} onMarkIncomplete={() => markIncomplete('close_retention')} />
-                        )}
-
-                        {/* Admin-managed knowledge surfaced for this step */}
-                        <ContextualKnowledge caseType="Refinancing" step={activeStep} />
-                    </div>
-                </div>
-            </div>
-
-            {/* Verification panel — errors block, warnings need acknowledgement */}
-            {validation && validation.step === activeStep && (
-                <ValidationPanel
-                    errors={validation.errors}
-                    warnings={validation.warnings}
-                    onConfirm={() => doComplete(validation.step)}
-                    onCancel={() => setValidation(null)}
-                />
-            )}
-
-            {/* Back / Next navigation */}
-            <div className="flex items-center justify-between">
-                <button
-                    type="button"
-                    onClick={goPrev}
-                    disabled={activeIndex === 0}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                    <ChevronLeft size={16} /> Back
-                </button>
-
-                <span className="text-xs text-slate-400">{activeMeta?.stepNumber} / 10</span>
-
-                <button
-                    type="button"
-                    onClick={goNext}
-                    disabled={activeIndex === REFINANCING_STEP_META.length - 1 || nextLocked}
-                    title={nextLocked ? 'Complete this step to continue' : undefined}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-[#03a9e7] hover:bg-[#0284c7] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                    Next <ChevronRight size={16} />
-                </button>
-            </div>
-
-            {completedCount === 10 && (
-                <div className="card p-5 border border-emerald-200 bg-emerald-50/30 text-center space-y-2">
-                    <CheckCircle2 size={28} className="mx-auto text-emerald-500" />
-                    <p className="font-bold text-emerald-800">All 10 steps complete!</p>
-                    <p className="text-sm text-emerald-700">Go to the <strong>Closure</strong> tab to mark this case as Closed Won.</p>
-                </div>
-            )}
-
-            <style jsx>{`
-                .wf-slide {
-                    animation: wfSlideIn 0.28s ease-out;
-                }
-                @keyframes wfSlideIn {
-                    from { opacity: 0; transform: translateX(16px); }
-                    to   { opacity: 1; transform: translateX(0); }
-                }
-            `}</style>
-        </div>
+    const update = (patch: Partial<RefinancingWorkflow>) => onChange({ ...data, ...patch })
+    const [proposalOpen, setProposalOpen] = useState(false)
+    const [presentationOpen, setPresentationOpen] = useState(false)
+    const [customSubsidy, setCustomSubsidy] = useState(
+        data.subsidy_return_amount != null && !SUBSIDY_PRESETS.includes(String(data.subsidy_return_amount)),
     )
-}
 
-// ─── Verification panel ───────────────────────────────────────────────────────
+    const meta = refiPropertyMeta(data.property_type)
+    const computation = useMemo(() => computeRefi(inputsFromWorkflow(data)), [data])
+    const remarks = useMemo<RefiRemarks>(() => buildRefiRemarks({
+        propertyType: data.property_type,
+        isPrivate: meta?.isPrivate,
+        buc: meta?.buc,
+        totalOutstanding: computation.totalOutstanding,
+        undisbursed: data.outstanding_undisbursed,
+        subsidyClawback: computation.subsidyClawback,
+        smallLoanNoSubsidy: computation.smallLoanNoSubsidy,
+        considerations: data.considerations,
+        cost: computation.cost,
+        tenureError: computation.tenure?.error ?? null,
+    }), [data, computation, meta])
 
-function ValidationPanel({ errors, warnings, onConfirm, onCancel }: {
-    errors: string[]
-    warnings: string[]
-    onConfirm: () => void
-    onCancel: () => void
-}) {
-    const hasErrors = errors.length > 0
+    // ── Borrowers (always 4 rows, age default 0) ──
+    const borrowers: RefiBorrower[] = Array.from({ length: 4 }, (_, i) => data.borrowers?.[i] ?? {})
+    const updateBorrower = (i: number, patch: Partial<RefiBorrower>) => {
+        const next = borrowers.map((b, idx) => idx === i ? { ...b, ...patch } : b)
+        update({ borrowers: next })
+    }
+    const agedBorrowers = borrowers.map((b, i) => ({ b, i })).filter(({ b }) => (b.age ?? 0) > 0)
+
+    const setPropertyType = (type: RefiPropertyType) => {
+        const patch: Partial<RefinancingWorkflow> = { property_type: type }
+        // Undisbursed only applies to the incompleted (BUC) type — clear otherwise.
+        if (!refiPropertyMeta(type)?.buc) patch.outstanding_undisbursed = undefined
+        update(patch)
+    }
+
+    const toggleConsideration = (key: keyof NonNullable<RefinancingWorkflow['considerations']>) => {
+        const c = { ...(data.considerations ?? {}) }
+        c[key] = !c[key]
+        update({ considerations: c })
+    }
+
+    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null) => {
+        update({
+            selected_package_snapshot: {
+                id: rec.pkg.id,
+                bank: rec.pkg.bank,
+                category: rec.pkg.category,
+                package_name: rec.pkg.package_name,
+                lockin_years: rec.pkg.lockin_years,
+                rate_schedule: rec.pkg.rate_schedule,
+                projected_monthly: rec.projection.newMonthly,
+                year1_rate: rec.projection.perYear[0]?.ratePct ?? null,
+                avg_rate_lockin_pct: rec.projection.avgRateLockinPct,
+                current_monthly: rec.savings?.currentMonthly ?? null,
+                monthly_saving: rec.savings?.monthlySaving ?? null,
+                net_saving_2yr: rec.savings?.netSaving2yr ?? null,
+                net_saving_3yr: rec.savings?.netSaving3yr ?? null,
+                sora_as_of: sora?.published_date ?? sora?.value_date ?? null,
+                frozen_at: new Date().toISOString(),
+            },
+        })
+    }
+
+    const selectedPkgId = (data.selected_package_snapshot?.id as string) ?? undefined
+    const selectedPackage = data.selected_package_snapshot as RefiProposalPackage | undefined
+
+    const proposalText = useMemo(() => buildRefiProposalText({
+        clientName,
+        propertyLabel: meta?.label ?? 'Property',
+        currentBank: data.current_bank,
+        totalOutstanding: computation.totalOutstanding,
+        currentRatePct: data.current_rate,
+        computation,
+        selectedPackage,
+    }), [clientName, meta, data.current_bank, data.current_rate, computation, selectedPackage])
+
+    const actions = refiNextActions({ buc: meta?.buc, considerations: data.considerations })
+    const actionsDone = data.next_actions_done ?? []
+    const toggleAction = (a: string) => {
+        const set = new Set(actionsDone)
+        if (set.has(a)) set.delete(a); else set.add(a)
+        update({ next_actions_done: [...set] })
+    }
+    const stageIdx = currentStage ? STAGE_ORDER.indexOf(currentStage) : -1
+    const suggestedStage = stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1 ? STAGE_ORDER[stageIdx + 1] : null
+
+    const subsidyValue = data.subsidy_return_amount
+    const t = computation.tenure
+
     return (
-        <div className={`rounded-xl border p-4 ${hasErrors ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
-            {hasErrors && (
-                <div className="mb-3">
-                    <p className="text-sm font-bold text-red-800 mb-1.5">Fix these before completing:</p>
-                    <ul className="space-y-1">
-                        {errors.map((e, i) => (
-                            <li key={i} className="flex items-start gap-2 text-xs text-red-700">
-                                <span className="text-red-400 mt-0.5 shrink-0">✕</span>{e}
-                            </li>
-                        ))}
-                    </ul>
+        <div className="space-y-5">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                    <h2 className="text-lg font-bold text-[#052d4a] flex items-center gap-2">
+                        <Building2 size={18} className="text-[#03a9e7]" /> Refinancing — Eligibility & Advice
+                    </h2>
+                    <p className="text-sm text-slate-500">
+                        {clientName ? <>Advising <span className="font-medium text-slate-700">{clientName}</span>. </> : null}
+                        Capture only what applies — tenure, costs, remarks and packages update live.
+                    </p>
                 </div>
-            )}
-            {warnings.length > 0 && (
-                <div className={hasErrors ? 'pt-3 border-t border-red-200' : ''}>
-                    <p className="text-sm font-bold text-amber-800 mb-1.5">{hasErrors ? 'Also review:' : 'Please review before continuing:'}</p>
-                    <ul className="space-y-1">
-                        {warnings.map((w, i) => (
-                            <li key={i} className="flex items-start gap-2 text-xs text-amber-800">
-                                <span className="text-amber-500 mt-0.5 shrink-0">⚠</span>{w}
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-            <div className="flex items-center gap-2 mt-4">
-                {hasErrors ? (
-                    <button type="button" onClick={onCancel}
-                        className="px-4 py-2 rounded-lg bg-white border border-red-200 text-red-700 text-sm font-semibold hover:bg-red-50 transition-colors">
-                        Go back and fix
-                    </button>
-                ) : (
-                    <>
-                        <button type="button" onClick={onConfirm}
-                            className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors">
-                            Complete anyway
-                        </button>
-                        <button type="button" onClick={onCancel}
-                            className="px-4 py-2 rounded-lg text-slate-500 text-sm font-medium hover:bg-white/60 transition-colors">
-                            Go back
-                        </button>
-                    </>
+                {embedded && (
+                    <span className="text-xs text-slate-400 flex items-center gap-1.5">
+                        {saving ? <><Save size={13} className="animate-pulse" /> Saving…</>
+                            : saved ? <><CheckCircle2 size={13} className="text-emerald-500" /> Saved</>
+                            : null}
+                    </span>
                 )}
             </div>
+
+            {/* ── Property ── */}
+            <Section title="Property" icon={<Building2 size={15} />}>
+                <Question label="Type of Property" required>
+                    <PillSelect
+                        value={data.property_type}
+                        onChange={v => setPropertyType(v as RefiPropertyType)}
+                        options={REFI_PROPERTY_TYPES.map(p => ({ value: p.value, label: p.label }))}
+                    />
+                </Question>
+                <Question label="Rough market price of your property today">
+                    <FieldInput commas prefix="$" value={data.market_price ?? ''} placeholder="e.g. 1,500,000"
+                        onChange={v => update({ market_price: num(v) })} />
+                </Question>
+            </Section>
+
+            {/* ── Current loan ── */}
+            {data.property_type && (
+                <Section title="Current Loan" icon={<Wallet size={15} />}>
+                    <Question label="Outstanding loan amount (disbursed)" required>
+                        <FieldInput commas prefix="$" value={data.outstanding_disbursed ?? ''} placeholder="e.g. 800,000"
+                            onChange={v => update({ outstanding_disbursed: num(v) })} />
+                    </Question>
+
+                    {meta?.buc && (
+                        <Question label="Outstanding loan amount (undisbursed)">
+                            <FieldInput commas prefix="$" value={data.outstanding_undisbursed ?? ''} placeholder="e.g. 200,000"
+                                onChange={v => update({ outstanding_undisbursed: num(v) })} />
+                            {computation.cancellationFee > 0 && (
+                                <p className="text-[11px] text-amber-600 mt-1.5 flex items-center gap-1.5">
+                                    <AlertTriangle size={12} /> Estimated cancellation fee: {money(computation.cancellationFee)} ({money(data.outstanding_undisbursed ?? 0)} × 0.75%)
+                                </p>
+                            )}
+                        </Question>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Question label="Current bank">
+                            <InsuranceBankDropdown value={data.current_bank ?? ''} onChange={v => update({ current_bank: v })} />
+                        </Question>
+                        <Question label="Lock-in end date">
+                            <FieldInput type="date" value={data.lockin_end_date ?? ''} onChange={v => update({ lockin_end_date: v })} />
+                        </Question>
+                        <Question label="Current interest rate">
+                            <FieldInput type="number" suffix="% p.a." value={data.current_rate ?? ''} placeholder="e.g. 3.5"
+                                onChange={v => update({ current_rate: num(v) })} />
+                        </Question>
+                    </div>
+
+                    <Question label="Do you need to return any subsidy to the current bank?">
+                        <p className="text-[11px] text-slate-400 -mt-1 mb-2">Only applicable if the current bank gave a subsidy and you&apos;ve been with them less than 3 years.</p>
+                        <PillSelect
+                            value={customSubsidy ? 'custom' : (subsidyValue != null ? String(subsidyValue) : undefined)}
+                            onChange={v => {
+                                if (v === 'custom') { setCustomSubsidy(true); update({ subsidy_return_amount: undefined }) }
+                                else { setCustomSubsidy(false); update({ subsidy_return_amount: Number(v) }) }
+                            }}
+                            options={[
+                                { value: '0', label: '$0' },
+                                { value: '2000', label: '$2,000' },
+                                { value: '2500', label: '$2,500' },
+                                { value: 'custom', label: 'Other amount' },
+                            ]}
+                        />
+                        {customSubsidy && (
+                            <div className="mt-2">
+                                <FieldInput commas prefix="$" value={subsidyValue ?? ''} placeholder="Enter amount"
+                                    onChange={v => update({ subsidy_return_amount: num(v) })} />
+                            </div>
+                        )}
+                    </Question>
+                </Section>
+            )}
+
+            {/* ── Plans ── */}
+            {data.property_type && (
+                <Section title="Plans (next 1–3 years)" icon={<Info size={15} />}>
+                    <Question label="Any consideration for the following? (select all that apply)">
+                        <div className="space-y-2">
+                            <CheckRow label="Sell" checked={!!data.considerations?.sell} onToggle={() => toggleConsideration('sell')} />
+                            <CheckRow label="Partial Pay" checked={!!data.considerations?.partial_pay} onToggle={() => toggleConsideration('partial_pay')} />
+                            <CheckRow label="Decouple" hint="Not applicable for HDB or EC within MOP" checked={!!data.considerations?.decouple} onToggle={() => toggleConsideration('decouple')} />
+                            <CheckRow label="Equity Loan" hint="Not applicable for HDB or EC within MOP" checked={!!data.considerations?.equity_loan} onToggle={() => toggleConsideration('equity_loan')} />
+                        </div>
+                    </Question>
+                </Section>
+            )}
+
+            {/* ── Borrowers & age ── */}
+            {data.property_type && (
+                <Section title="Borrower(s) & Age" icon={<CalendarRange size={15} />}>
+                    <Question label="Age of all borrower(s)">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {borrowers.map((b, i) => (
+                                <div key={i}>
+                                    <label className="text-[11px] text-slate-500">Borrower {i + 1}</label>
+                                    <FieldInput type="number" value={b.age ?? ''} placeholder="0"
+                                        onChange={v => updateBorrower(i, { age: num(v) })} />
+                                </div>
+                            ))}
+                        </div>
+                        {computation.averageAge != null && (
+                            <p className="text-[12px] text-slate-500 mt-2">
+                                Average age: <span className="font-semibold text-[#052d4a]">{Math.ceil(computation.averageAge)}</span>
+                                {computation.usingIwaa && computation.iwaa != null && (
+                                    <> · Income-weighted: <span className="font-semibold text-[#03a9e7]">{Math.ceil(computation.iwaa)}</span> (used for tenure)</>
+                                )}
+                            </p>
+                        )}
+                    </Question>
+
+                    <Question label="Provide income details for an Income-Weighted Average Age (more accurate tenure)?">
+                        <YesNo value={data.provide_income} onChange={v => update({ provide_income: v })} />
+                        <p className="text-[11px] text-slate-400 mt-1.5 flex items-start gap-1.5">
+                            <Info size={12} className="mt-0.5 shrink-0" />
+                            If no, we use the simple average age for the tenure range.
+                        </p>
+                    </Question>
+
+                    {data.provide_income && (
+                        agedBorrowers.length > 0 ? (
+                            <div className="space-y-3">
+                                {agedBorrowers.map(({ b, i }) => (
+                                    <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-3">
+                                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Borrower {i + 1} · age {b.age}</p>
+                                        <Question label="Employment">
+                                            <PillSelect
+                                                value={b.employment ?? 'employed'}
+                                                onChange={v => updateBorrower(i, { employment: v as 'employed' | 'self_employed' })}
+                                                options={[{ value: 'employed', label: 'Employed' }, { value: 'self_employed', label: 'Self-Employed' }]}
+                                            />
+                                        </Question>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            {b.employment !== 'self_employed' && (
+                                                <Question label="Monthly basic salary">
+                                                    <FieldInput commas prefix="$" value={b.basic_salary ?? ''}
+                                                        onChange={v => updateBorrower(i, { basic_salary: num(v) })} />
+                                                </Question>
+                                            )}
+                                            <Question label={b.employment === 'self_employed' ? 'Annual income (NOA)' : 'Annual bonus / variable income'}>
+                                                <FieldInput commas prefix="$" value={b.annual_variable ?? ''}
+                                                    onChange={v => updateBorrower(i, { annual_variable: num(v) })} />
+                                            </Question>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-[12px] text-amber-600 flex items-center gap-1.5"><AlertTriangle size={12} /> Enter at least one borrower&apos;s age above to capture income.</p>
+                        )
+                    )}
+
+                    <Question label="Is any borrower a priority client with any bank?">
+                        <YesNo value={data.priority_client} onChange={v => update({ priority_client: v })} />
+                    </Question>
+                </Section>
+            )}
+
+            {/* ── Year of purchase + rate preference ── */}
+            {data.property_type && (
+                <Section title="Tenure & Rate Preference" icon={<Percent size={15} />}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Question label="Year of purchase" required>
+                            <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2018"
+                                onChange={v => update({ year_of_purchase: num(v) })} />
+                        </Question>
+                        <Question label="Any preference for fixed or floating rates?">
+                            <PillSelect
+                                value={data.rate_preference ?? 'both'}
+                                onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'both' })}
+                                options={[
+                                    { value: 'both', label: 'Both' },
+                                    { value: 'fixed', label: 'Fixed' },
+                                    { value: 'floating', label: 'Floating' },
+                                ]}
+                            />
+                        </Question>
+                    </div>
+                </Section>
+            )}
+
+            {/* ── RESULTS ── */}
+            {t?.error ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-2.5">
+                    <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[13px] text-amber-800 leading-relaxed">{t.error}</p>
+                </div>
+            ) : computation.ready && t ? (
+                <>
+                    {/* Tenure range */}
+                    <div className="rounded-xl border-2 border-[#03a9e7]/40 overflow-hidden">
+                        <div className="bg-sky-50 px-4 py-3 flex items-center gap-2">
+                            <CalendarRange size={16} className="text-[#03a9e7]" />
+                            <p className="text-sm font-bold text-[#052d4a]">Tenure Range for Refinancing</p>
+                        </div>
+                        <div className="p-4 flex flex-wrap items-end gap-x-8 gap-y-2">
+                            <div>
+                                <p className="text-3xl font-extrabold text-[#052d4a] leading-none">{t.min} – {t.max} <span className="text-base font-semibold text-slate-500">years</span></p>
+                                <p className="text-[11px] text-slate-400 mt-1.5">
+                                    Min 5 yrs · max = lower of (75 − age = {t.result1}) and ({meta?.tenureCap} − yrs since purchase − 1 = {t.result2})
+                                </p>
+                            </div>
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                                <Info size={12} /> After picking a package, use the Tenure Planner to compare instalment & interest.
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Cost of refinancing */}
+                    {remarks.cost.length > 0 && (
+                        <Section title="Cost of Refinancing" icon={<Receipt size={15} />}>
+                            <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                {remarks.cost.map((line, i) => {
+                                    const [label, ...rest] = line.split(':')
+                                    return (
+                                        <div key={i} className={`flex items-start justify-between gap-4 px-4 py-3 ${i > 0 ? 'border-t border-slate-100' : ''}`}>
+                                            <span className="text-sm text-slate-600">{label}</span>
+                                            <span className="text-sm font-semibold text-[#052d4a] text-right">{rest.join(':').trim()}</span>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </Section>
+                    )}
+
+                    {/* Remarks */}
+                    <RemarksCard remarks={remarks} />
+
+                    {/* Packages */}
+                    {computation.totalOutstanding > 0 && (
+                        <RefiPackages
+                            loan={computation.totalOutstanding}
+                            tenureYears={t.max}
+                            propertyType={ratesPropertyType(data.property_type)}
+                            includeBuc={!!meta?.buc}
+                            currentRatePct={data.current_rate}
+                            clawbackAmount={computation.subsidyClawback}
+                            preference={data.rate_preference ?? 'both'}
+                            selectedId={selectedPkgId}
+                            onSelect={onSelectPackage}
+                        />
+                    )}
+
+                    {/* Next step */}
+                    <NextStepCard
+                        embedded={!!embedded}
+                        currentStage={currentStage}
+                        suggestedStage={suggestedStage}
+                        onStageAdvance={onStageAdvance}
+                        actions={actions}
+                        actionsDone={actionsDone}
+                        onToggleAction={toggleAction}
+                        followUpDate={followUpDate}
+                        onSetFollowUp={onSetFollowUp}
+                        onPresent={() => setPresentationOpen(true)}
+                        onOpenProposal={() => setProposalOpen(true)}
+                    />
+                </>
+            ) : (
+                <div className="card p-8 text-center text-sm text-slate-400">
+                    Enter the property type, outstanding loan, borrower age(s) and year of purchase to see the tenure range and packages.
+                </div>
+            )}
+
+            {presentationOpen && (
+                <RefiPresentation
+                    clientName={clientName}
+                    propertyLabel={meta?.label ?? 'Property'}
+                    currentBank={data.current_bank}
+                    currentRatePct={data.current_rate}
+                    totalOutstanding={computation.totalOutstanding}
+                    computation={computation}
+                    remarks={remarks}
+                    selectedPackage={selectedPackage}
+                    onClose={() => setPresentationOpen(false)}
+                    onOpenChatSummary={() => { setPresentationOpen(false); setProposalOpen(true) }}
+                />
+            )}
+
+            {proposalOpen && (
+                <Modal title="Chat summary" onClose={() => setProposalOpen(false)}>
+                    <ProposalView text={proposalText} />
+                </Modal>
+            )}
         </div>
     )
 }
 
-// ─── Step rail (compact horizontal stepper) ───────────────────────────────────
+// ─── Sub-components ────────────────────────────────────────────────────────────
 
-function StepRail({ activeStep, isComplete, isLocked, onSelect }: {
-    activeStep: RefinancingStepKey
-    isComplete: (k: RefinancingStepKey) => boolean
-    isLocked: (k: RefinancingStepKey) => boolean
-    onSelect: (k: RefinancingStepKey) => void
-}) {
+function Section({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
     return (
-        <div className="flex items-center gap-0 overflow-x-auto pb-1 -mx-1 px-1">
-            {REFINANCING_STEP_META.map((meta, i) => {
-                const complete = isComplete(meta.key)
-                const locked = isLocked(meta.key)
-                const active = activeStep === meta.key
-                return (
-                    <div key={meta.key} className="flex items-center shrink-0">
-                        <button
-                            type="button"
-                            disabled={locked}
-                            onClick={() => !locked && onSelect(meta.key)}
-                            title={meta.title}
-                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all shrink-0 ${
-                                active ? 'bg-[#03a9e7] text-white ring-2 ring-[#03a9e7]/30 ring-offset-1'
-                                : complete ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                                : locked ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
-                                : 'bg-white border border-slate-300 text-slate-500 hover:border-[#03a9e7] hover:text-[#03a9e7]'
-                            }`}
-                        >
-                            {complete ? <CheckCircle2 size={15} /> : meta.stepNumber}
-                        </button>
-                        {i < REFINANCING_STEP_META.length - 1 && (
-                            <div className={`w-4 sm:w-6 h-0.5 shrink-0 ${complete ? 'bg-emerald-400' : 'bg-slate-200'}`} />
-                        )}
+        <div className="card p-5 space-y-4">
+            <p className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                {icon && <span className="text-[#03a9e7]">{icon}</span>}{title}
+            </p>
+            {children}
+        </div>
+    )
+}
+
+interface PillOption { value: string; label: string; disabled?: boolean }
+function PillSelect({ value, onChange, options }: { value?: string; onChange: (v: string) => void; options: PillOption[] }) {
+    return (
+        <div className="flex flex-wrap gap-2">
+            {options.map(opt => (
+                <button key={opt.value} type="button" disabled={opt.disabled} onClick={() => onChange(opt.value)}
+                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
+                        opt.disabled ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                            : value === opt.value
+                                ? 'bg-[#052d4a] border-[#052d4a] text-white'
+                                : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
+                    }`}>
+                    {opt.label}
+                </button>
+            ))}
+        </div>
+    )
+}
+
+function YesNo({ value, onChange }: { value?: boolean; onChange: (v: boolean) => void }) {
+    return (
+        <PillSelect
+            value={value === undefined ? undefined : value ? 'yes' : 'no'}
+            onChange={v => onChange(v === 'yes')}
+            options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]}
+        />
+    )
+}
+
+function CheckRow({ label, hint, checked, onToggle }: { label: string; hint?: string; checked: boolean; onToggle: () => void }) {
+    return (
+        <button type="button" onClick={onToggle} className="flex items-start gap-2.5 text-left w-full group">
+            {checked
+                ? <CheckCircle2 size={18} className="text-[#03a9e7] shrink-0 mt-0.5" />
+                : <Circle size={18} className="text-slate-300 group-hover:text-[#03a9e7] shrink-0 mt-0.5" />}
+            <span>
+                <span className={`text-sm font-medium ${checked ? 'text-[#052d4a]' : 'text-slate-700'}`}>{label}</span>
+                {hint && <span className="block text-[11px] text-slate-400">{hint}</span>}
+            </span>
+        </button>
+    )
+}
+
+function RemarksCard({ remarks }: { remarks: RefiRemarks }) {
+    const all = [...remarks.standard, ...remarks.conditional]
+    if (!all.length && !remarks.alerts.length) return null
+    return (
+        <div className="space-y-3">
+            {remarks.alerts.map((a, i) => (
+                <div key={i} className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[13px] text-amber-800 leading-relaxed">{a}</p>
+                </div>
+            ))}
+            {all.length > 0 && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-5">
+                    <p className="text-sm font-bold text-violet-800 flex items-center gap-2 mb-3">
+                        <Lightbulb size={15} /> Remarks — advise the client
+                    </p>
+                    <ul className="space-y-2.5">
+                        {all.map((r, i) => (
+                            <li key={i} className="flex items-start gap-2.5 text-[13px] text-violet-900 leading-relaxed">
+                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0 mt-1.5" />
+                                <span>{r}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─── Next step ────────────────────────────────────────────────────────────────
+
+interface NextStepProps {
+    embedded: boolean
+    currentStage?: string
+    suggestedStage: string | null
+    onStageAdvance?: (toStage: string) => void
+    actions: string[]
+    actionsDone: string[]
+    onToggleAction: (a: string) => void
+    followUpDate?: string
+    onSetFollowUp?: (date: string) => void
+    onPresent: () => void
+    onOpenProposal: () => void
+}
+
+function NextStepCard({
+    embedded, currentStage, suggestedStage, onStageAdvance,
+    actions, actionsDone, onToggleAction, followUpDate, onSetFollowUp, onPresent, onOpenProposal,
+}: NextStepProps) {
+    const [follow, setFollow] = useState(followUpDate ?? '')
+    return (
+        <div className="rounded-xl border-2 border-[#052d4a]/15 bg-gradient-to-b from-slate-50 to-white p-5 space-y-4">
+            <p className="text-sm font-bold text-[#052d4a] flex items-center gap-2">
+                <ArrowRight size={16} className="text-[#03a9e7]" /> Next step
+            </p>
+
+            <div className="flex flex-wrap gap-2.5">
+                <button type="button" onClick={onPresent} className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
+                    <Presentation size={15} /> Present to client
+                </button>
+                <button type="button" onClick={onOpenProposal}
+                    className="text-sm px-4 py-2 rounded-lg border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 flex items-center gap-2">
+                    <MessageSquare size={15} /> Chat summary
+                </button>
+                {embedded && suggestedStage && onStageAdvance && (
+                    <button type="button" onClick={() => onStageAdvance(suggestedStage)}
+                        className="text-sm px-4 py-2 rounded-lg border border-[#03a9e7] text-[#03a9e7] font-semibold hover:bg-sky-50 flex items-center gap-2">
+                        Advance to {suggestedStage} <ArrowRight size={14} />
+                    </button>
+                )}
+            </div>
+            {embedded && currentStage && (
+                <p className="text-[11px] text-slate-400">Current stage: <span className="font-medium text-slate-600">{currentStage}</span></p>
+            )}
+
+            {actions.length > 0 && (
+                <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                        <ClipboardList size={13} /> What to do next
+                    </p>
+                    <ul className="space-y-1.5">
+                        {actions.map(a => {
+                            const done = actionsDone.includes(a)
+                            return (
+                                <li key={a}>
+                                    <button type="button" onClick={() => onToggleAction(a)} className="flex items-start gap-2.5 text-left w-full group">
+                                        {done
+                                            ? <CheckCircle2 size={16} className="text-emerald-500 shrink-0 mt-0.5" />
+                                            : <Circle size={16} className="text-slate-300 group-hover:text-[#03a9e7] shrink-0 mt-0.5" />}
+                                        <span className={`text-[13px] ${done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{a}</span>
+                                    </button>
+                                </li>
+                            )
+                        })}
+                    </ul>
+                </div>
+            )}
+
+            {embedded && onSetFollowUp && (
+                <div className="flex flex-wrap items-end gap-2.5 pt-1 border-t border-slate-100">
+                    <div className="pt-3">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5 mb-1.5">
+                            <CalendarClock size={13} /> Follow-up reminder
+                        </p>
+                        <input type="date" value={follow} onChange={e => setFollow(e.target.value)}
+                            className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
                     </div>
-                )
-            })}
+                    <button type="button" disabled={!follow} onClick={() => onSetFollowUp(follow)}
+                        className="text-sm px-4 py-2 rounded-lg bg-[#052d4a] text-white font-semibold disabled:opacity-40">
+                        Set reminder
+                    </button>
+                    {followUpDate && <span className="text-[11px] text-emerald-600 pb-2.5">Saved · {followUpDate}</span>}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function ProposalView({ text }: { text: string }) {
+    const [copied, setCopied] = useState(false)
+    const copy = async () => {
+        try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* clipboard unavailable */ }
+    }
+    const print = () => {
+        const w = window.open('', '_blank', 'width=720,height=900')
+        if (!w) return
+        w.document.write(`<pre style="font-family:ui-sans-serif,system-ui,sans-serif;font-size:13px;line-height:1.6;white-space:pre-wrap;padding:24px">${text.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] as string))}</pre>`)
+        w.document.close(); w.focus(); w.print()
+    }
+    return (
+        <div className="space-y-3">
+            <div className="flex gap-2">
+                <button type="button" onClick={copy} className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
+                    <Copy size={15} /> {copied ? 'Copied!' : 'Copy text'}
+                </button>
+                <button type="button" onClick={print} className="text-sm px-4 py-2 rounded-lg border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 flex items-center gap-2">
+                    <Printer size={15} /> Print / Save PDF
+                </button>
+            </div>
+            <pre className="whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-4 max-h-[55vh] overflow-y-auto" style={{ fontFamily: 'inherit' }}>{text}</pre>
         </div>
     )
 }

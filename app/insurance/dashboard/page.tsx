@@ -1,244 +1,178 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabaseClient'
+import { CaseType } from '@/lib/types'
+import { useCases, refreshCases } from '@/lib/insurance/useCases'
+import { isDraftCase } from '@/lib/insurance/caseFilters'
+import Spinner from '@/components/shared/Spinner'
+import InlineAlert from '@/components/shared/InlineAlert'
 import {
-    Plus, Briefcase, TrendingUp, Clock, ChevronRight,
-    AlertTriangle, AlertCircle, ArrowRight,
+    RefreshCcw, ShoppingCart, Users, TrendingUp, ArrowRight,
+    Clock, Trash2, FileText,
 } from 'lucide-react'
-import StatsCard from '@/components/shared/StatsCard'
-import UrgencyBanner from '@/components/shared/UrgencyBanner'
-import Skeleton from '@/components/shared/Skeleton'
-import EmptyState from '@/components/shared/EmptyState'
-import { formatDate } from '@/lib/utils/formatDate'
-import { useCases } from '@/lib/insurance/useCases'
-import type { Case } from '@/lib/types'
 
-const STAGE_BADGE: Record<string, { bg: string; text: string }> = {
-    'Closed Won': { bg: '#d1fae5', text: '#065f46' },
-    'Closed Lost': { bg: '#fee2e2', text: '#991b1b' },
-    'Pending Approval': { bg: '#fff7ed', text: '#9a3412' },
-    'Pending Signature': { bg: '#fef3c7', text: '#92400e' },
-}
-const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
+const CASE_OPTIONS: {
+    type: CaseType
+    label: string
+    icon: React.ElementType
+    description: string
+    accent: string
+}[] = [
+    { type: 'Purchase',    label: 'New Purchase', icon: ShoppingCart, description: 'Plan financing for a new property purchase', accent: '#03a9e7' },
+    { type: 'Refinancing', label: 'Refinance',    icon: RefreshCcw,   description: 'Find a better rate on an existing loan', accent: '#10b981' },
+    { type: 'Decouple',    label: 'Decoupling',   icon: Users,        description: 'Restructure ownership between co-owners', accent: '#8b5cf6' },
+    { type: 'Equity Loan', label: 'Equity',       icon: TrendingUp,   description: 'Unlock cash from property equity', accent: '#f59e0b' },
+]
 
-function stageBadge(stage: string) {
-    return STAGE_BADGE[stage] ?? DEFAULT_STAGE_BADGE
-}
-
-function computeStats(cases: Case[]) {
-    const now = new Date()
-    const in90Days = new Date(now)
-    in90Days.setDate(now.getDate() + 90)
-
-    return {
-        total: cases.length,
-        active: cases.filter(c => c.stage !== 'Closed Won' && c.stage !== 'Closed Lost').length,
-        closedWon: cases.filter(c => c.stage === 'Closed Won').length,
-        upcomingLockIns: cases.filter(c => {
-            if (!c.lock_in_end_date || c.stage === 'Closed Lost') return false
-            const d = new Date(c.lock_in_end_date)
-            return d >= now && d <= in90Days
-        }).length,
-    }
+function relativeTime(iso: string): string {
+    const diff = Date.now() - new Date(iso).getTime()
+    const mins = Math.round(diff / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins} min ago`
+    const hrs = Math.round(mins / 60)
+    if (hrs < 24) return `${hrs} hr${hrs !== 1 ? 's' : ''} ago`
+    const days = Math.round(hrs / 24)
+    return `${days} day${days !== 1 ? 's' : ''} ago`
 }
 
-export default function DashboardHome() {
+export default function MortgagePlannerPage() {
     const router = useRouter()
-    const { cases, loading, error } = useCases()
+    const { cases } = useCases()
+    const [userId, setUserId] = useState<string | null>(null)
+    const [creating, setCreating] = useState<CaseType | null>(null)
+    const [discardingId, setDiscardingId] = useState<string | null>(null)
+    const [error, setError] = useState<string | null>(null)
 
-    const stats = computeStats(cases)
-    const recentCases = cases.slice(0, 5)
+    useEffect(() => {
+        supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id ?? null))
+    }, [])
 
-    const hour = new Date().getHours()
-    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+    // The agent's own in-progress planner sessions — no client data on these yet,
+    // so they're safe to surface on the client-facing landing screen.
+    const drafts = cases.filter(c => isDraftCase(c) && (!userId || c.created_by === userId))
+
+    const startPlan = async (type: CaseType) => {
+        if (creating) return
+        setCreating(type)
+        setError(null)
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) { router.push('/insurance/login'); return }
+
+            const { data, error: insertError } = await supabase
+                .from('cases')
+                .insert({ case_type: type, stage: 'Touched Base', created_by: user.id })
+                .select()
+                .single()
+
+            if (insertError) throw new Error(insertError.message)
+            refreshCases()
+            router.push(`/insurance/dashboard/cases/${data.id}?tab=workflow`)
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not start the plan. Please try again.')
+            setCreating(null)
+        }
+    }
+
+    const discardDraft = async (id: string) => {
+        setDiscardingId(id)
+        // .select() returns the deleted rows — an empty array (with no error) means
+        // RLS silently blocked the delete, which would otherwise look like the draft
+        // "coming back" after a refresh.
+        const { data, error: delError } = await supabase.from('cases').delete().eq('id', id).select('id')
+        setDiscardingId(null)
+        if (delError) { setError(delError.message); return }
+        if (!data || data.length === 0) {
+            setError('Could not delete this draft — please refresh and try again.')
+            return
+        }
+        refreshCases()
+    }
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <div>
-                    <h1 className="ios-page-title">{greeting}</h1>
-                    <p className="page-subtitle">Here&apos;s your pipeline overview.</p>
-                </div>
-                <button
-                    onClick={() => router.push('/insurance/dashboard/cases/new')}
-                    className="btn-primary btn-sm"
-                    style={{ flexShrink: 0 }}
-                >
-                    <Plus size={15} />
-                    New Case
-                </button>
+        <div className="max-w-4xl mx-auto space-y-7">
+            <div>
+                <h1 className="ios-page-title">Mortgage Planner</h1>
+                <p className="page-subtitle">Pick a case type to start planning with your client.</p>
             </div>
 
-            {loading && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }} className="lg:grid-cols-4">
-                        {[0, 1, 2, 3].map(i => <Skeleton key={i} height={104} radius={14} />)}
-                    </div>
-                    <div style={{ display: 'grid', gap: 20 }} className="lg:grid-cols-2">
-                        <Skeleton height={300} radius={14} />
-                        <Skeleton height={300} radius={14} />
-                    </div>
-                </div>
-            )}
+            {error && <InlineAlert type="error" message={error} onDismiss={() => setError(null)} />}
 
-            {error && !loading && (
-                <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626', fontSize: 14 }}>
-                    <AlertCircle size={16} style={{ flexShrink: 0 }} />
-                    {error}
-                </div>
-            )}
-
-            {!loading && !error && (
-                <>
-                    {/* Stats grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }} className="lg:grid-cols-4">
-                        <StatsCard
-                            title="Total Cases"
-                            value={stats.total}
-                            icon={Briefcase}
-                            color="#03a9e7"
-                            onClick={() => router.push('/insurance/dashboard/cases')}
-                        />
-                        <StatsCard
-                            title="Active Pipeline"
-                            value={stats.active}
-                            icon={Clock}
-                            color="#f59e0b"
-                            onClick={() => router.push('/insurance/dashboard/cases')}
-                        />
-                        <StatsCard
-                            title="Closed Won"
-                            value={stats.closedWon}
-                            icon={TrendingUp}
-                            color="#10b981"
-                        />
-                        <StatsCard
-                            title="Upcoming Lock-ins"
-                            value={stats.upcomingLockIns}
-                            icon={AlertTriangle}
-                            color="#f59e0b"
-                            subtitle="within 90 days"
-                            variant="alert"
-                            onClick={() => router.push('/insurance/dashboard/cases/lock-in-end')}
-                        />
-                    </div>
-
-                    {/* Urgency banner */}
-                    <UrgencyBanner
-                        count={stats.upcomingLockIns}
-                        onAction={() => router.push('/insurance/dashboard/cases/lock-in-end')}
-                        actionLabel="Review"
-                    />
-
-                    {/* Bottom two-column */}
-                    <div style={{ display: 'grid', gap: 20 }} className="lg:grid-cols-2">
-                        {/* Recent Cases */}
-                        <div className="card" style={{ padding: 24 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-                                <span className="section-label" style={{ marginBottom: 0 }}>Recent Cases</span>
-                                <button
-                                    onClick={() => router.push('/insurance/dashboard/cases')}
-                                    style={{
-                                        display: 'inline-flex', alignItems: 'center', gap: 5,
-                                        background: 'none', border: 'none', cursor: 'pointer',
-                                        color: '#03a9e7', fontSize: 12, fontWeight: 600,
-                                    }}
-                                >
-                                    View all <ArrowRight size={12} />
-                                </button>
-                            </div>
-
-                            {recentCases.length === 0 ? (
-                                <EmptyState
-                                    icon={Briefcase}
-                                    iconColor="#03a9e7"
-                                    title="No cases yet"
-                                    description="Create your first case to start tracking your pipeline."
-                                    action={{ label: 'Create First Case', onClick: () => router.push('/insurance/dashboard/cases/new') }}
-                                />
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                    {recentCases.map(c => {
-                                        const badge = stageBadge(c.stage)
-                                        return (
-                                            <button
-                                                key={c.id}
-                                                onClick={() => router.push(`/insurance/dashboard/cases/${c.id}`)}
-                                                className="pressable"
-                                                style={{
-                                                    display: 'flex', alignItems: 'center', gap: 12,
-                                                    padding: '10px 12px', borderRadius: 10,
-                                                    background: 'none', border: 'none', cursor: 'pointer',
-                                                    textAlign: 'left', width: '100%',
-                                                }}
-                                                onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-                                                onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                                            >
-                                                <div style={{
-                                                    width: 38, height: 38, borderRadius: '50%',
-                                                    background: '#e0f2fe', color: '#0369a1',
-                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                    fontWeight: 700, flexShrink: 0,
-                                                }}>
-                                                    {c.client_name ? c.client_name[0].toUpperCase() : '?'}
-                                                </div>
-                                                <div style={{ flex: 1, minWidth: 0 }}>
-                                                    <p style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                        {c.client_name || 'Unnamed Client'}
-                                                    </p>
-                                                    <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
-                                                        {c.case_type} · {formatDate(c.created_at)}
-                                                    </p>
-                                                </div>
-                                                <span className="status-badge" style={{ color: badge.text, background: badge.bg, flexShrink: 0 }}>
-                                                    {c.stage}
-                                                </span>
-                                                <ChevronRight size={16} color="#cbd5e1" style={{ flexShrink: 0 }} />
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Promo / quick action */}
-                        <div
-                            className="card"
-                            style={{
-                                padding: 24,
-                                background: 'linear-gradient(135deg, #052d4a 0%, #0284c7 100%)',
-                                display: 'flex', flexDirection: 'column', gap: 16,
-                            }}
+            {/* Case-type cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {CASE_OPTIONS.map(({ type, label, icon: Icon, description, accent }) => {
+                    const isCreating = creating === type
+                    return (
+                        <button
+                            key={type}
+                            type="button"
+                            disabled={!!creating}
+                            onClick={() => startPlan(type)}
+                            className="card group flex items-start gap-4 p-5 text-left transition-all hover:shadow-md hover:-translate-y-0.5 disabled:opacity-60 disabled:hover:translate-y-0"
                         >
-                            <div style={{
-                                width: 42, height: 42, borderRadius: 11,
-                                background: 'rgba(255,255,255,0.18)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            }}>
-                                <Briefcase size={20} color="white" />
-                            </div>
-                            <div>
-                                <h3 style={{ fontSize: 18, fontWeight: 700, color: 'white' }}>Grow Your Business</h3>
-                                <p style={{ fontSize: 13, color: '#e0f2fe', marginTop: 6, lineHeight: 1.5 }}>
-                                    Track your mortgage cases efficiently. Follow up with &quot;Pending Signature&quot; cases to close deals faster.
-                                </p>
-                            </div>
-                            <button
-                                onClick={() => router.push('/insurance/dashboard/cases')}
-                                className="pressable"
-                                style={{
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                                    width: '100%', padding: '12px 0', borderRadius: 9,
-                                    background: 'white', color: '#052d4a',
-                                    fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer',
-                                }}
+                            <div
+                                className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+                                style={{ background: `${accent}15`, color: accent }}
                             >
-                                Go to Pipeline <ArrowRight size={14} />
-                            </button>
-                        </div>
+                                {isCreating ? <Spinner size="sm" color={accent} /> : <Icon size={22} />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <p className="text-base font-bold text-[#052d4a]">{label}</p>
+                                    <ArrowRight size={15} className="text-slate-300 group-hover:text-[#03a9e7] transition-colors" />
+                                </div>
+                                <p className="text-sm text-slate-500 mt-1 leading-snug">{description}</p>
+                            </div>
+                        </button>
+                    )
+                })}
+            </div>
+
+            {/* Resume in-progress drafts */}
+            {drafts.length > 0 && (
+                <div className="space-y-3">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+                        <Clock size={13} /> In progress
+                    </p>
+                    <div className="space-y-2">
+                        {drafts.map(d => {
+                            const opt = CASE_OPTIONS.find(o => o.type === d.case_type)
+                            const Icon = opt?.icon ?? FileText
+                            return (
+                                <div key={d.id} className="card flex items-center gap-3 p-3.5">
+                                    <div
+                                        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                                        style={{ background: `${opt?.accent ?? '#64748b'}15`, color: opt?.accent ?? '#64748b' }}
+                                    >
+                                        <Icon size={17} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-slate-800">{opt?.label ?? d.case_type}</p>
+                                        <p className="text-xs text-slate-400">Started {relativeTime(d.updated_at)} · no client yet</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => router.push(`/insurance/dashboard/cases/${d.id}?tab=workflow`)}
+                                        className="text-sm px-3.5 py-1.5 rounded-lg bg-[#052d4a] text-white font-semibold hover:bg-[#0a3d63] transition-colors shrink-0"
+                                    >
+                                        Resume
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={discardingId === d.id}
+                                        onClick={() => discardDraft(d.id)}
+                                        className="p-2 text-slate-300 hover:text-red-500 transition-colors shrink-0 disabled:opacity-50"
+                                        aria-label="Discard draft"
+                                    >
+                                        {discardingId === d.id ? <Spinner size="sm" color="#94a3b8" /> : <Trash2 size={16} />}
+                                    </button>
+                                </div>
+                            )
+                        })}
                     </div>
-                </>
+                </div>
             )}
         </div>
     )

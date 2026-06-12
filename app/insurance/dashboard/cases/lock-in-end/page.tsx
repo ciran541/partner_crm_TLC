@@ -46,7 +46,7 @@ export default function UpcomingLockInsPage() {
             {/* Header */}
             <div>
                 <button
-                    onClick={() => router.push('/insurance/dashboard')}
+                    onClick={() => router.push('/insurance/dashboard/pipeline')}
                     style={{ background: 'none', border: 'none', color: '#64748b', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, cursor: 'pointer', fontWeight: 500, fontSize: 14 }}
                 >
                     <ArrowLeft size={15} /> Back to Dashboard

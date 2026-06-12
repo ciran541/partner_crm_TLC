@@ -45,6 +45,9 @@ export interface Case {
     existing_loan_amount?: number
     lock_in_end_date?: string
 
+    // Follow-up reminder (date column in the cases table)
+    follow_up_date?: string
+
     // Closure fields (only for Closed Won)
     closed_package_details?: string
     closed_interest_rate?: number

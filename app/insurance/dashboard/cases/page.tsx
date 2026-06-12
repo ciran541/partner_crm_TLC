@@ -9,6 +9,7 @@ import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { useCases } from '@/lib/insurance/useCases'
+import { isDraftCase } from '@/lib/insurance/caseFilters'
 import type { Case, PipelineStage } from '@/lib/types'
 
 const PIPELINE_STAGES: PipelineStage[] = [
@@ -76,6 +77,7 @@ export default function CasesPage() {
     const cases = useMemo(() => {
         const q = search.trim().toLowerCase()
         return allCases.filter(c =>
+            !isDraftCase(c) && // planner drafts (no client yet) stay out of the pipeline
             (!stageFilter || c.stage === stageFilter) &&
             (agentFilter === 'all' || c.created_by === agentFilter) &&
             (!q || (c.client_name ?? '').toLowerCase().includes(q) || (c.client_mobile ?? '').toLowerCase().includes(q))
@@ -100,12 +102,12 @@ export default function CasesPage() {
                     <p className="page-subtitle">Track your cases through the pipeline.</p>
                 </div>
                 <button
-                    onClick={() => router.push('/insurance/dashboard/cases/new')}
+                    onClick={() => router.push('/insurance/dashboard')}
                     className="btn-primary btn-lg"
                     style={{ flexShrink: 0 }}
                 >
                     <Plus size={16} />
-                    Create Case
+                    New Plan
                 </button>
             </div>
 
@@ -199,7 +201,7 @@ export default function CasesPage() {
                     description={hasFilters
                         ? 'Try adjusting your filters to see more results.'
                         : 'Create your first case to start tracking your pipeline.'}
-                    action={hasFilters ? undefined : { label: '+ Create a Case', onClick: () => router.push('/insurance/dashboard/cases/new') }}
+                    action={hasFilters ? undefined : { label: 'Open Planner', onClick: () => router.push('/insurance/dashboard') }}
                 />
             )}
 

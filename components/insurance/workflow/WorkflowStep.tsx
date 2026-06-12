@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode, useState } from 'react'
+import React, { ReactNode, useState } from 'react'
 import { CheckCircle2, ChevronDown, AlertTriangle, Info, Lightbulb, BookOpen } from 'lucide-react'
 
 // ─── Step wrapper ─────────────────────────────────────────────────────────────
@@ -238,13 +238,41 @@ export function CheckItem({ checked, onChange, label, hint }: CheckItemProps) {
     )
 }
 
-interface FieldInputProps { value?: string | number; onChange: (v: string) => void; placeholder?: string; type?: string; prefix?: string; suffix?: string }
-export function FieldInput({ value, onChange, placeholder, type = 'text', prefix, suffix }: FieldInputProps) {
+interface FieldInputProps { value?: string | number; onChange: (v: string) => void; placeholder?: string; type?: string; prefix?: string; suffix?: string; commas?: boolean }
+export function FieldInput({ value, onChange, placeholder, type = 'text', prefix, suffix, commas }: FieldInputProps) {
+    const [focused, setFocused] = useState(false)
+
+    let inputType = type
+    let inputMode: React.InputHTMLAttributes<HTMLInputElement>['inputMode']
+    let displayValue: string
+
+    if (commas) {
+        inputType = 'text'
+        inputMode = 'numeric'
+        const raw = value !== undefined && value !== '' ? String(value).replace(/,/g, '') : ''
+        if (focused || raw === '') {
+            displayValue = raw
+        } else {
+            const n = parseFloat(raw)
+            displayValue = isNaN(n) ? raw : n.toLocaleString()
+        }
+    } else {
+        displayValue = value !== undefined ? String(value) : ''
+    }
+
     return (
         <div className="relative">
             {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">{prefix}</span>}
-            <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-                className={`w-full py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all ${prefix ? 'pl-7 pr-3' : suffix ? 'pl-3 pr-8' : 'px-3'}`} />
+            <input
+                type={inputType}
+                inputMode={inputMode}
+                value={displayValue}
+                onFocus={commas ? () => setFocused(true) : undefined}
+                onBlur={commas ? () => setFocused(false) : undefined}
+                onChange={e => onChange(commas ? e.target.value.replace(/,/g, '') : e.target.value)}
+                placeholder={placeholder}
+                className={`w-full py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all ${prefix ? 'pl-7 pr-3' : suffix ? 'pl-3 pr-8' : 'px-3'}`}
+            />
             {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">{suffix}</span>}
         </div>
     )

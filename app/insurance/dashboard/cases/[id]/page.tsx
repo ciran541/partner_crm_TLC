@@ -1,15 +1,18 @@
 'use client'
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Case, PipelineStage } from '@/lib/types'
-import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow } from '@/lib/types/workflow'
+import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow, PurchaseWorkflow, getPurchaseWorkflow } from '@/lib/types/workflow'
 import RefinancingWorkflowPanel from '@/components/insurance/workflow/RefinancingWorkflow'
+import PurchaseWorkflowPanel from '@/components/insurance/workflow/PurchaseWorkflow'
+import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
+import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
     ArrowLeft, Save, Edit2, X, User, Home,
-    Briefcase, CheckCircle2, AlertTriangle, FileText
+    Briefcase, CheckCircle2, AlertTriangle, FileText, CalendarClock
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -43,26 +46,35 @@ export default function CaseDetailPage() {
     const router = useRouter()
     const params = useParams()
     const caseId = params?.id as string
+    // Router-aware search params — reliable during App Router client navigation
+    // (window.location can still hold the previous URL on the first render).
+    const searchParams = useSearchParams()
+    const initialTab = ((): TabKey => {
+        const tab = searchParams.get('tab')
+        return tab === 'workflow' || tab === 'closure' ? (tab as TabKey) : 'overview'
+    })()
 
     const [caseData, setCaseData] = useState<Case | null>(null)
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [isEditing, setIsEditing] = useState(false)
     const [userRole, setUserRole] = useState<string | null>(null)
-    const [activeTab, setActiveTab] = useState<TabKey>(() => {
-        if (typeof window !== 'undefined') {
-            const tab = new URLSearchParams(window.location.search).get('tab')
-            if (tab === 'workflow' || tab === 'closure') return tab as TabKey
-        }
-        return 'overview'
-    })
+    const [activeTab, setActiveTab] = useState<TabKey>(initialTab)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-    // Workflow state
-    const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData>({})
+    // Workflow state (shape depends on case_type)
+    const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData | PurchaseWorkflow>({})
     const [workflowSaving, setWorkflowSaving] = useState(false)
     const [workflowSaved, setWorkflowSaved] = useState(false)
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    // Always-current case type — extractCaseFields runs inside a memoized callback
+    // whose caseData closure can be stale, which would mis-route the column sync.
+    const caseTypeRef = useRef<string | undefined>(undefined)
+
+    // Overview's client-details block — the workflow hand-off scrolls here and
+    // focuses the name field instead of dumping the agent at a random position.
+    const clientSectionRef = useRef<HTMLDivElement>(null)
+    const wantScrollToClientRef = useRef(false)
 
     // Closed Won modal
     const [closedWonOpen, setClosedWonOpen] = useState(false)
@@ -72,6 +84,23 @@ export default function CaseDetailPage() {
     useEffect(() => {
         if (caseId) loadCase()
     }, [caseId])
+
+    // Scroll on tab switch: the workflow hand-off jumps straight to the client
+    // form and focuses its first field; any other switch returns to the top so
+    // you never land mid-page. DOM-only — no state writes inside the effect.
+    useEffect(() => {
+        if (activeTab === 'overview' && wantScrollToClientRef.current) {
+            wantScrollToClientRef.current = false
+            requestAnimationFrame(() => {
+                const section = clientSectionRef.current
+                section?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                const firstInput = section?.querySelector('input') as HTMLInputElement | null
+                firstInput?.focus({ preventScroll: true })
+            })
+        } else {
+            window.scrollTo({ top: 0 })
+        }
+    }, [activeTab])
 
     const loadCase = async () => {
         setLoading(true)
@@ -88,8 +117,11 @@ export default function CaseDetailPage() {
         if (error || !data) {
             router.push('/insurance/dashboard/cases')
         } else {
+            caseTypeRef.current = data.case_type
             setCaseData(data)
-            setWorkflowData(getRefinancingWorkflow(data.workflow_data))
+            setWorkflowData(data.case_type === 'Purchase'
+                ? getPurchaseWorkflow(data.workflow_data)
+                : getRefinancingWorkflow(data.workflow_data))
         }
         setLoading(false)
     }
@@ -130,28 +162,43 @@ export default function CaseDetailPage() {
     }
 
     // Extract case-column values from workflow data so Overview stays in sync
-    const extractCaseFields = (wf: RefinancingWorkflowData): Partial<Case> => {
-        const q = wf.qualify ?? {}
-        const ff = wf.fact_find ?? {}
+    const extractCaseFields = (wf: RefinancingWorkflowData | PurchaseWorkflow): Partial<Case> => {
         const updates: Partial<Case> = {}
 
-        if (q.current_bank)       updates.current_bank = q.current_bank
-        if (q.outstanding_loan)   updates.existing_loan_amount = q.outstanding_loan
-        if (q.lock_in_expiry)     updates.lock_in_end_date = q.lock_in_expiry
-
-
-        if (ff.property_valuation) updates.property_price = ff.property_valuation
-        if (ff.property_type) {
-            const map: Record<string, string> = {
-                hdb: 'HDB', private_condo: 'Private Condo', landed: 'Landed', ec: 'EC (Executive Condo)',
+        if (caseTypeRef.current === 'Purchase') {
+            const p = wf as PurchaseWorkflow
+            if (p.property_type) {
+                const map: Record<string, string> = {
+                    resale_condo: 'Private Condo', new_launch_condo: 'Private Condo', resale_landed: 'Landed',
+                    ec_new_launch: 'EC (Executive Condo)', resale_hdb: 'HDB', bto: 'HDB',
+                }
+                updates.property_type = map[p.property_type] ?? p.property_type
             }
-            updates.property_type = map[ff.property_type] ?? ff.property_type
+            if (p.property_price) updates.property_price = p.property_price
+            // Sync overview "Loan Amount" with the computed final loan of the headline option.
+            const loan = computePurchase(inputsFromWorkflow(p)).options[0]?.finalLoan
+            if (loan && loan > 0) updates.loan_size = Math.floor(loan)
+            return updates
+        }
+
+        const r = wf as RefinancingWorkflowData
+
+        if (r.current_bank) updates.current_bank = r.current_bank
+        const totalOutstanding = (r.outstanding_disbursed ?? 0) + (r.outstanding_undisbursed ?? 0)
+        if (totalOutstanding > 0) updates.existing_loan_amount = totalOutstanding
+        if (r.lockin_end_date) updates.lock_in_end_date = r.lockin_end_date
+        if (r.market_price) updates.property_price = r.market_price
+        if (r.property_type) {
+            const map: Record<string, string> = {
+                hdb: 'HDB', completed_condo_ec: 'Private Condo', incompleted_condo_ec: 'Private Condo', landed: 'Landed',
+            }
+            updates.property_type = map[r.property_type] ?? r.property_type
         }
 
         return updates
     }
 
-    const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData) => {
+    const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData | PurchaseWorkflow) => {
         setWorkflowSaving(true)
         setWorkflowSaved(false)
         const caseFields = extractCaseFields(wf)
@@ -162,7 +209,7 @@ export default function CaseDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [persistCaseUpdate])
 
-    const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData) => {
+    const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData | PurchaseWorkflow) => {
         setWorkflowData(updated)
         // Immediately update caseData state so Overview reflects workflow changes without waiting for DB save
         const caseFields = extractCaseFields(updated)
@@ -186,16 +233,13 @@ export default function CaseDetailPage() {
         handleFieldChange('stage', newStage)
     }
 
-    // Called from the workflow stage-advance prompt — saves immediately, no edit mode needed
-    const advanceStage = useCallback(async (newStage: string) => {
-        if (!caseData) return
-        if (newStage === 'Closed Won') { setClosedWonOpen(true); return }
-        if (newStage === 'Closed Lost') { setClosedLostOpen(true); return }
-        setCaseData(prev => prev ? { ...prev, stage: newStage as PipelineStage } : prev)
-        const err = await persistCaseUpdate({ stage: newStage })
-        if (err) setAlert({ type: 'error', message: `Stage update failed: ${err}` })
-        else refreshCases() // keep dashboard / cases-list cache in sync
-    }, [caseData, persistCaseUpdate])
+    // Set a follow-up reminder date — set from the internal Overview tab.
+    const handleSetFollowUp = useCallback(async (date: string) => {
+        setCaseData(prev => prev ? { ...prev, follow_up_date: date } : prev)
+        const err = await persistCaseUpdate({ follow_up_date: date })
+        if (err) setAlert({ type: 'error', message: `Follow-up save failed: ${err}` })
+        else { refreshCases(); setAlert({ type: 'success', message: 'Follow-up reminder set.' }) }
+    }, [persistCaseUpdate])
 
     const handleSave = () => {
         if (!caseData) return
@@ -281,7 +325,7 @@ export default function CaseDetailPage() {
                             </>
                         ) : (
                             <>
-                                {!isClosed && (
+                                {!isClosed && activeTab !== 'workflow' && (
                                     <button onClick={() => setIsEditing(true)} className="btn-primary text-sm px-4 py-2 flex items-center gap-2">
                                         <Edit2 size={15} /> Edit
                                     </button>
@@ -296,7 +340,8 @@ export default function CaseDetailPage() {
                 <InlineAlert type={alert.type} message={alert.message} onDismiss={() => setAlert(null)} />
             )}
 
-            {/* Stage Bar */}
+            {/* Stage Bar — internal/pipeline; hidden on the client-facing Workflow tab */}
+            {activeTab !== 'workflow' && (
             <div className="card p-5" style={{ background: 'linear-gradient(to right, #052d4a, #0f4a75)', color: 'white' }}>
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div>
@@ -337,6 +382,7 @@ export default function CaseDetailPage() {
                     </div>
                 </div>
             </div>
+            )}
 
             {/* Tabs */}
             <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-full sm:w-auto self-start">
@@ -359,22 +405,16 @@ export default function CaseDetailPage() {
             {/* Tab: Overview */}
             {activeTab === 'overview' && (
                 <div className="space-y-5">
-                    {/* Client Info */}
-                    <SectionCard title="Client Information" icon={User}>
-                        <GridField label="Name" isEditing={isEditing}>
-                            <input type="text" value={caseData.client_name || ''} onChange={e => handleFieldChange('client_name', e.target.value)} className="input-std" />
-                            {caseData.client_name || <span className="text-slate-400">—</span>}
-                        </GridField>
-                        <GridField label="Mobile" isEditing={isEditing}>
-                            <input type="tel" value={caseData.client_mobile || ''} onChange={e => handleFieldChange('client_mobile', e.target.value)} className="input-std" />
-                            {caseData.client_mobile || <span className="text-slate-400">—</span>}
-                        </GridField>
-                        <GridField label="Email" isEditing={isEditing}>
-                            <input type="email" value={caseData.client_email || ''} onChange={e => handleFieldChange('client_email', e.target.value)} className="input-std" />
-                            {caseData.client_email || <span className="text-slate-400">—</span>}
-                        </GridField>
-                    </SectionCard>
-
+                    {/* Deal summary leads the tab — it's the natural "overview". */}
+                    {caseData.case_type === 'Purchase' ? (
+                        <PurchaseOverview
+                            workflow={workflowData as PurchaseWorkflow}
+                            stage={caseData.stage}
+                            followUpDate={caseData.follow_up_date}
+                            onOpenWorkflow={() => setActiveTab('workflow')}
+                        />
+                    ) : (
+                    <>
                     {/* Loan & Property */}
                     <SectionCard title="Loan & Property" icon={Home}>
                         <GridField label="Property Type" isEditing={isEditing}>
@@ -422,6 +462,30 @@ export default function CaseDetailPage() {
                             <Briefcase size={15} /> Open Workflow
                         </button>
                     </div>
+                    </>
+                    )}
+
+                    {/* Client + follow-up — internal CRM fields, grouped at the bottom.
+                        scroll-mt keeps a little breathing room when the hand-off jumps here. */}
+                    <div ref={clientSectionRef} className="space-y-5 scroll-mt-20">
+                        <SectionCard title="Client Information" icon={User}>
+                            <GridField label="Name" isEditing={isEditing}>
+                                <input type="text" value={caseData.client_name || ''} onChange={e => handleFieldChange('client_name', e.target.value)} placeholder="e.g. John Tan" className="input-std" />
+                                {caseData.client_name || <span className="text-slate-400">—</span>}
+                            </GridField>
+                            <GridField label="Mobile" isEditing={isEditing}>
+                                <input type="tel" value={caseData.client_mobile || ''} onChange={e => handleFieldChange('client_mobile', e.target.value)} placeholder="+65 9123 4567" className="input-std" />
+                                {caseData.client_mobile || <span className="text-slate-400">—</span>}
+                            </GridField>
+                            <GridField label="Email" isEditing={isEditing}>
+                                <input type="email" value={caseData.client_email || ''} onChange={e => handleFieldChange('client_email', e.target.value)} placeholder="client@email.com" className="input-std" />
+                                {caseData.client_email || <span className="text-slate-400">—</span>}
+                            </GridField>
+                        </SectionCard>
+
+                        {/* Follow-up reminder — internal CRM, never on the client-facing workflow */}
+                        <FollowUpControl value={caseData.follow_up_date} onSave={handleSetFollowUp} />
+                    </div>
                 </div>
             )}
 
@@ -429,14 +493,35 @@ export default function CaseDetailPage() {
             {activeTab === 'workflow' && (
                 caseData.case_type === 'Refinancing' ? (
                     <RefinancingWorkflowPanel
-                        data={workflowData}
-                        caseData={caseData}
+                        data={workflowData as RefinancingWorkflowData}
                         onChange={handleWorkflowChange}
+                        clientName={caseData.client_name}
+                        embedded
                         saving={workflowSaving}
                         saved={workflowSaved}
-                        onSave={() => saveWorkflow(workflowData)}
-                        onStageAdvance={advanceStage}
-                        currentPipelineStage={caseData.stage}
+                        currentStage={caseData.stage}
+                        onStageAdvance={handleStageChange}
+                        onSetFollowUp={handleSetFollowUp}
+                        followUpDate={caseData.follow_up_date}
+                    />
+                ) : caseData.case_type === 'Purchase' ? (
+                    <PurchaseWorkflowPanel
+                        data={workflowData as PurchaseWorkflow}
+                        onChange={handleWorkflowChange}
+                        clientName={caseData.client_name}
+                        embedded
+                        saving={workflowSaving}
+                        saved={workflowSaved}
+                        hasClientName={!!caseData.client_name?.trim()}
+                        onContinue={() => {
+                            // Draft → open Overview in edit mode, then the tab effect
+                            // scrolls to the client form and focuses the name field.
+                            if (!caseData.client_name?.trim()) {
+                                wantScrollToClientRef.current = true
+                                setIsEditing(true)
+                            }
+                            setActiveTab('overview')
+                        }}
                     />
                 ) : (
                     <div className="card p-8 text-center space-y-3">
@@ -638,6 +723,9 @@ function ClosedWonModal({ initialData, onConfirm, onCancel }: {
     onCancel: () => void
 }) {
     const [details, setDetails] = useState({
+        client_name: initialData.client_name || '',
+        client_mobile: initialData.client_mobile || '',
+        client_email: initialData.client_email || '',
         closed_package_details: initialData.closed_package_details || '',
         closed_interest_rate: initialData.closed_interest_rate?.toString() || '',
         closed_tenure: initialData.closed_tenure?.toString() || '',
@@ -654,13 +742,25 @@ function ClosedWonModal({ initialData, onConfirm, onCancel }: {
                 </div>
                 <div>
                     <h2 className="text-lg font-bold text-[#052d4a]">Closed Won Details</h2>
-                    <p className="text-sm text-slate-500">Complete the loan package information to close this case.</p>
+                    <p className="text-sm text-slate-500">Confirm the client and loan package to close this case.</p>
                 </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
+                    <label className="label-xs">Client Name *</label>
+                    <input required type="text" value={details.client_name} onChange={e => setDetails(d => ({ ...d, client_name: e.target.value }))} placeholder="e.g. John Tan" className="input-std" autoFocus />
+                </div>
+                <div>
+                    <label className="label-xs">Mobile</label>
+                    <input type="tel" value={details.client_mobile} onChange={e => setDetails(d => ({ ...d, client_mobile: e.target.value }))} placeholder="+65 9123 4567" className="input-std" />
+                </div>
+                <div>
+                    <label className="label-xs">Email</label>
+                    <input type="email" value={details.client_email} onChange={e => setDetails(d => ({ ...d, client_email: e.target.value }))} placeholder="client@email.com" className="input-std" />
+                </div>
+                <div className="sm:col-span-2">
                     <label className="label-xs">Package Details *</label>
-                    <input required type="text" value={details.closed_package_details} onChange={e => setDetails(d => ({ ...d, closed_package_details: e.target.value }))} placeholder="e.g. 2-Year Fixed @ 3.5%" className="input-std" autoFocus />
+                    <input required type="text" value={details.closed_package_details} onChange={e => setDetails(d => ({ ...d, closed_package_details: e.target.value }))} placeholder="e.g. 2-Year Fixed @ 3.5%" className="input-std" />
                 </div>
                 <div>
                     <label className="label-xs">Interest Rate (%)</label>
@@ -686,8 +786,11 @@ function ClosedWonModal({ initialData, onConfirm, onCancel }: {
             <div className="flex gap-3 mt-6">
                 <button onClick={onCancel} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
                 <button
-                    disabled={!details.closed_package_details.trim()}
+                    disabled={!details.closed_package_details.trim() || !details.client_name.trim()}
                     onClick={() => onConfirm({
+                        client_name: details.client_name.trim(),
+                        client_mobile: details.client_mobile.trim() || undefined,
+                        client_email: details.client_email.trim() || undefined,
                         closed_package_details: details.closed_package_details,
                         closed_interest_rate: details.closed_interest_rate ? parseFloat(details.closed_interest_rate) : undefined,
                         closed_tenure: details.closed_tenure ? parseInt(details.closed_tenure) : undefined,
@@ -813,6 +916,44 @@ function PrefixInput({ prefix, value, onChange, type = 'text' }: { prefix: strin
         <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">{prefix}</span>
             <input type={type} value={value} onChange={e => onChange(e.target.value)} className="input-std pl-7" />
+        </div>
+    )
+}
+
+// ─── Follow-up reminder (internal CRM) ────────────────────────────────────────
+// Lives on the Overview tab, never inside the client-facing Workflow tab.
+function FollowUpControl({ value, onSave }: { value?: string; onSave: (date: string) => void }) {
+    const [date, setDate] = useState(value ?? '')
+    return (
+        <div className="card p-6">
+            <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center">
+                    <CalendarClock size={16} className="text-slate-500" />
+                </div>
+                <h3 className="font-bold text-slate-800">Follow-up Reminder</h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+                <input
+                    type="date"
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                    className="input-std"
+                    style={{ maxWidth: 200 }}
+                />
+                <button
+                    type="button"
+                    disabled={!date}
+                    onClick={() => onSave(date)}
+                    className="btn-primary text-sm px-4 py-2 disabled:opacity-40"
+                >
+                    Set reminder
+                </button>
+                {value && (
+                    <span className="text-xs font-medium text-emerald-600 flex items-center gap-1">
+                        <CheckCircle2 size={13} /> Saved · {new Date(value).toLocaleDateString()}
+                    </span>
+                )}
+            </div>
         </div>
     )
 }
