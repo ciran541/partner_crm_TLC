@@ -258,18 +258,17 @@ export interface PledgeData {
 
 export interface OptionResult {
     key: '1' | '2'
-    ltvPct: number              // headline max LTV for this option (fraction)
-    actualLtvPct: number        // finalLoan / price (fraction)
+    ltvPct: number              // headline max LTV ceiling for this option (fraction) e.g. 0.75
     ageCap: number
     tenure: number
-    ltvCeiling: number
+    ltvCeiling: number          // price × ltvPct — the maximum loan the bank can offer
     incomeEligibility: number | null   // null on the IPA path
-    finalLoan: number
-    installment: number          // monthly installment at the reference rate
+    finalLoan: number           // actual loan (min of income eligibility and LTV ceiling)
+    installment: number         // monthly installment for finalLoan at the reference rate
     minCashDown: number
-    cashCpfDown: number          // balance cash/CPF after loan + min cash
+    cashCpfDown: number         // actual balance: price − finalLoan − minCashDown
     minCashPct: number
-    cashCpfPct: number           // headline cash/CPF downpayment fraction (from the matrix)
+    cashCpfPct: number          // actual balance fraction (cashCpfDown / price) — matches the $ shown
     pledge: PledgeData | null
 }
 
@@ -325,7 +324,6 @@ function computeOption(
     return {
         key: option.key,
         ltvPct: option.ltvPct,
-        actualLtvPct: ctx.price > 0 ? finalLoan / ctx.price : 0,
         ageCap: option.ageCap,
         tenure,
         ltvCeiling,
@@ -335,7 +333,8 @@ function computeOption(
         minCashDown,
         cashCpfDown,
         minCashPct: option.minCashPct,
-        cashCpfPct: option.cashCpfPct,
+        // actual balance fraction so the % label matches the dollar amount shown
+        cashCpfPct: ctx.price > 0 ? cashCpfDown / ctx.price : option.cashCpfPct,
         pledge,
     }
 }

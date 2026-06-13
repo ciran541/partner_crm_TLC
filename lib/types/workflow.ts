@@ -37,6 +37,7 @@ export interface RefiBorrower {
     employment?: 'employed' | 'self_employed'       // only asked when providing income for IWAA
     basic_salary?: number
     annual_variable?: number
+    commitments?: number                            // monthly liabilities (informational for agent)
 }
 
 export interface RefinancingWorkflow {
@@ -52,7 +53,12 @@ export interface RefinancingWorkflow {
     borrowers?: RefiBorrower[]                       // up to 4
     provide_income?: boolean                        // Yes → IWAA for tenure; No → simple average age
     priority_client?: boolean                       // captured agent context
+    priority_banks?: string[]                       // which banks the client has priority status with
+    property_use?: 'own_stay' | 'investment'        // own-stay or investment property
     year_of_purchase?: number
+    current_tenure?: number                         // remaining tenure on the current loan (years)
+    preferred_tenure_1?: number                     // Tenure Planner — comparison slot 1
+    preferred_tenure_2?: number                     // Tenure Planner — comparison slot 2
     rate_preference?: 'fixed' | 'floating' | 'both'
     // Frozen snapshot of the package the agent picked (so a later admin edit to the
     // package can't silently change a client's proposal).
@@ -115,6 +121,8 @@ export interface PurchaseWorkflow {
     selling_existing?: boolean   // client is selling an existing property to buy this one
     sell_at_top?: boolean        // (new launch / EC) intends to sell at TOP
     ec_payment_scheme?: 'pps' | 'dps'   // (EC New Launch) info only — no effect on the math
+    bridging_loan?: boolean             // (when selling existing) does client need a bridging loan?
+    intended_buy_date?: string          // (when OTP not yet obtained) rough intended purchase date
     // Frozen snapshot of the package the agent picked (mirrors the refi pattern so
     // a later admin edit to the package can't silently change a client's proposal).
     selected_package_snapshot?: Record<string, unknown>

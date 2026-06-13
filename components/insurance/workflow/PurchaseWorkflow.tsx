@@ -16,7 +16,7 @@ import {
     type OptionResult,
     type OutstandingLoans,
 } from '@/lib/insurance/purchaseCalc'
-import { buildRemarks, nextActions, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
+import { buildRemarks, nextActions, OTP_NOT_OBTAINED_REMARK, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
 import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchaseProposal'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import Modal from '@/components/shared/Modal'
@@ -81,10 +81,10 @@ export default function PurchaseWorkflowPanel({
     }
 
     // ── Borrowers ──
-    const borrowers = data.borrowers ?? [{ employment: 'employed', residency: 'singaporean' }]
-    const setBorrowerCount = (n: 1 | 2) => {
-        if (n === 1) update({ borrowers: [borrowers[0] ?? { employment: 'employed', residency: 'singaporean' }] })
-        else update({ borrowers: [borrowers[0] ?? { employment: 'employed', residency: 'singaporean' }, borrowers[1] ?? { employment: 'employed', residency: 'singaporean' }] })
+    const defaultBorrower: PurchaseBorrower = { employment: 'employed', residency: 'singaporean' }
+    const borrowers = data.borrowers ?? [defaultBorrower]
+    const setBorrowerCount = (n: 1 | 2 | 3 | 4) => {
+        update({ borrowers: Array.from({ length: n }, (_, i) => borrowers[i] ?? defaultBorrower) })
     }
     const updateBorrower = (i: number, patch: Partial<PurchaseBorrower>) => {
         const next = borrowers.map((b, idx) => idx === i ? { ...b, ...patch } : b)
@@ -192,6 +192,12 @@ export default function PurchaseWorkflowPanel({
                             ))}
                         </div>
                     )}
+                    {data.otp_obtained === false && (
+                        <Question label="Roughly when do you intend to buy?">
+                            <FieldInput type="date" value={data.intended_buy_date ?? ''}
+                                onChange={v => update({ intended_buy_date: v })} />
+                        </Question>
+                    )}
                 </Section>
             )}
 
@@ -237,23 +243,23 @@ export default function PurchaseWorkflowPanel({
                 </Section>
             )}
 
-            {/* Outstanding housing loans */}
+            {/* Number of Mortgage Loans */}
             {data.property_type && (
-                <Section title="Outstanding Housing Loan(s)" icon={<Wallet size={15} />}>
-                    <Question label='Select "0" if your next purchase will be your only housing loan' required>
+                <Section title="Number of Mortgage Loan(s)" icon={<Wallet size={15} />}>
+                    <Question label='Select "1" if the mortgage loan for your next purchase will be the only housing loan' required>
                         <PillSelect
                             value={data.outstanding_housing_loans}
                             onChange={v => update({ outstanding_housing_loans: v as OutstandingLoans })}
                             options={[
-                                { value: '0', label: '0' },
-                                { value: '1', label: '1', disabled: outstandingLocked },
-                                { value: '2plus', label: '2 or more', disabled: outstandingLocked },
+                                { value: '0', label: '1' },
+                                { value: '1', label: '2', disabled: outstandingLocked },
+                                { value: '2plus', label: '3 or more', disabled: outstandingLocked },
                             ]}
                         />
                     </Question>
                     {outstandingLocked && (
                         <p className="text-[11px] text-amber-600 flex items-center gap-1.5">
-                            <AlertTriangle size={12} /> HDB / BTO / EC New Launch can only be a first housing loan.
+                            <AlertTriangle size={12} /> HDB / BTO / EC New Launch can only be a first housing loan — select 1.
                         </p>
                     )}
                 </Section>
@@ -265,6 +271,15 @@ export default function PurchaseWorkflowPanel({
                     <Question label="Are you selling an existing property to fund this purchase?">
                         <YesNo value={data.selling_existing} onChange={v => update({ selling_existing: v })} />
                     </Question>
+                    {data.selling_existing && (
+                        <Question label="Do you require a bridging loan?">
+                            <YesNo value={data.bridging_loan} onChange={v => update({ bridging_loan: v })} />
+                            <p className="text-[11px] text-slate-400 mt-1.5 flex items-start gap-1.5">
+                                <Info size={12} className="mt-0.5 shrink-0" />
+                                A bridging loan is recommended if your sales proceeds cannot make it in time to fund the down-payment on your purchase completion date.
+                            </p>
+                        </Question>
+                    )}
                     {data.property_type === 'new_launch_condo' && (
                         <Question label="Do you intend to sell at TOP?">
                             <YesNo value={data.sell_at_top} onChange={v => update({ sell_at_top: v })} />
@@ -282,24 +297,6 @@ export default function PurchaseWorkflowPanel({
                             />
                         </Question>
                     )}
-                    {meta && !meta.buc ? (
-                        <Question label="Preferred rate type">
-                            <PillSelect
-                                value={data.rate_preference ?? 'either'}
-                                onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'either' })}
-                                options={[
-                                    { value: 'either', label: 'Both' },
-                                    { value: 'fixed', label: 'Fixed' },
-                                    { value: 'floating', label: 'Floating' },
-                                ]}
-                            />
-                        </Question>
-                    ) : meta?.buc ? (
-                        <p className="text-[11px] text-slate-400 flex items-start gap-1.5">
-                            <Info size={12} className="mt-0.5 shrink-0" />
-                            Only floating rates are available until TOP — package suggestions are floating-only.
-                        </p>
-                    ) : null}
                 </Section>
             )}
 
@@ -309,8 +306,13 @@ export default function PurchaseWorkflowPanel({
                     <Question label="Number of borrowers">
                         <PillSelect
                             value={String(borrowers.length)}
-                            onChange={v => setBorrowerCount(Number(v) as 1 | 2)}
-                            options={[{ value: '1', label: 'Single' }, { value: '2', label: 'Joint (2)' }]}
+                            onChange={v => setBorrowerCount(Number(v) as 1 | 2 | 3 | 4)}
+                            options={[
+                                { value: '1', label: 'Solo' },
+                                { value: '2', label: 'Joint (2)' },
+                                { value: '3', label: 'Joint (3)' },
+                                { value: '4', label: 'Joint (4)' },
+                            ]}
                         />
                     </Question>
                     {borrowers.map((b, i) => (
@@ -318,6 +320,16 @@ export default function PurchaseWorkflowPanel({
                             <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
                                 {borrowers.length === 1 ? 'Borrower' : `Borrower ${i + 1}`}
                             </p>
+                            <Question label="Residency">
+                                <PillSelect
+                                    value={b.residency ?? 'singaporean'}
+                                    onChange={v => updateBorrower(i, { residency: v as PurchaseBorrower['residency'] })}
+                                    options={RESIDENCY_OPTIONS.map(r => ({
+                                        value: r.value, label: r.label,
+                                        disabled: r.value === 'foreigner' && foreignerBlocked,
+                                    }))}
+                                />
+                            </Question>
                             <Question label="Employment">
                                 <PillSelect
                                     value={b.employment ?? 'employed'}
@@ -345,16 +357,6 @@ export default function PurchaseWorkflowPanel({
                                         onChange={v => updateBorrower(i, { commitments: num(v) })} />
                                 </Question>
                             </div>
-                            <Question label="Residency">
-                                <PillSelect
-                                    value={b.residency ?? 'singaporean'}
-                                    onChange={v => updateBorrower(i, { residency: v as PurchaseBorrower['residency'] })}
-                                    options={RESIDENCY_OPTIONS.map(r => ({
-                                        value: r.value, label: r.label,
-                                        disabled: r.value === 'foreigner' && foreignerBlocked,
-                                    }))}
-                                />
-                            </Question>
                         </div>
                     ))}
                 </Section>
@@ -365,7 +367,7 @@ export default function PurchaseWorkflowPanel({
                 <>
                     <div className={`grid gap-4 ${computation.options.length > 1 ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
                         {computation.options.map(opt => (
-                            <OptionCard key={opt.key} opt={opt} ipa={!!data.ipa_done} />
+                            <OptionCard key={opt.key} opt={opt} ipa={!!data.ipa_done} price={data.property_price ?? 0} />
                         ))}
                     </div>
 
@@ -392,8 +394,45 @@ export default function PurchaseWorkflowPanel({
                         </div>
                     </Section>
 
+                    {/* Total Liquidity Required */}
+                    <LiquidityCard
+                        options={computation.options}
+                        miscFees={computation.bsd + computation.absd + computation.legalFee + computation.valuationFee}
+                        price={data.property_price ?? 0}
+                    />
+
                     {/* Remarks */}
                     <RemarksCard remarks={remarks} />
+
+                    {/* OTP not obtained — shown just above the rate packages */}
+                    {data.otp_obtained === false && (
+                        <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                            <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                            <p className="text-[13px] text-amber-800 leading-relaxed">{OTP_NOT_OBTAINED_REMARK}</p>
+                        </div>
+                    )}
+
+                    {/* Rate preference — just above the package list */}
+                    <Section title="Rate Preference" icon={<Info size={15} />}>
+                        {meta && !meta.buc ? (
+                            <Question label="Do you prefer fixed or floating rates?">
+                                <PillSelect
+                                    value={data.rate_preference ?? 'either'}
+                                    onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'either' })}
+                                    options={[
+                                        { value: 'either', label: 'Both' },
+                                        { value: 'fixed', label: 'Fixed' },
+                                        { value: 'floating', label: 'Floating' },
+                                    ]}
+                                />
+                            </Question>
+                        ) : (
+                            <p className="text-[12px] text-slate-500 flex items-start gap-1.5">
+                                <Info size={13} className="mt-0.5 shrink-0 text-[#03a9e7]" />
+                                Only floating rates are available until TOP — package suggestions are floating-only.
+                            </p>
+                        )}
+                    </Section>
 
                     {/* Packages */}
                     {computation.options[0]?.finalLoan > 0 && (
@@ -537,20 +576,87 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
     )
 }
 
-function OptionCard({ opt, ipa }: { opt: OptionResult; ipa: boolean }) {
+function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; miscFees: number; price: number }) {
+    if (!options.length || price <= 0) return null
+    return (
+        <Section title="Total Liquidity Required" icon={<Wallet size={15} />}>
+            <p className="text-[11px] text-slate-400 -mt-1">
+                Misc fees (BSD + ABSD + legal + valuation) = {money(miscFees)}
+            </p>
+            <div className={`grid gap-4 ${options.length > 1 ? 'md:grid-cols-2' : ''}`}>
+                {options.map(opt => {
+                    const matrixCashCpfPct = 1 - opt.ltvPct - opt.minCashPct
+                    const matrixCashCpfDown = price * matrixCashCpfPct
+                    const s1Total = opt.minCashDown + opt.cashCpfDown + miscFees
+                    const s2Total = opt.pledge ? opt.pledge.pledgeFund + opt.minCashDown + matrixCashCpfDown + miscFees : null
+                    const s3Total = opt.pledge ? opt.pledge.showFund + opt.minCashDown + matrixCashCpfDown + miscFees : null
+                    return (
+                        <div key={opt.key} className={`rounded-lg border p-4 space-y-3 ${opt.key === '1' ? 'border-sky-200 bg-sky-50/30' : 'border-slate-200 bg-slate-50/50'}`}>
+                            <p className="text-xs font-bold text-[#052d4a]">Option {opt.key} — {pct(opt.ltvPct)} LTV</p>
+
+                            <div className="space-y-1.5">
+                                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">S1 — Without pledging / showing</p>
+                                <Row label={<>Min Cash <span className="text-[#03a9e7]">({pct(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
+                                <Row label={<>Balance Cash / CPF <span className="text-[#03a9e7]">({pct(opt.cashCpfPct)})</span></>} value={money(opt.cashCpfDown)} />
+                                <Row label="Misc Fees" value={money(miscFees)} muted />
+                                <div className="border-t border-dashed border-slate-200 pt-1.5">
+                                    <Row label="Total Required" value={money(s1Total)} strong />
+                                </div>
+                            </div>
+
+                            {opt.pledge && s2Total !== null && s3Total !== null && (
+                                <>
+                                    <div className="border-t border-slate-200 pt-3 space-y-1.5">
+                                        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">S2 — With pledging</p>
+                                        <Row label="Pledged Funds (locked 4 yrs)" value={money(opt.pledge.pledgeFund)} />
+                                        <Row label={<>Min Cash <span className="text-[#03a9e7]">({pct(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
+                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({pct(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
+                                        <Row label="Misc Fees" value={money(miscFees)} muted />
+                                        <div className="border-t border-dashed border-slate-200 pt-1.5">
+                                            <Row label="Total Required" value={money(s2Total)} strong />
+                                        </div>
+                                    </div>
+
+                                    <div className="border-t border-slate-200 pt-3 space-y-1.5">
+                                        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">S3 — With show funds</p>
+                                        <Row label="Show Funds (unlocked)" value={money(opt.pledge.showFund)} />
+                                        <Row label={<>Min Cash <span className="text-[#03a9e7]">({pct(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
+                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({pct(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
+                                        <Row label="Misc Fees" value={money(miscFees)} muted />
+                                        <div className="border-t border-dashed border-slate-200 pt-1.5">
+                                            <Row label="Total Required" value={money(s3Total)} strong />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )
+                })}
+            </div>
+        </Section>
+    )
+}
+
+function OptionCard({ opt, ipa, price }: { opt: OptionResult; ipa: boolean; price: number }) {
     const isOpt1 = opt.key === '1'
+    // Use the actual LTV% of the real loan so all three rows add to 100%
+    const actualLtvPct = price > 0 ? opt.finalLoan / price : opt.ltvPct
     return (
         <div className={`rounded-xl border-2 overflow-hidden ${isOpt1 ? 'border-[#03a9e7]/40' : 'border-slate-200'}`}>
             <div className={`px-4 py-3 ${isOpt1 ? 'bg-sky-50' : 'bg-slate-50'}`}>
                 <p className="text-sm font-bold text-[#052d4a]">
                     Option {opt.key} — {pct(opt.ltvPct)} LTV
+                    {opt.ltvCeiling > 0 && (
+                        <span className="ml-2 text-[#03a9e7]">· max {money(opt.ltvCeiling)}</span>
+                    )}
                 </p>
                 <p className="text-[11px] text-slate-500">
                     Tenure up to age {opt.ageCap} · max {opt.tenure} yrs at this rate
                 </p>
             </div>
             <div className="p-4 space-y-2.5">
-                <Row label={<>Maximum Bank Loan <span className="text-[#03a9e7] font-semibold">(LTV {pct(opt.actualLtvPct)})</span></>} value={money(opt.finalLoan)} strong />
+                {price > 0 && <Row label="Property Price" value={money(price)} />}
+                <Row label={<>Maximum Bank Loan <span className="text-[#03a9e7] font-semibold">({pct(actualLtvPct)} LTV)</span></>} value={money(opt.finalLoan)} strong />
                 <Row label="Loan Tenure" value={`${opt.tenure} years`} />
                 <Row label="Monthly Installment" value={money(opt.installment)} />
                 {!ipa && opt.incomeEligibility != null && (

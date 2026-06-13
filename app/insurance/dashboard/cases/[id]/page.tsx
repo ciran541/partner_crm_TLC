@@ -8,18 +8,18 @@ import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow,
 import RefinancingWorkflowPanel from '@/components/insurance/workflow/RefinancingWorkflow'
 import PurchaseWorkflowPanel from '@/components/insurance/workflow/PurchaseWorkflow'
 import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
+import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
-import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
-    ArrowLeft, Save, Edit2, X, User, Home,
-    Briefcase, CheckCircle2, AlertTriangle, FileText, CalendarClock
+    Save, Edit2, X, User, Home,
+    Briefcase, CheckCircle2, AlertTriangle, CalendarClock
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
 import { refreshCases } from '@/lib/insurance/useCases'
 
-type TabKey = 'overview' | 'workflow' | 'closure'
+type TabKey = 'overview' | 'workflow'
 
 const PIPELINE_STAGES: PipelineStage[] = [
     'Touched Base',
@@ -51,7 +51,7 @@ export default function CaseDetailPage() {
     const searchParams = useSearchParams()
     const initialTab = ((): TabKey => {
         const tab = searchParams.get('tab')
-        return tab === 'workflow' || tab === 'closure' ? (tab as TabKey) : 'overview'
+        return tab === 'workflow' ? 'workflow' : 'overview'
     })()
 
     const [caseData, setCaseData] = useState<Case | null>(null)
@@ -268,7 +268,6 @@ export default function CaseDetailPage() {
     )
     if (!caseData) return null
 
-    const isRefiOrEquity = caseData.case_type === 'Refinancing' || caseData.case_type === 'Equity Loan'
     const isClosedWon = caseData.stage === 'Closed Won'
     const isClosedLost = caseData.stage === 'Closed Lost'
     const isClosed = isClosedWon || isClosedLost
@@ -276,19 +275,12 @@ export default function CaseDetailPage() {
     const tabs: { key: TabKey; label: string; icon: React.ElementType }[] = [
         { key: 'overview', label: 'Overview', icon: User },
         { key: 'workflow', label: 'Workflow', icon: Briefcase },
-        { key: 'closure', label: 'Closure', icon: CheckCircle2 },
     ]
 
     return (
         <div className="max-w-4xl mx-auto space-y-5">
             {/* Back + Header */}
             <div>
-                <button
-                    onClick={() => router.push('/insurance/dashboard/cases')}
-                    className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 font-medium mb-3 transition-colors"
-                >
-                    <ArrowLeft size={15} /> Back to Pipeline
-                </button>
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
                         <div className="flex items-center gap-3 flex-wrap">
@@ -414,55 +406,12 @@ export default function CaseDetailPage() {
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
                     ) : (
-                    <>
-                    {/* Loan & Property */}
-                    <SectionCard title="Loan & Property" icon={Home}>
-                        <GridField label="Property Type" isEditing={isEditing}>
-                            <input type="text" value={caseData.property_type || ''} onChange={e => handleFieldChange('property_type', e.target.value)} placeholder="e.g. HDB 4-Room" className="input-std" />
-                            {caseData.property_type || <span className="text-slate-400">—</span>}
-                        </GridField>
-                        <GridField label="Property Price" isEditing={isEditing}>
-                            <PrefixInput prefix="$" value={caseData.property_price?.toString() || ''} onChange={v => handleFieldChange('property_price', v ? parseFloat(v) : null)} type="number" />
-                            {caseData.property_price ? `$${caseData.property_price.toLocaleString()}` : <span className="text-slate-400">—</span>}
-                        </GridField>
-
-                        {isRefiOrEquity ? (
-                            <>
-                                <GridField label="Existing Loan Amount" isEditing={isEditing}>
-                                    <PrefixInput prefix="$" value={caseData.existing_loan_amount?.toString() || ''} onChange={v => handleFieldChange('existing_loan_amount', v ? parseFloat(v) : null)} type="number" />
-                                    {caseData.existing_loan_amount ? `$${caseData.existing_loan_amount.toLocaleString()}` : <span className="text-slate-400">—</span>}
-                                </GridField>
-                                <GridField label="Current Bank" isEditing={isEditing}>
-                                    <InsuranceBankDropdown value={caseData.current_bank || ''} onChange={v => handleFieldChange('current_bank', v)} />
-                                    {caseData.current_bank || <span className="text-slate-400">—</span>}
-                                </GridField>
-                                <GridField label="Lock-in End Date" isEditing={isEditing}>
-                                    <input type="date" value={caseData.lock_in_end_date || ''} onChange={e => handleFieldChange('lock_in_end_date', e.target.value)} className="input-std" />
-                                    {caseData.lock_in_end_date ? new Date(caseData.lock_in_end_date).toLocaleDateString() : <span className="text-slate-400">—</span>}
-                                </GridField>
-                            </>
-                        ) : (
-                            <GridField label="Loan Amount" isEditing={isEditing}>
-                                <PrefixInput prefix="$" value={caseData.loan_size?.toString() || ''} onChange={v => handleFieldChange('loan_size', v ? parseFloat(v) : null)} type="number" />
-                                {caseData.loan_size ? `$${caseData.loan_size.toLocaleString()}` : <span className="text-slate-400">—</span>}
-                            </GridField>
-                        )}
-                    </SectionCard>
-
-                    {/* Workflow shortcut */}
-                    <div className="card p-5 flex items-center justify-between gap-4">
-                        <div>
-                            <p className="font-semibold text-slate-800 text-sm">Guided Workflow</p>
-                            <p className="text-xs text-slate-500 mt-0.5">Step-by-step fact finding, risk checks, suitability &amp; documents</p>
-                        </div>
-                        <button
-                            onClick={() => setActiveTab('workflow')}
-                            className="btn-primary text-sm px-4 py-2 flex items-center gap-2 shrink-0"
-                        >
-                            <Briefcase size={15} /> Open Workflow
-                        </button>
-                    </div>
-                    </>
+                        <RefiOverview
+                            workflow={workflowData as RefinancingWorkflowData}
+                            stage={caseData.stage}
+                            followUpDate={caseData.follow_up_date}
+                            onOpenWorkflow={() => setActiveTab('workflow')}
+                        />
                     )}
 
                     {/* Client + follow-up — internal CRM fields, grouped at the bottom.
@@ -503,6 +452,14 @@ export default function CaseDetailPage() {
                         onStageAdvance={handleStageChange}
                         onSetFollowUp={handleSetFollowUp}
                         followUpDate={caseData.follow_up_date}
+                        hasClientName={!!caseData.client_name?.trim()}
+                        onContinue={() => {
+                            if (!caseData.client_name?.trim()) {
+                                wantScrollToClientRef.current = true
+                                setIsEditing(true)
+                            }
+                            setActiveTab('overview')
+                        }}
                     />
                 ) : caseData.case_type === 'Purchase' ? (
                     <PurchaseWorkflowPanel
@@ -530,17 +487,6 @@ export default function CaseDetailPage() {
                         <p className="text-sm text-slate-500">The guided workflow for <strong>{caseData.case_type}</strong> cases is under development.</p>
                     </div>
                 )
-            )}
-
-            {/* Tab: Closure */}
-            {activeTab === 'closure' && (
-                <ClosureTab
-                    caseData={caseData}
-                    isEditing={isEditing}
-                    onFieldChange={handleFieldChange}
-                    onSave={handleUpdate}
-                    saving={saving}
-                />
             )}
 
             {/* Closed Won Modal */}
@@ -589,128 +535,6 @@ export default function CaseDetailPage() {
                     letter-spacing: 0.06em;
                 }
             `}</style>
-        </div>
-    )
-}
-
-// ─── Closure Tab ──────────────────────────────────────────────────────────────
-
-function ClosureTab({ caseData, isEditing, onFieldChange, onSave, saving }: {
-    caseData: Case
-    isEditing: boolean
-    onFieldChange: (f: keyof Case, v: any) => void
-    onSave: (u: Partial<Case>) => void
-    saving: boolean
-}) {
-    const isClosedWon = caseData.stage === 'Closed Won'
-    const isClosedLost = caseData.stage === 'Closed Lost'
-
-    if (!isClosedWon && !isClosedLost) {
-        return (
-            <div className="card p-8 text-center space-y-2">
-                <FileText size={28} className="mx-auto text-slate-300" />
-                <p className="font-semibold text-slate-600">No closure details yet</p>
-                <p className="text-sm text-slate-400">This section fills in when the case is closed.</p>
-            </div>
-        )
-    }
-
-    if (isClosedLost) {
-        return (
-            <div className="card p-6 border border-red-100 bg-red-50/30 space-y-4">
-                <div className="flex items-center gap-3 text-red-700">
-                    <X size={20} />
-                    <h3 className="font-bold text-base">Closed Lost</h3>
-                </div>
-                <div className="grid grid-cols-1 gap-4">
-                    <div>
-                        <p className="label-xs">Loss Reason</p>
-                        <p className="text-sm font-medium text-slate-800">{caseData.closed_lost_reason || '—'}</p>
-                    </div>
-                    {caseData.closed_lost_notes && (
-                        <div>
-                            <p className="label-xs">Notes</p>
-                            <p className="text-sm text-slate-700 whitespace-pre-line">{caseData.closed_lost_notes}</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-        )
-    }
-
-    // Closed Won
-    return (
-        <div className="card p-6 border border-emerald-200 bg-emerald-50/20 space-y-5">
-            <div className="flex items-center gap-3 text-emerald-700">
-                <CheckCircle2 size={20} />
-                <h3 className="font-bold text-base">Closed Won Details</h3>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div className="sm:col-span-2">
-                    <label className="label-xs">Package Details</label>
-                    {isEditing ? (
-                        <input type="text" value={caseData.closed_package_details || ''} onChange={e => onFieldChange('closed_package_details', e.target.value)} placeholder="e.g. 2-Year Fixed @ 3.5%" className="input-std" />
-                    ) : (
-                        <p className="text-sm font-medium text-slate-800">{caseData.closed_package_details || '—'}</p>
-                    )}
-                </div>
-                <div>
-                    <label className="label-xs">Interest Rate (%)</label>
-                    {isEditing ? (
-                        <input type="number" step="0.01" value={caseData.closed_interest_rate || ''} onChange={e => onFieldChange('closed_interest_rate', e.target.value ? parseFloat(e.target.value) : null)} className="input-std" />
-                    ) : (
-                        <p className="text-sm font-medium text-slate-800">{caseData.closed_interest_rate ? `${caseData.closed_interest_rate}%` : '—'}</p>
-                    )}
-                </div>
-                <div>
-                    <label className="label-xs">Tenure (Years)</label>
-                    {isEditing ? (
-                        <input type="number" value={caseData.closed_tenure || ''} onChange={e => onFieldChange('closed_tenure', e.target.value ? parseInt(e.target.value) : null)} className="input-std" />
-                    ) : (
-                        <p className="text-sm font-medium text-slate-800">{caseData.closed_tenure ? `${caseData.closed_tenure} years` : '—'}</p>
-                    )}
-                </div>
-                <div>
-                    <label className="label-xs">Subsidy Provided</label>
-                    {isEditing ? (
-                        <input type="text" value={caseData.subsidy_provided || ''} onChange={e => onFieldChange('subsidy_provided', e.target.value)} placeholder="e.g. $2,000" className="input-std" />
-                    ) : (
-                        <p className="text-sm font-medium text-slate-800">{caseData.subsidy_provided || '—'}</p>
-                    )}
-                </div>
-                <div>
-                    <label className="label-xs">Clawback End Date</label>
-                    {isEditing ? (
-                        <input type="date" value={caseData.clawback_end_date || ''} onChange={e => onFieldChange('clawback_end_date', e.target.value)} className="input-std" />
-                    ) : (
-                        <p className="text-sm font-medium text-slate-800">{caseData.clawback_end_date ? new Date(caseData.clawback_end_date).toLocaleDateString() : '—'}</p>
-                    )}
-                </div>
-                <div className="sm:col-span-2">
-                    <label className="label-xs">Remarks</label>
-                    {isEditing ? (
-                        <textarea rows={3} value={caseData.remarks || ''} onChange={e => onFieldChange('remarks', e.target.value)} className="input-std font-inherit" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
-                    ) : (
-                        <p className="text-sm text-slate-700 whitespace-pre-line">{caseData.remarks || '—'}</p>
-                    )}
-                </div>
-            </div>
-            {isEditing && (
-                <button
-                    onClick={() => onSave({
-                        closed_package_details: caseData.closed_package_details,
-                        closed_interest_rate: caseData.closed_interest_rate,
-                        closed_tenure: caseData.closed_tenure,
-                        subsidy_provided: caseData.subsidy_provided,
-                        clawback_end_date: caseData.clawback_end_date,
-                        remarks: caseData.remarks,
-                    })}
-                    disabled={saving}
-                    className="btn-primary text-sm px-5 py-2.5 flex items-center gap-2 w-fit"
-                >
-                    {saving ? <Spinner size="sm" color="white" label="Saving…" /> : <><Save size={15} /> Save Closure Details</>}
-                </button>
-            )}
         </div>
     )
 }
@@ -907,15 +731,6 @@ function GridField({ label, children, isEditing, fullWidth }: { label: string; c
                 ? <div>{childArray[0]}</div>
                 : <div className="text-sm font-medium text-slate-800 min-h-[22px]">{childArray[1]}</div>
             }
-        </div>
-    )
-}
-
-function PrefixInput({ prefix, value, onChange, type = 'text' }: { prefix: string; value: string; onChange: (v: string) => void; type?: string }) {
-    return (
-        <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">{prefix}</span>
-            <input type={type} value={value} onChange={e => onChange(e.target.value)} className="input-std pl-7" />
         </div>
     )
 }

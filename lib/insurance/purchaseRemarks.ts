@@ -115,13 +115,12 @@ function propertyTypeRemarks(ctx: RemarkContext): string[] {
     }
 }
 
+/** The OTP-not-obtained notice — shown inline in the UI just above the rate packages. */
+export const OTP_NOT_OBTAINED_REMARK = 'OTP not yet obtained — The earliest you can secure an interest rate package from a bank, is only when OTP has been issued by seller/developer.'
+
 export function buildRemarks(ctx: RemarkContext): PurchaseRemarks {
-    const alerts: string[] = []
-    if (ctx.propertyType && ctx.otpObtained === false) {
-        alerts.push('OTP not yet obtained — a rate cannot be locked in yet. Securing the OTP from the seller/developer is the first step.')
-    }
     return {
-        alerts,
+        alerts: [],
         standard: STANDARD_REMARKS,
         propertyType: propertyTypeRemarks(ctx),
     }

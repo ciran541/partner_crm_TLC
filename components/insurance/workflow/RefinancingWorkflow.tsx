@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode, useMemo, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useState } from 'react'
 import type { RefinancingWorkflow, RefiBorrower } from '@/lib/types/workflow'
 import {
     computeRefi,
@@ -11,6 +11,7 @@ import {
     type RefiPropertyType,
 } from '@/lib/insurance/refiCalc'
 import { buildRefiRemarks, refiNextActions, type RefiRemarks } from '@/lib/insurance/refiRemarks'
+import { monthlyInstallment, effectiveMonthlyIncome, tdsrAvailable, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import type { RefiProposalPackage } from '@/lib/insurance/refiProposal'
 import { buildRefiProposalText } from '@/lib/insurance/refiProposal'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
@@ -37,6 +38,19 @@ interface Props {
     onStageAdvance?: (toStage: string) => void
     onSetFollowUp?: (date: string) => void
     followUpDate?: string
+    hasClientName?: boolean
+    onContinue?: () => void
+}
+
+/** Interest paid during the first `periodYrs` years of a loan at `ratePct`. */
+function interestOverPeriod(loan: number, ratePct: number, tenureYrs: number, periodYrs: number): number {
+    const r = ratePct / 100 / 12
+    const nT = tenureYrs * 12
+    const nP = Math.min(Math.round(periodYrs * 12), nT)
+    if (r === 0 || nT === 0 || nP === 0) return 0
+    const p = loan * r * Math.pow(1 + r, nT) / (Math.pow(1 + r, nT) - 1)
+    const balance = Math.max(loan * Math.pow(1 + r, nP) - p * (Math.pow(1 + r, nP) - 1) / r, 0)
+    return Math.max(p * nP - (loan - balance), 0)
 }
 
 const STAGE_ORDER = ['Touched Base', 'Proposal Given', 'Referred to Bank', 'Pending Approval', 'Pending Signature']
@@ -48,6 +62,7 @@ const num = (v: string) => (v.trim() === '' ? undefined : parseFloat(v.replace(/
 export default function RefinancingWorkflowPanel({
     data, onChange, clientName, embedded, saving, saved,
     currentStage, onStageAdvance, onSetFollowUp, followUpDate,
+    hasClientName, onContinue,
 }: Props) {
     const update = (patch: Partial<RefinancingWorkflow>) => onChange({ ...data, ...patch })
     const [proposalOpen, setProposalOpen] = useState(false)
@@ -137,6 +152,31 @@ export default function RefinancingWorkflowPanel({
     const stageIdx = currentStage ? STAGE_ORDER.indexOf(currentStage) : -1
     const suggestedStage = stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1 ? STAGE_ORDER[stageIdx + 1] : null
 
+    // ── Tenure Comparison — rate source ──
+    const snapshotRate = data.selected_package_snapshot?.avg_rate_lockin_pct as number | undefined
+    const compRate: number | null = snapshotRate ?? data.current_rate ?? null
+    const compRateLabel: string | null = snapshotRate != null
+        ? `${data.selected_package_snapshot?.bank ?? 'selected package'} @ ${snapshotRate.toFixed(2)}% avg lock-in`
+        : data.current_rate != null ? `current rate ${data.current_rate}% p.a.` : null
+    const compLockinYears: number = (((data.selected_package_snapshot?.lockin_years as number | undefined) ?? 2) || 1)
+
+    // ── Tenure Comparison — TDSR inputs ──
+    const grossForTdsr = useMemo(() => {
+        if (!data.provide_income) return null
+        const total = agedBorrowers.reduce((s, { b }) => s + effectiveMonthlyIncome({
+            basicMonthlySalary: b.basic_salary,
+            annualVariableIncome: b.annual_variable,
+            isSelfEmployed: b.employment === 'self_employed',
+        }), 0)
+        return total > 0 ? total : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data.provide_income, data.borrowers])
+
+    const debtsForTdsr = useMemo(() =>
+        agedBorrowers.reduce((s, { b }) => s + (b.commitments ?? 0), 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    , [data.borrowers])
+
     const subsidyValue = data.subsidy_return_amount
     const t = computation.tenure
 
@@ -169,6 +209,16 @@ export default function RefinancingWorkflowPanel({
                         value={data.property_type}
                         onChange={v => setPropertyType(v as RefiPropertyType)}
                         options={REFI_PROPERTY_TYPES.map(p => ({ value: p.value, label: p.label }))}
+                    />
+                </Question>
+                <Question label="Is this property used for Own-Stay or Investment?">
+                    <PillSelect
+                        value={data.property_use}
+                        onChange={v => update({ property_use: v as 'own_stay' | 'investment' })}
+                        options={[
+                            { value: 'own_stay', label: 'Own-Stay' },
+                            { value: 'investment', label: 'Investment' },
+                        ]}
                     />
                 </Question>
                 <Question label="Rough market price of your property today">
@@ -263,12 +313,16 @@ export default function RefinancingWorkflowPanel({
                             ))}
                         </div>
                         {computation.averageAge != null && (
-                            <p className="text-[12px] text-slate-500 mt-2">
-                                Average age: <span className="font-semibold text-[#052d4a]">{Math.ceil(computation.averageAge)}</span>
+                            <div className="mt-2 space-y-0.5">
+                                <p className="text-[12px] text-slate-500">
+                                    Average age: <span className="font-semibold text-[#052d4a]">{Math.ceil(computation.averageAge)}</span>
+                                </p>
                                 {computation.usingIwaa && computation.iwaa != null && (
-                                    <> · Income-weighted: <span className="font-semibold text-[#03a9e7]">{Math.ceil(computation.iwaa)}</span> (used for tenure)</>
+                                    <p className="text-[12px] text-slate-500">
+                                        Income-Weighted Average Age (IWAA): <span className="font-semibold text-[#03a9e7]">{Math.ceil(computation.iwaa)}</span> <span className="text-slate-400">(used for tenure)</span>
+                                    </p>
                                 )}
-                            </p>
+                            </div>
                         )}
                     </Question>
 
@@ -304,6 +358,10 @@ export default function RefinancingWorkflowPanel({
                                                 <FieldInput commas prefix="$" value={b.annual_variable ?? ''}
                                                     onChange={v => updateBorrower(i, { annual_variable: num(v) })} />
                                             </Question>
+                                            <Question label="Monthly Liabilities">
+                                                <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="e.g. 500"
+                                                    onChange={v => updateBorrower(i, { commitments: num(v) })} />
+                                            </Question>
                                         </div>
                                     </div>
                                 ))}
@@ -314,29 +372,71 @@ export default function RefinancingWorkflowPanel({
                     )}
 
                     <Question label="Is any borrower a priority client with any bank?">
-                        <YesNo value={data.priority_client} onChange={v => update({ priority_client: v })} />
+                        <YesNo value={data.priority_client} onChange={v => update({ priority_client: v, priority_banks: v ? data.priority_banks : [] })} />
+                    </Question>
+                    {data.priority_client && (
+                        <Question label="Which bank(s)? (select all that apply)">
+                            <MultiBankSelect
+                                value={data.priority_banks ?? []}
+                                onChange={v => update({ priority_banks: v })}
+                            />
+                        </Question>
+                    )}
+                </Section>
+            )}
+
+            {/* ── Rate preference ── */}
+            {data.property_type && (
+                <Section title="Rate Preference" icon={<Percent size={15} />}>
+                    <Question label="Any preference for fixed or floating rates?">
+                        <PillSelect
+                            value={data.rate_preference ?? 'both'}
+                            onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'both' })}
+                            options={[
+                                { value: 'both', label: 'Both' },
+                                { value: 'fixed', label: 'Fixed' },
+                                { value: 'floating', label: 'Floating' },
+                            ]}
+                        />
                     </Question>
                 </Section>
             )}
 
-            {/* ── Year of purchase + rate preference ── */}
+            {/* ── Packages (shown right after rate preference) ── */}
+            {computation.totalOutstanding > 0 && data.property_type && (
+                <RefiPackages
+                    loan={computation.totalOutstanding}
+                    tenureYears={t?.max ?? meta?.tenureCap ?? 30}
+                    propertyType={ratesPropertyType(data.property_type)}
+                    includeBuc={!!meta?.buc}
+                    currentRatePct={data.current_rate}
+                    clawbackAmount={computation.subsidyClawback}
+                    preference={data.rate_preference ?? 'both'}
+                    selectedId={selectedPkgId}
+                    onSelect={onSelectPackage}
+                />
+            )}
+
+            {/* ── Year of purchase + current tenure ── */}
             {data.property_type && (
-                <Section title="Tenure & Rate Preference" icon={<Percent size={15} />}>
+                <Section title="Tenure" icon={<CalendarRange size={15} />}>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <Question label="Year of purchase" required>
                             <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2018"
                                 onChange={v => update({ year_of_purchase: num(v) })} />
                         </Question>
-                        <Question label="Any preference for fixed or floating rates?">
-                            <PillSelect
-                                value={data.rate_preference ?? 'both'}
-                                onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'both' })}
-                                options={[
-                                    { value: 'both', label: 'Both' },
-                                    { value: 'fixed', label: 'Fixed' },
-                                    { value: 'floating', label: 'Floating' },
-                                ]}
-                            />
+                        <Question label="Current Tenure (remaining years on existing loan)">
+                            <FieldInput type="number" value={data.current_tenure ?? ''} placeholder="e.g. 20"
+                                onChange={v => update({ current_tenure: num(v) })} />
+                            {data.current_tenure != null && data.current_tenure < 5 && (
+                                <p className="text-[11px] text-red-500 mt-1">Cannot be less than 5 years</p>
+                            )}
+                            {data.current_tenure != null && data.current_tenure > (meta?.tenureCap ?? 35) && (
+                                <p className="text-[11px] text-red-500 mt-1">Cannot be more than {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private property'}</p>
+                            )}
+                            {!(data.current_tenure != null && (data.current_tenure < 5 || data.current_tenure > (meta?.tenureCap ?? 35))) && (
+                                <p className="text-[11px] text-slate-400 mt-1">5 – {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private'}</p>
+                            )}
                         </Question>
                     </div>
                 </Section>
@@ -350,11 +450,32 @@ export default function RefinancingWorkflowPanel({
                 </div>
             ) : computation.ready && t ? (
                 <>
+                    {/* Tenure comparison — above tenure range */}
+                    {computation.totalOutstanding > 0 && (() => {
+                        const defaultT = data.current_tenure ?? t.max
+                        const prefT1 = data.preferred_tenure_1 ?? defaultT
+                        const prefT2 = data.preferred_tenure_2 ?? defaultT
+                        return (
+                            <TenureComparison
+                                loan={computation.totalOutstanding}
+                                ratePct={compRate}
+                                rateLabel={compRateLabel}
+                                lockinYears={compLockinYears}
+                                tenure1={prefT1}
+                                tenure2={prefT2}
+                                onT1Change={v => update({ preferred_tenure_1: v || undefined })}
+                                onT2Change={v => update({ preferred_tenure_2: v || undefined })}
+                                grossIncome={grossForTdsr}
+                                existingDebts={debtsForTdsr}
+                            />
+                        )
+                    })()}
+
                     {/* Tenure range */}
                     <div className="rounded-xl border-2 border-[#03a9e7]/40 overflow-hidden">
                         <div className="bg-sky-50 px-4 py-3 flex items-center gap-2">
                             <CalendarRange size={16} className="text-[#03a9e7]" />
-                            <p className="text-sm font-bold text-[#052d4a]">Tenure Range for Refinancing</p>
+                            <p className="text-sm font-bold text-[#052d4a]">Estimated Tenure Range for Refinancing</p>
                         </div>
                         <div className="p-4 flex flex-wrap items-end gap-x-8 gap-y-2">
                             <div>
@@ -389,21 +510,6 @@ export default function RefinancingWorkflowPanel({
                     {/* Remarks */}
                     <RemarksCard remarks={remarks} />
 
-                    {/* Packages */}
-                    {computation.totalOutstanding > 0 && (
-                        <RefiPackages
-                            loan={computation.totalOutstanding}
-                            tenureYears={t.max}
-                            propertyType={ratesPropertyType(data.property_type)}
-                            includeBuc={!!meta?.buc}
-                            currentRatePct={data.current_rate}
-                            clawbackAmount={computation.subsidyClawback}
-                            preference={data.rate_preference ?? 'both'}
-                            selectedId={selectedPkgId}
-                            onSelect={onSelectPackage}
-                        />
-                    )}
-
                     {/* Next step */}
                     <NextStepCard
                         embedded={!!embedded}
@@ -422,6 +528,21 @@ export default function RefinancingWorkflowPanel({
             ) : (
                 <div className="card p-8 text-center text-sm text-slate-400">
                     Enter the property type, outstanding loan, borrower age(s) and year of purchase to see the tenure range and packages.
+                </div>
+            )}
+
+            {/* Hand-off — leaves the advisory workflow and goes to the internal
+                tab to capture the client's details, set the stage, or close. */}
+            {embedded && onContinue && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-[#03a9e7]/25 bg-sky-50/40 p-4">
+                    <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                        <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+                        Saved automatically.{hasClientName ? '' : ' Add the client’s details to finish.'}
+                    </p>
+                    <button type="button" onClick={onContinue}
+                        className="btn-primary text-sm px-5 py-2.5 flex items-center gap-2">
+                        {hasClientName ? 'Save & continue' : 'Add client details & save'} <ArrowRight size={16} />
+                    </button>
                 </div>
             )}
 
@@ -620,6 +741,167 @@ function NextStepCard({
                     {followUpDate && <span className="text-[11px] text-emerald-600 pb-2.5">Saved · {followUpDate}</span>}
                 </div>
             )}
+        </div>
+    )
+}
+
+// ─── Tenure Comparison ────────────────────────────────────────────────────────
+
+interface TenureComparisonProps {
+    loan: number
+    ratePct: number | null
+    rateLabel: string | null
+    lockinYears: number
+    tenure1: number
+    tenure2: number
+    onT1Change: (v: number) => void
+    onT2Change: (v: number) => void
+    grossIncome: number | null
+    existingDebts: number
+}
+
+function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenure1, tenure2, onT1Change, onT2Change, grossIncome, existingDebts }: TenureComparisonProps) {
+    const canPrice = ratePct != null && loan > 0 && tenure1 > 0 && tenure2 > 0
+
+    const m1 = canPrice ? monthlyInstallment(loan, ratePct!, tenure1) : null
+    const m2 = canPrice ? monthlyInstallment(loan, ratePct!, tenure2) : null
+    const i1 = canPrice ? interestOverPeriod(loan, ratePct!, tenure1, lockinYears) : null
+    const i2 = canPrice ? interestOverPeriod(loan, ratePct!, tenure2, lockinYears) : null
+
+    const tdsrAvail = grossIncome != null ? tdsrAvailable(grossIncome, existingDebts) : null
+    const tdsr1 = tdsrAvail != null && tenure1 > 0 ? maxLoanFromPayment(tdsrAvail, STRESS_TEST_RATE * 100, tenure1) : null
+    const tdsr2 = tdsrAvail != null && tenure2 > 0 ? maxLoanFromPayment(tdsrAvail, STRESS_TEST_RATE * 100, tenure2) : null
+
+    const better = (a: number | null, b: number | null, lowerIsBetter: boolean): 'a' | 'b' | null => {
+        if (a == null || b == null || a === b) return null
+        return lowerIsBetter ? (a < b ? 'a' : 'b') : (a > b ? 'a' : 'b')
+    }
+
+    const mBetter = better(m1, m2, true)
+    const iBetter = better(i1, i2, true)
+    const tBetter = better(tdsr1, tdsr2, false)
+
+    const cell = (val: number | null, side: 'a' | 'b', winner: 'a' | 'b' | null) => (
+        <td className={`px-4 py-2.5 text-right font-semibold tabular-nums ${winner === side ? 'text-emerald-700' : 'text-[#052d4a]'}`}>
+            {val != null ? money(val) : '—'}
+        </td>
+    )
+
+    return (
+        <Section title="Tenure Comparison" icon={<CalendarRange size={15} />}>
+            {/* Two tenure pickers */}
+            <div className="grid grid-cols-2 gap-4">
+                <Question label="Preferred Tenure 1">
+                    <FieldInput type="number" suffix="yrs" value={tenure1 || ''} placeholder="e.g. 20"
+                        onChange={v => onT1Change(parseFloat(v) || 0)} />
+                </Question>
+                <Question label="Preferred Tenure 2">
+                    <FieldInput type="number" suffix="yrs" value={tenure2 || ''} placeholder="e.g. 25"
+                        onChange={v => onT2Change(parseFloat(v) || 0)} />
+                </Question>
+            </div>
+            <p className="text-[11px] text-slate-400 -mt-1">Both default to current tenure. Adjust to compare two scenarios.</p>
+
+            {/* Rate source */}
+            {rateLabel
+                ? <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Info size={12} className="text-[#03a9e7]" /> Rate used: {rateLabel}</p>
+                : <p className="text-[11px] text-amber-600 flex items-center gap-1.5"><AlertTriangle size={12} /> Enter current interest rate or select a package to price the comparison.</p>
+            }
+
+            {/* Installment + interest table */}
+            {canPrice && (
+                <div className="rounded-lg border border-slate-200 overflow-hidden">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200">
+                                <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide w-1/2"></th>
+                                <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure1} yrs</th>
+                                <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure2} yrs</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr className="border-b border-slate-100">
+                                <td className="px-4 py-2.5 text-slate-600">Monthly Installment</td>
+                                {cell(m1, 'a', mBetter)}
+                                {cell(m2, 'b', mBetter)}
+                            </tr>
+                            <tr>
+                                <td className="px-4 py-2.5 text-slate-600">
+                                    Total Interest
+                                    <span className="block text-[11px] text-slate-400">over {lockinYears}-yr lock-in period</span>
+                                </td>
+                                {cell(i1, 'a', iBetter)}
+                                {cell(i2, 'b', iBetter)}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* TDSR eligibility table */}
+            {grossIncome != null && grossIncome > 0 ? (
+                <div>
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">TDSR Loan Eligibility</p>
+                    <div className="rounded-lg border border-slate-200 overflow-hidden">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-slate-50 border-b border-slate-200">
+                                    <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide w-1/2"></th>
+                                    <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure1} yrs</th>
+                                    <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure2} yrs</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td className="px-4 py-2.5 text-slate-600">Max Eligible Loan (TDSR 55%)</td>
+                                    {cell(tdsr1, 'a', tBetter)}
+                                    {cell(tdsr2, 'b', tBetter)}
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1.5">Stress-tested at {(STRESS_TEST_RATE * 100).toFixed(1)}% p.a.</p>
+                </div>
+            ) : (
+                <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <Info size={12} /> Provide income details above to see TDSR loan eligibility.
+                </p>
+            )}
+        </Section>
+    )
+}
+
+let bankCache: { id: string; name: string }[] | null = null
+
+function MultiBankSelect({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+    const [banks, setBanks] = useState<{ id: string; name: string }[]>(bankCache ?? [])
+    useEffect(() => {
+        if (bankCache) { setBanks(bankCache); return }
+        fetch('/api/insurance/banks')
+            .then(r => r.json())
+            .then(json => { bankCache = json.data ?? []; setBanks(bankCache!) })
+            .catch(() => {})
+    }, [])
+
+    const toggle = (name: string) => {
+        const set = new Set(value)
+        if (set.has(name)) set.delete(name); else set.add(name)
+        onChange([...set])
+    }
+
+    if (!banks.length) return <p className="text-[12px] text-slate-400">Loading banks…</p>
+    return (
+        <div className="flex flex-wrap gap-2">
+            {banks.map(b => (
+                <button key={b.id} type="button" onClick={() => toggle(b.name)}
+                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
+                        value.includes(b.name)
+                            ? 'bg-[#052d4a] border-[#052d4a] text-white'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
+                    }`}>
+                    {b.name}
+                </button>
+            ))}
         </div>
     )
 }
