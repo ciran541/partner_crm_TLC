@@ -6,8 +6,8 @@ import { computeRefi, inputsFromWorkflow, refiPropertyMeta } from '@/lib/insuran
 import { refiNextActions } from '@/lib/insurance/refiRemarks'
 import { monthlyInstallment } from '@/lib/insurance/loanCalc'
 import {
-    Home, RefreshCw, Wallet, Sparkles, FileText,
-    CalendarClock, ClipboardList, ArrowRight, Briefcase,
+    Home, RefreshCw, Sparkles, FileText,
+    CalendarClock, ClipboardList, ArrowRight, Briefcase, AlertTriangle,
 } from 'lucide-react'
 
 interface Props {
@@ -45,86 +45,124 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
     const actionsTotal = refiNextActions({ buc: meta?.buc, considerations: workflow.considerations }).length
     const actionsDone = (workflow.next_actions_done ?? []).length
 
-    // Monthly installment preview: use selected package avg rate or current rate, at max tenure
+    const bankLabel = workflow.property_type === 'hdb' ? 'Current Financier' : 'Current Bank'
+
+    // Monthly preview: selected package avg rate (if chosen) or current rate, at max tenure
     const previewRate = (pkg?.avg_rate_lockin_pct as number | undefined) ?? workflow.current_rate
     const previewTenure = comp.tenure?.max
     const previewInstallment = previewRate && previewTenure && comp.totalOutstanding > 0
         ? monthlyInstallment(comp.totalOutstanding, previewRate, previewTenure)
         : null
 
+    const hasCosts = comp.ready && (
+        (comp.cost?.legalFee && comp.cost.legalFee > 0) ||
+        (comp.cost?.estSubsidy && comp.cost.estSubsidy > 0) ||
+        comp.subsidyClawback > 0 ||
+        comp.cancellationFee > 0
+    )
+
     return (
         <div className="space-y-5">
-            {/* Refinancing Snapshot */}
+            {/* ── Refinancing Snapshot ─────────────────────────────────── */}
             <Card title="Refinancing Snapshot" icon={<Home size={16} />}>
-                <dl className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                {/* Row 1 — Property */}
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
                     <Field label="Property Type" value={meta?.label} />
                     <Field label="Property Use" value={workflow.property_use ? PROPERTY_USE_LABEL[workflow.property_use] : undefined} />
                     <Field label="Market Price" value={money(workflow.market_price)} />
-                    <Field label="Current Bank" value={workflow.current_bank} />
-                    <Field label="Lock-in End Date" value={workflow.lockin_end_date ? new Date(workflow.lockin_end_date).toLocaleDateString() : undefined} />
+
+                    {/* Row 2 — Current loan */}
+                    <Field label={bankLabel} value={workflow.current_bank} />
+                    <Field label="Lock-in End Date" value={workflow.lockin_end_date ? new Date(workflow.lockin_end_date).toLocaleDateString('en-SG') : undefined} />
                     <Field label="Current Rate" value={workflow.current_rate ? `${workflow.current_rate}% p.a.` : undefined} />
+
+                    {/* Row 3 — Loan + tenure inputs */}
                     <Field label="Outstanding Loan" value={money(comp.totalOutstanding > 0 ? comp.totalOutstanding : undefined)} />
                     <Field label="Year of Purchase" value={workflow.year_of_purchase ? String(workflow.year_of_purchase) : undefined} />
-                    {workflow.current_tenure != null && (
-                        <Field label="Current Tenure" value={`${workflow.current_tenure} yrs remaining`} />
-                    )}
-                </dl>
-            </Card>
+                    <Field label="Current Tenure" value={workflow.current_tenure != null ? `${workflow.current_tenure} yrs remaining` : undefined} />
 
-            {/* Tenure & Loan */}
-            {comp.ready && comp.tenure && (
-                <Card title="Tenure & Loan" icon={<Wallet size={16} />}>
-                    <dl className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
-                        <Field label="Tenure Range" value={`${comp.tenure.min}–${comp.tenure.max} yrs`} />
-                        <Field label="Outstanding Loan" value={money(comp.totalOutstanding)} />
-                        {previewInstallment != null && (
-                            <Field
-                                label={`Monthly (${previewRate?.toFixed(2)}%, ${previewTenure}y)`}
-                                value={money(previewInstallment)}
-                            />
-                        )}
-                        {comp.cancellationFee > 0 && (
-                            <Field label="Cancellation Fee" value={money(comp.cancellationFee)} />
-                        )}
-                        {comp.cost && (
-                            <Field label="Est. Legal Fee" value={`${money(comp.cost.legalFee)} ${comp.cost.legalNote}`} />
+                    {/* Row 4 — Computed outputs */}
+                    {comp.ready && comp.tenure && (
+                        <Field label="Refinancing Tenure Range" value={`${comp.tenure.min} – ${comp.tenure.max} yrs`} highlight />
+                    )}
+                    {comp.usingIwaa && comp.iwaa != null && (
+                        <Field label="IWAA (used for tenure)" value={`${Math.ceil(comp.iwaa)} yrs`} highlight />
+                    )}
+                    {previewInstallment != null && (
+                        <Field
+                            label={`Est. Monthly${previewRate ? ` @ ${previewRate.toFixed(2)}%` : ''}`}
+                            value={money(previewInstallment)}
+                            highlight
+                        />
+                    )}
+                </div>
+
+                {/* Cost summary strip — only if there's something to show */}
+                {hasCosts && (
+                    <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
+                        {comp.cost?.legalFee != null && comp.cost.legalFee > 0 && (
+                            <Field label="Est. Legal Fee" value={`${money(comp.cost.legalFee)}${comp.cost.legalNote ? ` ${comp.cost.legalNote}` : ''}`} />
                         )}
                         {comp.cost?.estSubsidy != null && comp.cost.estSubsidy > 0 && (
                             <Field label="Est. Subsidy" value={money(comp.cost.estSubsidy)} />
                         )}
-                    </dl>
-                </Card>
-            )}
+                        {comp.subsidyClawback > 0 && (
+                            <Field label="Subsidy Clawback" value={money(comp.subsidyClawback)} warn />
+                        )}
+                        {comp.cancellationFee > 0 && (
+                            <Field label="Cancellation Fee" value={money(comp.cancellationFee)} warn />
+                        )}
+                    </div>
+                )}
+            </Card>
 
-            {/* Selected Package */}
+            {/* ── Selected Package ─────────────────────────────────────── */}
             {pkg?.bank ? (
                 <Card title="Selected Package" icon={<Sparkles size={16} />}>
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="space-y-0.5">
                             <p className="text-sm font-semibold text-[#052d4a]">
                                 {String(pkg.bank)}{pkg.category ? ` · ${String(pkg.category)}` : ''}{pkg.lockin_years ? ` · ${Number(pkg.lockin_years)}Y lock-in` : ' · No lock-in'}
                             </p>
                             {pkg.package_name ? <p className="text-xs text-slate-500">{String(pkg.package_name)}</p> : null}
                         </div>
-                        <div className="text-right">
+                        <div className="text-right shrink-0">
                             {pkg.avg_rate_lockin_pct != null && (
-                                <p className="text-base font-bold text-[#03a9e7]">{Number(pkg.avg_rate_lockin_pct).toFixed(2)}% avg</p>
+                                <p className="text-lg font-bold text-[#03a9e7]">{Number(pkg.avg_rate_lockin_pct).toFixed(2)}% <span className="text-xs font-medium text-slate-400">avg lock-in</span></p>
                             )}
                             {pkg.projected_monthly != null && (
-                                <p className="text-xs text-slate-500">{money(Number(pkg.projected_monthly))}/mo</p>
+                                <p className="text-sm font-semibold text-[#052d4a] mt-0.5">{money(Number(pkg.projected_monthly))}<span className="text-xs font-normal text-slate-400">/mo</span></p>
+                            )}
+                            {pkg.monthly_saving != null && Number(pkg.monthly_saving) > 0 && (
+                                <p className="text-[11px] text-emerald-600 mt-0.5">saves {money(Number(pkg.monthly_saving))}/mo</p>
                             )}
                         </div>
                     </div>
                 </Card>
-            ) : null}
+            ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 px-5 py-4 flex items-center gap-3 text-slate-400">
+                    <Sparkles size={16} className="shrink-0" />
+                    <p className="text-sm">No package selected yet — open the workflow to browse and select a package.</p>
+                </div>
+            )}
 
-            {/* Status */}
+            {/* ── Status ───────────────────────────────────────────────── */}
             <Card title="Status" icon={<FileText size={16} />}>
-                <dl className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
                     <Field label="Pipeline Stage" value={stage} />
-                    <Field label="Follow-up" value={followUpDate ? new Date(followUpDate).toLocaleDateString() : '—'} icon={<CalendarClock size={13} />} />
-                    <Field label="Next actions" value={`${actionsDone} / ${actionsTotal} done`} icon={<ClipboardList size={13} />} />
-                </dl>
+                    <Field
+                        label="Follow-up"
+                        value={followUpDate ? new Date(followUpDate).toLocaleDateString('en-SG') : '—'}
+                        icon={<CalendarClock size={13} />}
+                    />
+                    {actionsTotal > 0 && (
+                        <Field
+                            label="Next Actions"
+                            value={`${actionsDone} / ${actionsTotal} done`}
+                            icon={<ClipboardList size={13} />}
+                        />
+                    )}
+                </div>
                 <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
                     Continue Workflow <ArrowRight size={15} />
                 </button>
@@ -145,11 +183,26 @@ function Card({ title, icon, children }: { title: string; icon: ReactNode; child
     )
 }
 
-function Field({ label, value, icon }: { label: string; value?: string; icon?: ReactNode }) {
+function Field({ label, value, icon, highlight, warn }: {
+    label: string
+    value?: string
+    icon?: ReactNode
+    highlight?: boolean
+    warn?: boolean
+}) {
     return (
         <div>
-            <dt className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide flex items-center gap-1">{icon}{label}</dt>
-            <dd className="text-sm font-medium text-slate-800 mt-0.5">{value || '—'}</dd>
+            <dt className="text-[11px] font-semibold uppercase tracking-wide flex items-center gap-1 text-slate-400">
+                {icon}{label}
+            </dt>
+            <dd className={`text-sm font-semibold mt-0.5 flex items-center gap-1 ${
+                warn ? 'text-amber-600'
+                    : highlight ? 'text-[#03a9e7]'
+                    : 'text-slate-800'
+            }`}>
+                {warn && <AlertTriangle size={12} className="shrink-0" />}
+                {value || '—'}
+            </dd>
         </div>
     )
 }

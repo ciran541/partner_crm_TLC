@@ -130,6 +130,9 @@ export interface PurchaseWorkflow {
     next_actions_done?: string[]
     completed_steps?: string[]
     flags?: WorkflowFlags
+    // Agent/client chosen tenure (within the computed range). When set, both options
+    // re-price at min(preferred, option_max). Undefined = use each option's max tenure.
+    preferred_tenure?: number
 }
 
 export function getPurchaseWorkflow(data: unknown): PurchaseWorkflow {

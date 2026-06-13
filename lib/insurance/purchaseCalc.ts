@@ -146,6 +146,9 @@ export interface PurchaseInputs {
     ipaDone?: boolean
     ipa?: { amount?: number; tenure?: number; ageCap?: 65 | 75 }
     borrowers?: BorrowerInput[]   // used only when ipaDone is false
+    // Agent/client preferred tenure (within computed range). Applied as effective tenure
+    // for each option: min(preferredTenure, option.maxTenure). Undefined = use each option's max.
+    preferredTenure?: number
 }
 
 /** Default rate used for the headline installment estimate when none entered. */
@@ -260,7 +263,8 @@ export interface OptionResult {
     key: '1' | '2'
     ltvPct: number              // headline max LTV ceiling for this option (fraction) e.g. 0.75
     ageCap: number
-    tenure: number
+    tenure: number              // effective tenure (preferred tenure applied if set, else maxTenure)
+    maxTenure: number           // age-cap-constrained max (ignoring preferred tenure)
     ltvCeiling: number          // price × ltvPct — the maximum loan the bank can offer
     incomeEligibility: number | null   // null on the IPA path
     finalLoan: number           // actual loan (min of income eligibility and LTV ceiling)
@@ -279,6 +283,7 @@ function computeOption(
 ): OptionResult {
     const referenceRate = inputs.referenceRatePct || DEFAULT_REFERENCE_RATE
     const ltvCeiling = ctx.price * option.ltvPct
+    const maxTenure = optionTenure(option, ctx.hdbClass, ctx.age)
 
     let tenure: number
     let incomeEligibility: number | null
@@ -289,11 +294,14 @@ function computeOption(
         // IPA path: the bank already told the client the loan + tenure — reflect them
         // directly, but never above the regulatory LTV ceiling for this option
         // (75% for a normal first-property Option 1, lower for Option 2 / extra loans).
-        tenure = inputs.ipa?.tenure ?? optionTenure(option, ctx.hdbClass, ctx.age)
+        tenure = inputs.ipa?.tenure ?? maxTenure
         incomeEligibility = null
         finalLoan = Math.min(inputs.ipa?.amount ?? 0, ltvCeiling)
     } else {
-        tenure = optionTenure(option, ctx.hdbClass, ctx.age)
+        // Apply preferred tenure if set, capped at the age-limit max for this option.
+        tenure = inputs.preferredTenure != null
+            ? Math.min(inputs.preferredTenure, maxTenure)
+            : maxTenure
         const capacity = capacityForRule(ctx.rule, ctx.gross, ctx.debts)
         incomeEligibility = maxLoanFromPayment(capacity, STRESS_TEST_RATE * 100, tenure)
         finalLoan = Math.min(incomeEligibility, ltvCeiling)
@@ -326,6 +334,7 @@ function computeOption(
         ltvPct: option.ltvPct,
         ageCap: option.ageCap,
         tenure,
+        maxTenure,
         ltvCeiling,
         incomeEligibility,
         finalLoan,
@@ -353,6 +362,9 @@ export interface PurchaseComputation {
     weightedAge: number | null
     grossMonthlyIncome: number
     existingMonthlyDebts: number
+    // Max tenure per option (derived from property type + IWAA alone, before preferred tenure).
+    // Populated whenever property type and IWAA are known, even if income is not yet entered.
+    tenureRange?: { opt1: number; opt2: number }
 }
 
 /** Which option keys are visible: both, or a single option on the IPA path (65 → Option 1, 75 → Option 2). */
@@ -381,6 +393,16 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
         outstanding,
     })
 
+    // Tenure range: needs property type + IWAA only (independent of income).
+    let tenureRange: { opt1: number; opt2: number } | undefined
+    if (meta && age != null && !inputs.ipaDone) {
+        const [o1, o2] = OPTION_MATRIX[outstanding]
+        tenureRange = {
+            opt1: optionTenure(o1, meta.hdbClass, age),
+            opt2: optionTenure(o2, meta.hdbClass, age),
+        }
+    }
+
     const result: PurchaseComputation = {
         ready: price > 0 && (inputs.ipaDone ? (inputs.ipa?.amount ?? 0) > 0 && (inputs.ipa?.tenure ?? 0) > 0 : gross > 0),
         options: [],
@@ -393,6 +415,7 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
         weightedAge: age,
         grossMonthlyIncome: gross,
         existingMonthlyDebts: debts,
+        tenureRange,
     }
 
     if (!meta || price <= 0) return result
@@ -415,6 +438,7 @@ export function inputsFromWorkflow(d: PurchaseWorkflow): PurchaseInputs {
         outstanding: d.outstanding_housing_loans,
         ipaDone: d.ipa_done,
         ipa: d.ipa ? { amount: d.ipa.amount, tenure: d.ipa.tenure, ageCap: d.ipa.age_cap } : undefined,
+        preferredTenure: d.preferred_tenure,
         borrowers: (d.borrowers ?? []).map(b => ({
             employment: b.employment,
             basicSalary: b.basic_salary,

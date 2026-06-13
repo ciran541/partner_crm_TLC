@@ -22,9 +22,10 @@ interface Props {
     value: string
     onChange: (value: string) => void
     placeholder?: string
+    showHdb?: boolean
 }
 
-export default function InsuranceBankDropdown({ value, onChange, placeholder = 'Select a bank…' }: Props) {
+export default function InsuranceBankDropdown({ value, onChange, placeholder = 'Select a bank…', showHdb }: Props) {
     const [banks, setBanks] = useState<Bank[]>(cache ?? [])
     const [loading, setLoading] = useState(!cache)
 
@@ -46,6 +47,7 @@ export default function InsuranceBankDropdown({ value, onChange, placeholder = '
                 className={`w-full appearance-none pl-3 pr-8 py-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all ${loading ? 'text-slate-400' : 'text-slate-700'}`}
             >
                 <option value="">{loading ? 'Loading banks…' : placeholder}</option>
+                {showHdb && <option value="HDB">HDB</option>}
                 {banks.map(b => (
                     <option key={b.id} value={b.name}>{b.name}</option>
                 ))}

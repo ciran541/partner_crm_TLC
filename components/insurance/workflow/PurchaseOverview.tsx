@@ -11,7 +11,7 @@ import {
 import { nextActions } from '@/lib/insurance/purchaseRemarks'
 import {
     Home, ShoppingCart, FileText, Wallet, Sparkles,
-    CalendarClock, ClipboardList, ArrowRight, Briefcase,
+    CalendarClock, ClipboardList, ArrowRight, Briefcase, AlertTriangle,
 } from 'lucide-react'
 
 interface Props {
@@ -24,7 +24,7 @@ interface Props {
 const money = (n?: number | null) => (n && n > 0 ? `$${Math.floor(n).toLocaleString()}` : '—')
 const pct = (frac: number) => {
     const v = frac * 100
-    return Number.isInteger(v) ? `${v}%` : `${v.toFixed(2)}%`
+    return Number.isInteger(v) ? `${v}%` : `${v.toFixed(1)}%`
 }
 const OUTSTANDING_LABEL: Record<string, string> = { '0': 'None (first loan)', '1': '1 existing', '2plus': '2 or more' }
 const residencyLabel = (r?: string) => RESIDENCY_OPTIONS.find(o => o.value === r)?.label ?? '—'
@@ -33,7 +33,6 @@ export default function PurchaseOverview({ workflow, stage, followUpDate, onOpen
     const meta = propertyMeta(workflow.property_type)
     const comp = useMemo(() => computePurchase(inputsFromWorkflow(workflow)), [workflow])
 
-    // Nothing captured yet → invite the agent into the workflow.
     if (!workflow.property_type) {
         return (
             <div className="card p-8 text-center space-y-3">
@@ -59,72 +58,137 @@ export default function PurchaseOverview({ workflow, stage, followUpDate, onOpen
 
     return (
         <div className="space-y-5">
-            {/* Purchase snapshot */}
+            {/* ── Purchase Snapshot ────────────────────────────────────── */}
             <Card title="Purchase Snapshot" icon={<Home size={16} />}>
-                <dl className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                    {/* Row 1 — Property */}
                     <Field label="Property Type" value={meta?.label} />
                     <Field label="Purchase Price" value={money(workflow.property_price)} />
-                    <Field label="Servicing" value={meta?.rule === 'tdsr' ? 'TDSR (55%)' : meta?.rule === 'msr' ? 'MSR (30%)' : 'TDSR + MSR'} />
+                    <Field label="Servicing Rule" value={meta?.rule === 'tdsr' ? 'TDSR (55%)' : meta?.rule === 'msr' ? 'MSR (30%)' : 'TDSR + MSR'} />
+
+                    {/* Row 2 — Purchase context */}
+                    <Field label="Outstanding Housing Loans" value={OUTSTANDING_LABEL[workflow.outstanding_housing_loans ?? '0']} />
                     <Field label="OTP Obtained" value={workflow.otp_obtained === undefined ? '—' : workflow.otp_obtained ? `Yes${otpDateText ? ` · ${otpDateText}` : ''}` : 'No'} />
                     <Field label="Prior IPA" value={workflow.ipa_done ? ipaSummary(workflow) : workflow.ipa_done === false ? 'No' : '—'} />
-                    <Field label="Outstanding Housing Loans" value={OUTSTANDING_LABEL[workflow.outstanding_housing_loans ?? '0']} />
+
+                    {/* Row 3 — Borrowers (income path only) */}
                     {!workflow.ipa_done && borrowers.length > 0 && (
                         <Field label="Borrowers" value={`${borrowers.length} · ${borrowers.map(b => residencyLabel(b.residency)).join(', ')}`} />
                     )}
-                    {workflow.selling_existing && <Field label="Selling existing property" value="Yes" />}
-                </dl>
+                    {workflow.selling_existing && <Field label="Selling Existing" value="Yes" />}
+
+                    {/* Row 4 — Computed outputs (highlighted) */}
+                    {comp.weightedAge != null && comp.weightedAge > 0 && (
+                        <Field label="IWAA" value={`${Math.ceil(comp.weightedAge)} yrs`} highlight />
+                    )}
+                    {comp.tenureRange && (
+                        <>
+                            <Field label="Option 1 Tenure" value={`Up to ${comp.tenureRange.opt1} yrs`} highlight />
+                            <Field label="Option 2 Tenure" value={`Up to ${comp.tenureRange.opt2} yrs`} highlight />
+                        </>
+                    )}
+                    {workflow.preferred_tenure != null && (
+                        <Field label="Preferred Tenure" value={`${workflow.preferred_tenure} yrs`} highlight />
+                    )}
+                </div>
             </Card>
 
-            {/* Financing options */}
+            {/* ── Financing Options ────────────────────────────────────── */}
             {comp.ready && comp.options.length > 0 && (
                 <Card title="Financing Options" icon={<Wallet size={16} />}>
                     <div className={`grid gap-3 ${comp.options.length > 1 ? 'sm:grid-cols-2' : ''}`}>
                         {comp.options.map(opt => (
-                            <div key={opt.key} className="rounded-lg border border-slate-200 p-3.5">
-                                <p className="text-xs font-bold text-[#052d4a] mb-2">Option {opt.key} — {pct(opt.ltvPct)} LTV · to age {opt.ageCap}</p>
-                                <div className="space-y-1.5">
-                                    <MiniRow label="Max loan" value={money(opt.finalLoan)} strong />
-                                    <MiniRow label="Tenure" value={`${opt.tenure} yrs`} />
-                                    <MiniRow label="Monthly (est.)" value={money(opt.installment)} />
-                                    <MiniRow label="Min cash / Cash-CPF" value={`${money(opt.minCashDown)} / ${money(opt.cashCpfDown)}`} />
+                            <div key={opt.key} className="rounded-lg border border-slate-200 p-4 space-y-3">
+                                {/* Option header */}
+                                <div className="flex items-baseline justify-between gap-2">
+                                    <p className="text-xs font-bold text-[#052d4a] uppercase tracking-wide">
+                                        Option {opt.key}
+                                    </p>
+                                    <p className="text-xs text-slate-500">{pct(opt.ltvPct)} LTV · age {opt.ageCap}</p>
                                 </div>
+
+                                {/* Key number — final loan */}
+                                <div>
+                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-0.5">Max Loan</p>
+                                    <p className="text-[18px] font-extrabold text-[#052d4a] leading-none">{money(opt.finalLoan)}</p>
+                                </div>
+
+                                {/* Secondary rows */}
+                                <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                                    <MiniRow label="Tenure" value={`${opt.tenure} yrs`} />
+                                    <MiniRow label="Monthly Instalment" value={money(opt.installment)} />
+                                    <MiniRow label="Min Cash" value={money(opt.minCashDown)} />
+                                    <MiniRow label="Cash / CPF" value={money(opt.cashCpfDown)} />
+                                </div>
+
+                                {/* Pledge shortfall warning */}
+                                {opt.pledge != null && opt.pledge.shortfall > 0 && (
+                                    <p className="text-[11px] text-amber-600 flex items-center gap-1 pt-1">
+                                        <AlertTriangle size={11} /> Pledge {money(opt.pledge.pledgeFund)} needed
+                                    </p>
+                                )}
                             </div>
                         ))}
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1.5 text-xs text-slate-500 border-t border-slate-100 pt-3">
-                        <span>BSD: <span className="font-semibold text-slate-700">{money(comp.bsd)}</span></span>
-                        <span>ABSD ({comp.absdRatePct % 1 === 0 ? comp.absdRatePct : comp.absdRatePct.toFixed(1)}%): <span className="font-semibold text-slate-700">{money(comp.absd)}</span></span>
-                        <span>Legal: <span className="font-semibold text-slate-700">{money(comp.legalFee)}</span></span>
-                        <span>Valuation: <span className="font-semibold text-slate-700">{money(comp.valuationFee)}</span></span>
+
+                    {/* Stamp duty + cost strip */}
+                    <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-x-6 gap-y-1.5">
+                        <CostChip label="BSD" value={money(comp.bsd)} />
+                        <CostChip
+                            label={`ABSD (${comp.absdRatePct % 1 === 0 ? comp.absdRatePct : comp.absdRatePct.toFixed(1)}%)`}
+                            value={money(comp.absd)}
+                            warn={comp.absd > 0}
+                        />
+                        <CostChip label="Legal" value={money(comp.legalFee)} />
+                        <CostChip label="Valuation" value={money(comp.valuationFee)} />
                     </div>
                 </Card>
             )}
 
-            {/* Selected package */}
+            {/* ── Selected Package ─────────────────────────────────────── */}
             {pkg?.bank ? (
                 <Card title="Selected Package" icon={<Sparkles size={16} />}>
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="space-y-0.5">
                             <p className="text-sm font-semibold text-[#052d4a]">
                                 {String(pkg.bank)}{pkg.category ? ` · ${String(pkg.category)}` : ''}{pkg.lockin_years ? ` · ${Number(pkg.lockin_years)}Y lock-in` : ' · No lock-in'}
                             </p>
                             {pkg.package_name ? <p className="text-xs text-slate-500">{String(pkg.package_name)}</p> : null}
                         </div>
-                        <div className="text-right">
-                            {pkg.year1_rate != null && <p className="text-base font-bold text-[#03a9e7]">{Number(pkg.year1_rate).toFixed(2)}%</p>}
-                            {pkg.projected_monthly != null && <p className="text-xs text-slate-500">{money(Number(pkg.projected_monthly))}/mo</p>}
+                        <div className="text-right shrink-0">
+                            {pkg.year1_rate != null && (
+                                <p className="text-lg font-bold text-[#03a9e7]">{Number(pkg.year1_rate).toFixed(2)}% <span className="text-xs font-medium text-slate-400">yr 1</span></p>
+                            )}
+                            {pkg.projected_monthly != null && (
+                                <p className="text-sm font-semibold text-[#052d4a] mt-0.5">{money(Number(pkg.projected_monthly))}<span className="text-xs font-normal text-slate-400">/mo</span></p>
+                            )}
                         </div>
                     </div>
                 </Card>
-            ) : null}
+            ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 px-5 py-4 flex items-center gap-3 text-slate-400">
+                    <Sparkles size={16} className="shrink-0" />
+                    <p className="text-sm">No package selected yet — open the workflow to browse and select a package.</p>
+                </div>
+            )}
 
-            {/* Status + CTA */}
+            {/* ── Status ───────────────────────────────────────────────── */}
             <Card title="Status" icon={<FileText size={16} />}>
-                <dl className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
                     <Field label="Pipeline Stage" value={stage} />
-                    <Field label="Follow-up" value={followUpDate ? new Date(followUpDate).toLocaleDateString() : '—'} icon={<CalendarClock size={13} />} />
-                    <Field label="Next actions" value={`${actionsDone} / ${actionsTotal} done`} icon={<ClipboardList size={13} />} />
-                </dl>
+                    <Field
+                        label="Follow-up"
+                        value={followUpDate ? new Date(followUpDate).toLocaleDateString('en-SG') : '—'}
+                        icon={<CalendarClock size={13} />}
+                    />
+                    {actionsTotal > 0 && (
+                        <Field
+                            label="Next Actions"
+                            value={`${actionsDone} / ${actionsTotal} done`}
+                            icon={<ClipboardList size={13} />}
+                        />
+                    )}
+                </div>
                 <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
                     Continue Workflow <ArrowRight size={15} />
                 </button>
@@ -165,20 +229,41 @@ function Card({ title, icon, children }: { title: string; icon: ReactNode; child
     )
 }
 
-function Field({ label, value, icon }: { label: string; value?: string; icon?: ReactNode }) {
+function Field({ label, value, icon, highlight, warn }: {
+    label: string
+    value?: string
+    icon?: ReactNode
+    highlight?: boolean
+    warn?: boolean
+}) {
     return (
         <div>
             <dt className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide flex items-center gap-1">{icon}{label}</dt>
-            <dd className="text-sm font-medium text-slate-800 mt-0.5">{value || '—'}</dd>
+            <dd className={`text-sm font-semibold mt-0.5 flex items-center gap-1 ${
+                warn ? 'text-amber-600'
+                    : highlight ? 'text-[#03a9e7]'
+                    : 'text-slate-800'
+            }`}>
+                {warn && <AlertTriangle size={12} className="shrink-0" />}
+                {value || '—'}
+            </dd>
         </div>
     )
 }
 
-function MiniRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+function MiniRow({ label, value }: { label: string; value: string }) {
     return (
         <div className="flex items-center justify-between gap-2 text-xs">
             <span className="text-slate-500">{label}</span>
-            <span className={strong ? 'text-sm font-bold text-[#052d4a]' : 'font-semibold text-slate-700'}>{value}</span>
+            <span className="font-semibold text-slate-700">{value}</span>
         </div>
+    )
+}
+
+function CostChip({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+    return (
+        <span className="text-xs text-slate-500">
+            {label}: <span className={`font-semibold ${warn ? 'text-amber-600' : 'text-slate-700'}`}>{value}</span>
+        </span>
     )
 }

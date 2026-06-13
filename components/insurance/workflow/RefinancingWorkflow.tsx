@@ -247,9 +247,20 @@ export default function RefinancingWorkflowPanel({
                         </Question>
                     )}
 
+                    {(() => {
+                        const total = (data.outstanding_disbursed ?? 0) + (data.outstanding_undisbursed ?? 0)
+                        const cap = (data.market_price ?? 0) * 0.75
+                        if (!data.market_price || total === 0 || total <= cap) return null
+                        return (
+                            <p className="text-[11px] text-amber-600 flex items-center gap-1.5">
+                                <AlertTriangle size={12} /> Total outstanding ({money(total)}) exceeds 75% of valuation ({money(cap)}). Please verify the figures.
+                            </p>
+                        )
+                    })()}
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <Question label="Current bank">
-                            <InsuranceBankDropdown value={data.current_bank ?? ''} onChange={v => update({ current_bank: v })} />
+                        <Question label={data.property_type === 'hdb' ? 'Current Financier' : 'Current Bank'}>
+                            <InsuranceBankDropdown value={data.current_bank ?? ''} onChange={v => update({ current_bank: v })} showHdb={data.property_type === 'hdb'} />
                         </Question>
                         <Question label="Lock-in end date">
                             <FieldInput type="date" value={data.lockin_end_date ?? ''} onChange={v => update({ lockin_end_date: v })} />
@@ -450,7 +461,26 @@ export default function RefinancingWorkflowPanel({
                 </div>
             ) : computation.ready && t ? (
                 <>
-                    {/* Tenure comparison — above tenure range */}
+                    {/* Tenure range — shown first */}
+                    <div className="rounded-xl border-2 border-[#03a9e7]/40 overflow-hidden">
+                        <div className="bg-sky-50 px-4 py-3 flex items-center gap-2">
+                            <CalendarRange size={16} className="text-[#03a9e7]" />
+                            <p className="text-sm font-bold text-[#052d4a]">Estimated Tenure Range for Refinancing</p>
+                        </div>
+                        <div className="p-4 flex flex-wrap items-end gap-x-8 gap-y-2">
+                            <div>
+                                <p className="text-3xl font-extrabold text-[#052d4a] leading-none">{t.min} – {t.max} <span className="text-base font-semibold text-slate-500">years</span></p>
+                                <p className="text-[11px] text-slate-400 mt-1.5">
+                                    Min 5 yrs · max = lower of (75 − age = {t.result1}) and ({meta?.tenureCap} − yrs since purchase − 1 = {t.result2})
+                                </p>
+                            </div>
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                                <Info size={12} /> After picking a package, use the Tenure Planner below to compare instalment & interest.
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Tenure comparison — below tenure range */}
                     {computation.totalOutstanding > 0 && (() => {
                         const defaultT = data.current_tenure ?? t.max
                         const prefT1 = data.preferred_tenure_1 ?? defaultT
@@ -467,28 +497,10 @@ export default function RefinancingWorkflowPanel({
                                 onT2Change={v => update({ preferred_tenure_2: v || undefined })}
                                 grossIncome={grossForTdsr}
                                 existingDebts={debtsForTdsr}
+                                propertyUse={data.property_use}
                             />
                         )
                     })()}
-
-                    {/* Tenure range */}
-                    <div className="rounded-xl border-2 border-[#03a9e7]/40 overflow-hidden">
-                        <div className="bg-sky-50 px-4 py-3 flex items-center gap-2">
-                            <CalendarRange size={16} className="text-[#03a9e7]" />
-                            <p className="text-sm font-bold text-[#052d4a]">Estimated Tenure Range for Refinancing</p>
-                        </div>
-                        <div className="p-4 flex flex-wrap items-end gap-x-8 gap-y-2">
-                            <div>
-                                <p className="text-3xl font-extrabold text-[#052d4a] leading-none">{t.min} – {t.max} <span className="text-base font-semibold text-slate-500">years</span></p>
-                                <p className="text-[11px] text-slate-400 mt-1.5">
-                                    Min 5 yrs · max = lower of (75 − age = {t.result1}) and ({meta?.tenureCap} − yrs since purchase − 1 = {t.result2})
-                                </p>
-                            </div>
-                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                                <Info size={12} /> After picking a package, use the Tenure Planner to compare instalment & interest.
-                            </p>
-                        </div>
-                    </div>
 
                     {/* Cost of refinancing */}
                     {remarks.cost.length > 0 && (
@@ -758,9 +770,10 @@ interface TenureComparisonProps {
     onT2Change: (v: number) => void
     grossIncome: number | null
     existingDebts: number
+    propertyUse?: 'own_stay' | 'investment'
 }
 
-function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenure1, tenure2, onT1Change, onT2Change, grossIncome, existingDebts }: TenureComparisonProps) {
+function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenure1, tenure2, onT1Change, onT2Change, grossIncome, existingDebts, propertyUse }: TenureComparisonProps) {
     const canPrice = ratePct != null && loan > 0 && tenure1 > 0 && tenure2 > 0
 
     const m1 = canPrice ? monthlyInstallment(loan, ratePct!, tenure1) : null
@@ -787,84 +800,117 @@ function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenure1, tenu
         </td>
     )
 
+    const diffCell = (v1: number | null, v2: number | null, lowerIsBetter: boolean) => {
+        if (!canPrice || v1 == null || v2 == null) return <td className="px-4 py-2.5 text-right text-slate-300 text-xs">—</td>
+        const diff = v2 - v1
+        if (diff === 0) return <td className="px-4 py-2.5 text-right text-slate-400 text-xs">—</td>
+        const good = lowerIsBetter ? diff < 0 : diff > 0
+        return (
+            <td className={`px-4 py-2.5 text-right text-[11px] font-semibold tabular-nums ${good ? 'text-emerald-600' : 'text-red-500'}`}>
+                {diff < 0 ? '↓' : '↑'} {money(Math.abs(diff))}
+            </td>
+        )
+    }
+
     return (
         <Section title="Tenure Comparison" icon={<CalendarRange size={15} />}>
-            {/* Two tenure pickers */}
-            <div className="grid grid-cols-2 gap-4">
-                <Question label="Preferred Tenure 1">
-                    <FieldInput type="number" suffix="yrs" value={tenure1 || ''} placeholder="e.g. 20"
-                        onChange={v => onT1Change(parseFloat(v) || 0)} />
-                </Question>
-                <Question label="Preferred Tenure 2">
-                    <FieldInput type="number" suffix="yrs" value={tenure2 || ''} placeholder="e.g. 25"
-                        onChange={v => onT2Change(parseFloat(v) || 0)} />
-                </Question>
-            </div>
-            <p className="text-[11px] text-slate-400 -mt-1">Both default to current tenure. Adjust to compare two scenarios.</p>
-
             {/* Rate source */}
             {rateLabel
                 ? <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Info size={12} className="text-[#03a9e7]" /> Rate used: {rateLabel}</p>
                 : <p className="text-[11px] text-amber-600 flex items-center gap-1.5"><AlertTriangle size={12} /> Enter current interest rate or select a package to price the comparison.</p>
             }
 
-            {/* Installment + interest table */}
-            {canPrice && (
-                <div className="rounded-lg border border-slate-200 overflow-hidden">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="bg-slate-50 border-b border-slate-200">
-                                <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide w-1/2"></th>
-                                <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure1} yrs</th>
-                                <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure2} yrs</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr className="border-b border-slate-100">
-                                <td className="px-4 py-2.5 text-slate-600">Monthly Installment</td>
-                                {cell(m1, 'a', mBetter)}
-                                {cell(m2, 'b', mBetter)}
-                            </tr>
-                            <tr>
-                                <td className="px-4 py-2.5 text-slate-600">
-                                    Total Interest
-                                    <span className="block text-[11px] text-slate-400">over {lockinYears}-yr lock-in period</span>
+            {/* Table — tenure inputs embedded in column headers */}
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide w-2/5" />
+                            <th className="px-4 py-2 text-right">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 1</p>
+                                <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
+                                    <input type="number" value={tenure1 || ''} onChange={e => onT1Change(parseFloat(e.target.value) || 0)}
+                                        className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
+                                    <span className="text-[11px] text-slate-400">yrs</span>
+                                </div>
+                            </th>
+                            <th className="px-4 py-2 text-right">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 2</p>
+                                <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
+                                    <input type="number" value={tenure2 || ''} onChange={e => onT2Change(parseFloat(e.target.value) || 0)}
+                                        className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
+                                    <span className="text-[11px] text-slate-400">yrs</span>
+                                </div>
+                            </th>
+                            <th className="text-right px-4 py-2 text-[11px] font-semibold text-slate-400">Diff</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr className="border-b border-slate-100">
+                            <td className="px-4 py-2.5 text-slate-600">Monthly Instalment</td>
+                            {cell(m1, 'a', mBetter)}
+                            {cell(m2, 'b', mBetter)}
+                            {diffCell(m1, m2, true)}
+                        </tr>
+                        <tr className={grossIncome != null && grossIncome > 0 ? 'border-b border-slate-100' : ''}>
+                            <td className="px-4 py-2.5 text-slate-600">
+                                Total Interest
+                                <span className="block text-[11px] text-slate-400">over {lockinYears}-yr lock-in period</span>
+                            </td>
+                            {cell(i1, 'a', iBetter)}
+                            {cell(i2, 'b', iBetter)}
+                            {diffCell(i1, i2, true)}
+                        </tr>
+                        {grossIncome != null && grossIncome > 0 && (() => {
+                            const pass1 = tdsr1 != null ? loan <= tdsr1 : null
+                            const pass2 = tdsr2 != null ? loan <= tdsr2 : null
+                            const passCell = (pass: boolean | null) => (
+                                <td className="px-4 py-2.5 text-right font-semibold">
+                                    {pass === null ? <span className="text-slate-300">—</span>
+                                        : pass ? <span className="text-emerald-600">Pass</span>
+                                        : <span className="text-red-500">Fail</span>}
                                 </td>
-                                {cell(i1, 'a', iBetter)}
-                                {cell(i2, 'b', iBetter)}
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            )}
+                            )
+                            return (
+                                <>
+                                    <tr className="border-b border-slate-100">
+                                        <td className="px-4 py-2.5 text-slate-600">Max Eligible Loan</td>
+                                        {cell(tdsr1, 'a', tBetter)}
+                                        {cell(tdsr2, 'b', tBetter)}
+                                        {diffCell(tdsr1, tdsr2, false)}
+                                    </tr>
+                                    <tr>
+                                        <td className="px-4 py-2.5 text-slate-600">TDSR Result</td>
+                                        {passCell(pass1)}
+                                        {passCell(pass2)}
+                                        <td />
+                                    </tr>
+                                </>
+                            )
+                        })()}
+                    </tbody>
+                </table>
+            </div>
 
-            {/* TDSR eligibility table */}
-            {grossIncome != null && grossIncome > 0 ? (
-                <div>
-                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">TDSR Loan Eligibility</p>
-                    <div className="rounded-lg border border-slate-200 overflow-hidden">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="bg-slate-50 border-b border-slate-200">
-                                    <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide w-1/2"></th>
-                                    <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure1} yrs</th>
-                                    <th className="text-right px-4 py-2 text-[11px] font-semibold text-[#052d4a]">{tenure2} yrs</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td className="px-4 py-2.5 text-slate-600">Max Eligible Loan (TDSR 55%)</td>
-                                    {cell(tdsr1, 'a', tBetter)}
-                                    {cell(tdsr2, 'b', tBetter)}
-                                </tr>
-                            </tbody>
-                        </table>
+            {grossIncome != null && grossIncome > 0 && (() => {
+                const pass1 = tdsr1 != null ? loan <= tdsr1 : null
+                const pass2 = tdsr2 != null ? loan <= tdsr2 : null
+                const anyFail = pass1 === false || pass2 === false
+                if (!anyFail) return null
+                const remedy = propertyUse === 'investment'
+                    ? 'Bank will require client to pay down 3% of outstanding loan and/or show some funds to prove repayment ability.'
+                    : 'Client may qualify for TDSR Waiver — to double check with banker.'
+                return (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-1">
+                        <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
+                        <p className="text-[12px] text-amber-700 leading-relaxed">{remedy}</p>
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-1.5">Stress-tested at {(STRESS_TEST_RATE * 100).toFixed(1)}% p.a.</p>
-                </div>
-            ) : (
+                )
+            })()}
+
+            {(grossIncome == null || grossIncome === 0) && (
                 <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                    <Info size={12} /> Provide income details above to see TDSR loan eligibility.
+                    <Info size={12} /> Provide income details above to also see TDSR loan eligibility.
                 </p>
             )}
         </Section>

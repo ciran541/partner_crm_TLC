@@ -13,29 +13,29 @@ import type { ProposalPackage } from '@/lib/insurance/purchaseProposal'
 import { formatRateSchedule } from '@/lib/insurance/rateSchedule'
 
 export interface PresentationData {
-    clientName?: string
-    advisorName?: string
-    propertyLabel: string
-    price: number
-    referenceRate?: number
-    computation: PurchaseComputation
-    remarks: PurchaseRemarks
-    selectedPackage?: ProposalPackage | null
+  clientName?: string
+  advisorName?: string
+  propertyLabel: string
+  price: number
+  referenceRate?: number
+  computation: PurchaseComputation
+  remarks: PurchaseRemarks
+  selectedPackage?: ProposalPackage | null
 }
 
 const money = (n: number) => `$${Math.round(n).toLocaleString()}`
 const pct = (frac: number) => {
-    const v = frac * 100
-    return Number.isInteger(v) ? `${v}%` : `${v.toFixed(2)}%`
+  const v = frac * 100
+  return Number.isInteger(v) ? `${v}%` : `${v.toFixed(2)}%`
 }
 const esc = (s: string) => s.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] as string))
 
 function optionColumn(opt: OptionResult): string {
-    const downTotal = opt.minCashDown + opt.cashCpfDown
-    const pledge = opt.pledge
-        ? `<div class="pledge">To reach the full ${pct(opt.ltvPct)}, pledge ${money(opt.pledge.pledgeFund)} (locked 4 yrs) or show ${money(opt.pledge.showFund)} in funds.</div>`
-        : ''
-    return `
+  const downTotal = opt.minCashDown + opt.cashCpfDown
+  const pledge = opt.pledge
+    ? `<div class="pledge">To reach the full ${pct(opt.ltvPct)}, pledge ${money(opt.pledge.pledgeFund)} (locked 4 yrs) or show ${money(opt.pledge.showFund)} in funds.</div>`
+    : ''
+  return `
       <div class="opt">
         <div class="opt-head">
           <div class="opt-title">Option ${opt.key}</div>
@@ -54,12 +54,12 @@ function optionColumn(opt: OptionResult): string {
 }
 
 function packageBlock(pkg: ProposalPackage): string {
-    const header = `${esc(pkg.bank ?? '')}${pkg.category ? ` · ${esc(pkg.category)}` : ''}${pkg.lockin_years ? ` · ${pkg.lockin_years}-year lock-in` : ' · No lock-in'}`
-    const sched = pkg.rate_schedule?.length
-        ? `<ul class="sched">${formatRateSchedule(pkg.rate_schedule).map(l => `<li>${esc(l)}</li>`).join('')}</ul>`
-        : pkg.year1_rate != null ? `<ul class="sched"><li>Year 1: ${pkg.year1_rate.toFixed(2)}%</li></ul>` : ''
-    const monthly = pkg.projected_monthly != null ? `<div class="pkg-monthly">Est. monthly instalment <b>${money(pkg.projected_monthly)}</b></div>` : ''
-    return `
+  const header = `${esc(pkg.bank ?? '')}${pkg.category ? ` · ${esc(pkg.category)}` : ''}${pkg.lockin_years ? ` · ${pkg.lockin_years}-year lock-in` : ' · No lock-in'}`
+  const sched = pkg.rate_schedule?.length
+    ? `<ul class="sched">${formatRateSchedule(pkg.rate_schedule).map(l => `<li>${esc(l)}</li>`).join('')}</ul>`
+    : pkg.year1_rate != null ? `<ul class="sched"><li>Year 1: ${pkg.year1_rate.toFixed(2)}%</li></ul>` : ''
+  const monthly = pkg.projected_monthly != null ? `<div class="pkg-monthly">Est. monthly instalment <b>${money(pkg.projected_monthly)}</b></div>` : ''
+  return `
       <section class="block">
         <h2>Recommended Package</h2>
         <div class="pkg">
@@ -72,20 +72,20 @@ function packageBlock(pkg: ProposalPackage): string {
 }
 
 export function buildPresentationHtml(d: PresentationData): string {
-    const { computation: c } = d
-    const today = new Date().toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' })
+  const { computation: c } = d
+  const today = new Date().toLocaleDateString('en-SG', { day: 'numeric', month: 'long', year: 'numeric' })
 
-    const optionCols = c.options.map(optionColumn).join('')
-    const feesTotal = c.bsd + c.absd + c.legalFee + c.valuationFee
+  const optionCols = c.options.map(optionColumn).join('')
+  const feesTotal = c.bsd + c.absd + c.legalFee + c.valuationFee
 
-    const remarks = [...d.remarks.alerts, ...d.remarks.standard, ...d.remarks.propertyType]
-    const remarksHtml = remarks.length
-        ? `<section class="block"><h2>Key Things to Note</h2><ul class="notes">${remarks.map(r => `<li>${esc(r)}</li>`).join('')}</ul></section>`
-        : ''
+  const remarks = [...d.remarks.alerts, ...d.remarks.standard, ...d.remarks.propertyType]
+  const remarksHtml = remarks.length
+    ? `<section class="block"><h2>Key Things to Note</h2><ul class="notes">${remarks.map(r => `<li>${esc(r)}</li>`).join('')}</ul></section>`
+    : ''
 
-    const pkgHtml = d.selectedPackage?.bank ? packageBlock(d.selectedPackage) : ''
+  const pkgHtml = d.selectedPackage?.bank ? packageBlock(d.selectedPackage) : ''
 
-    return `<!doctype html><html><head><meta charset="utf-8"><title>Home Financing Plan${d.clientName ? ` — ${esc(d.clientName)}` : ''}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Home Financing Plan${d.clientName ? ` — ${esc(d.clientName)}` : ''}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: #1e293b; margin: 0; padding: 32px 36px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
