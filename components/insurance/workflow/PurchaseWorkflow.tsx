@@ -18,6 +18,7 @@ import {
 } from '@/lib/insurance/purchaseCalc'
 import { buildRemarks, nextActions, OTP_NOT_OBTAINED_REMARK, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
 import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchaseProposal'
+import { monthlyInstallment } from '@/lib/insurance/loanCalc'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import Modal from '@/components/shared/Modal'
 import type { PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
@@ -56,8 +57,8 @@ export default function PurchaseWorkflowPanel({
     const update = (patch: Partial<PurchaseWorkflow>) => onChange({ ...data, ...patch })
     const [proposalOpen, setProposalOpen] = useState(false)
     const [presentationOpen, setPresentationOpen] = useState(false)
-    // Raw string for the preferred-tenure input — committed and clamped on blur.
     const [rawPrefTenure, setRawPrefTenure] = useState('')
+    const [liquidityOption, setLiquidityOption] = useState<'1' | '2'>('1')
 
     const meta = propertyMeta(data.property_type)
     const computation = useMemo(() => computePurchase(inputsFromWorkflow(data)), [data])
@@ -107,6 +108,7 @@ export default function PurchaseWorkflowPanel({
                 rate_schedule: rec.pkg.rate_schedule,
                 projected_monthly: rec.projection.newMonthly,
                 year1_rate: rec.projection.perYear[0]?.ratePct ?? null,
+                avg_rate_lockin_pct: rec.projection.avgRateLockinPct ?? null,
                 sora_as_of: sora?.published_date ?? sora?.value_date ?? null,
                 frozen_at: new Date().toISOString(),
             },
@@ -115,6 +117,7 @@ export default function PurchaseWorkflowPanel({
 
     const otpDateFields = otpFieldsFor(data.property_type)
     const selectedPkgId = (data.selected_package_snapshot?.id as string) ?? undefined
+    const pkg = data.selected_package_snapshot as Record<string, unknown> | undefined
 
     // ── Next-step derived values ──
     const proposalText = useMemo(() => buildProposalText({
@@ -383,41 +386,40 @@ export default function PurchaseWorkflowPanel({
                                 </div>
                             </div>
 
-                            {computation.tenureRange.opt1 < computation.tenureRange.opt2 && (
-                                <div>
-                                    <p className="text-xs font-semibold text-slate-600 mb-1.5">
-                                        Preferred Tenure
-                                        <span className="font-normal text-slate-400 ml-1.5">
-                                            ({computation.tenureRange.opt1}–{computation.tenureRange.opt2} yrs)
-                                        </span>
-                                    </p>
-                                    <div className="flex items-center gap-3">
-                                        <input
-                                            type="number"
-                                            min={computation.tenureRange.opt1}
-                                            max={computation.tenureRange.opt2}
-                                            value={rawPrefTenure !== '' ? rawPrefTenure : data.preferred_tenure != null ? String(data.preferred_tenure) : ''}
-                                            placeholder={String(computation.tenureRange.opt2)}
-                                            onChange={e => setRawPrefTenure(e.target.value)}
-                                            onBlur={() => {
-                                                const parsed = parseInt(rawPrefTenure, 10)
-                                                setRawPrefTenure('')
-                                                if (!isNaN(parsed) && parsed > 0 && computation.tenureRange) {
-                                                    const { opt1, opt2 } = computation.tenureRange
-                                                    update({ preferred_tenure: Math.max(opt1, Math.min(opt2, parsed)) })
-                                                } else if (rawPrefTenure === '') {
-                                                    // cleared — reset to default (longest)
-                                                    update({ preferred_tenure: undefined })
-                                                }
-                                            }}
-                                            className="w-24 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
-                                        />
-                                        <span className="text-xs text-slate-500">
-                                            yrs — default is longest ({computation.tenureRange.opt2} yrs), results update live
-                                        </span>
+                            {(() => {
+                                const maxT = Math.max(computation.tenureRange.opt1, computation.tenureRange.opt2)
+                                return (
+                                    <div>
+                                        <p className="text-xs font-semibold text-slate-600 mb-1.5">
+                                            Preferred Tenure
+                                            <span className="font-normal text-slate-400 ml-1.5">(5–{maxT} yrs)</span>
+                                        </p>
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="number"
+                                                min={5}
+                                                max={maxT}
+                                                value={rawPrefTenure !== '' ? rawPrefTenure : data.preferred_tenure != null ? String(data.preferred_tenure) : ''}
+                                                placeholder={String(maxT)}
+                                                onChange={e => setRawPrefTenure(e.target.value)}
+                                                onBlur={() => {
+                                                    const parsed = parseInt(rawPrefTenure, 10)
+                                                    setRawPrefTenure('')
+                                                    if (!isNaN(parsed) && parsed > 0) {
+                                                        update({ preferred_tenure: Math.max(5, Math.min(maxT, parsed)) })
+                                                    } else if (rawPrefTenure === '') {
+                                                        update({ preferred_tenure: undefined })
+                                                    }
+                                                }}
+                                                className="w-24 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
+                                            />
+                                            <span className="text-xs text-slate-500">
+                                                yrs — default is longest ({maxT} yrs), results update live
+                                            </span>
+                                        </div>
                                     </div>
-                                </div>
-                            )}
+                                )
+                            })()}
                         </div>
                     )}
                 </Section>
@@ -428,17 +430,16 @@ export default function PurchaseWorkflowPanel({
                 <>
                     <div className={`grid gap-4 ${computation.options.length > 1 ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
                         {computation.options.map(opt => (
-                            <OptionCard key={opt.key} opt={opt} ipa={!!data.ipa_done} price={data.property_price ?? 0} />
+                            <OptionCard
+                                key={opt.key}
+                                opt={opt}
+                                ipa={!!data.ipa_done}
+                                price={data.property_price ?? 0}
+                                selectable={computation.options.length > 1}
+                                selected={liquidityOption === opt.key}
+                                onSelect={() => setLiquidityOption(opt.key as '1' | '2')}
+                            />
                         ))}
-                    </div>
-
-                    {/* Editable rate behind the Monthly Instalment estimate */}
-                    <div className="flex items-center gap-2 text-xs text-slate-500 px-1">
-                        <span>Monthly instalment estimated at</span>
-                        <input type="number" step="0.05" value={data.reference_rate ?? ''} placeholder={`${DEFAULT_REFERENCE_RATE}`}
-                            onChange={e => update({ reference_rate: num(e.target.value) })}
-                            className="w-16 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
-                        <span>% p.a. — adjust to compare</span>
                     </div>
 
                     {/* Stamp duty + fees */}
@@ -455,9 +456,8 @@ export default function PurchaseWorkflowPanel({
                         </div>
                     </Section>
 
-                    {/* Total Liquidity Required */}
                     <LiquidityCard
-                        options={computation.options}
+                        options={computation.options.length > 1 ? computation.options.filter(o => o.key === liquidityOption) : computation.options}
                         miscFees={computation.bsd + computation.absd + computation.legalFee + computation.valuationFee}
                         price={data.property_price ?? 0}
                     />
@@ -507,6 +507,38 @@ export default function PurchaseWorkflowPanel({
                             onSelect={onSelectPackage}
                         />
                     )}
+
+                    {/* Monthly Instalment — computed from selected package rate + option tenure */}
+                    <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
+                        {pkg?.avg_rate_lockin_pct != null ? (
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                                <Info size={12} className="text-[#03a9e7]" />
+                                Based on <span className="font-semibold">{String(pkg.bank)}</span> @ {Number(pkg.avg_rate_lockin_pct).toFixed(2)}% avg lock-in rate
+                            </p>
+                        ) : (
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                                <span>No package selected — estimating at</span>
+                                <input type="number" step="0.05" value={data.reference_rate ?? ''} placeholder={`${DEFAULT_REFERENCE_RATE}`}
+                                    onChange={e => update({ reference_rate: num(e.target.value) })}
+                                    className="w-16 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
+                                <span>% p.a.</span>
+                            </div>
+                        )}
+                        <div className={`grid gap-4 ${computation.options.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                            {computation.options.map(opt => {
+                                const rate = (pkg?.avg_rate_lockin_pct as number | undefined) ?? data.reference_rate ?? DEFAULT_REFERENCE_RATE
+                                const monthly = monthlyInstallment(opt.finalLoan, rate, opt.tenure)
+                                return (
+                                    <div key={opt.key} className="rounded-lg border border-slate-200 p-4">
+                                        <p className="text-xs text-slate-500 mb-1">Option {opt.key} · {opt.tenure} yrs</p>
+                                        <p className="text-2xl font-extrabold text-[#052d4a]">
+                                            {money(monthly)}<span className="text-sm font-normal text-slate-400"> /mo</span>
+                                        </p>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </Section>
 
                     {/* Next step — client-facing only (Present / Chat summary / client checklist).
                         Pipeline stage + follow-up live on the internal Overview tab. */}
@@ -698,7 +730,10 @@ function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; 
     )
 }
 
-function OptionCard({ opt, ipa, price }: { opt: OptionResult; ipa: boolean; price: number }) {
+function OptionCard({ opt, ipa, price, selectable, selected, onSelect }: {
+    opt: OptionResult; ipa: boolean; price: number
+    selectable?: boolean; selected?: boolean; onSelect?: () => void
+}) {
     const isOpt1 = opt.key === '1'
     const ltvPctLabel = `${Math.round(opt.ltvPct * 100)}%`
     const minCashPctNum = Math.round(opt.minCashPct * 100)   // always a clean matrix value (5, 10, 25…)
@@ -712,13 +747,25 @@ function OptionCard({ opt, ipa, price }: { opt: OptionResult; ipa: boolean; pric
     const actualLtvPctLabel = fmtPct(actualLtvPctNum)
     const balancePctLabel = fmtPct(balancePctNum)
 
+    const borderClass = selected
+        ? 'border-[#03a9e7] ring-2 ring-[#03a9e7]/20'
+        : isOpt1 ? 'border-[#03a9e7]/30' : 'border-slate-200'
+
     return (
-        <div className={`rounded-xl border shadow-sm overflow-hidden ${isOpt1 ? 'border-[#03a9e7]/30' : 'border-slate-200'}`}>
+        <div
+            className={`rounded-xl border shadow-sm overflow-hidden transition-all ${borderClass} ${selectable ? 'cursor-pointer' : ''}`}
+            onClick={selectable ? onSelect : undefined}
+        >
             {/* Header */}
-            <div className={`px-5 py-4 border-b ${isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'}`}>
+            <div className={`px-5 py-4 border-b flex items-center justify-between ${isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'}`}>
                 <p className="text-sm font-bold text-[#052d4a]">
                     Option {opt.key} (Loan-To-Valuation {ltvPctLabel})
                 </p>
+                {selectable && (
+                    selected
+                        ? <span className="text-[11px] font-semibold text-[#03a9e7] flex items-center gap-1"><CheckCircle2 size={13} /> Selected for liquidity</span>
+                        : <span className="text-[11px] text-slate-400">Click to view liquidity</span>
+                )}
             </div>
 
             <div className="px-5 py-4 space-y-5">
@@ -777,12 +824,6 @@ function OptionCard({ opt, ipa, price }: { opt: OptionResult; ipa: boolean; pric
                         </span>
                         <span className="font-semibold text-[#03a9e7]">{money(opt.cashCpfDown)}</span>
                     </div>
-                </div>
-
-                {/* Monthly Instalment */}
-                <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-4">
-                    <span className="text-[15px] font-semibold text-slate-700">Monthly Instalment</span>
-                    <span className="text-[15px] font-bold text-[#052d4a]">{money(opt.installment)}</span>
                 </div>
 
                 {/* Pledge shortfall */}
