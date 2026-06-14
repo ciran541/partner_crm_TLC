@@ -183,14 +183,16 @@ export interface DecoupleWorkflow {
     // Borrowers — income for TDSR (always collected, both financing paths)
     borrowers?: DecoupleBorrower[]
 
-    // Equity loan (optional, shown when eligible after ownership structure)
+    // Equity loan (optional — only surfaced when the client wants one)
+    wants_equity_loan?: boolean
     equity_loan_amount?: number
 
     // Reference rate for monthly-installment estimate (yes-financing path)
     reference_rate?: number
 
-    // Preferred tenure (no-financing path; defaults to current_tenure)
-    preferred_tenure?: number
+    // Preferred tenures (scenario-dependent)
+    preferred_tenure_refi?: number      // S1: refi tenure; S3: refi portion
+    preferred_tenure_purchase?: number  // S2: purchase tenure; S3: purchase portion
 
     completed_steps?: string[]
     flags?: WorkflowFlags

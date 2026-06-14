@@ -1,14 +1,15 @@
 /**
- * Decoupling calculation engine.
+ * Decoupling calculation engine — four scenarios driven by two answers:
  *
- * Pure functions, no DOM / framework deps. Two financing paths:
- *   - No financing: buyer pays cash/CPF for seller's share; existing loan
- *     is refinanced on buyer's name. Loan Liability ($A) = outstanding × buyerShare%.
- *   - Yes financing: buyer takes a new 75% LTV loan on the seller's share
- *     on top of their existing loan liability. New Total Loan (P%) flows in.
+ *   requires_financing  fully_paid   Scenario
+ *   ─────────────────── ──────────── ─────────
+ *   NO                  NO           S1 — refi only (has mortgage, no new loan)
+ *   YES                 YES          S2 — purchase only (no mortgage, new loan)
+ *   YES                 NO           S3 — both refi + purchase
+ *   NO                  YES          S4 — cash/CPF only (no mortgage, no new loan)
  *
- * SSD uses year of purchase (not months) — old rates for 2023/2024 purchases,
- * new rates for 2025+, none for 2022 or earlier.
+ * TDSR is not collected for S4. For S1-S3 the TDSR calculation is scenario-aware.
+ * Equity loan eligibility uses two constraints: LTV structural + TDSR headroom.
  */
 
 import {
@@ -22,38 +23,41 @@ import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-export const CURRENT_YEAR = new Date().getFullYear()
+export const CURRENT_YEAR           = new Date().getFullYear()
 export const DEFAULT_REFERENCE_RATE = 2.5
-export const LEGAL_FEE = 3_000
-export const MIN_EQUITY_LOAN = 50_000
-export const MIN_TENURE = 5
-export const MAX_AGE_CAP = 75
-export const CANCELLATION_FEE_RATE = 0.0075   // 0.75% on undisbursed amount
+export const LEGAL_FEE              = 3_000
+export const MIN_EQUITY_LOAN        = 50_000
+export const MIN_TENURE             = 5
+export const AGE_CAP_REFI           = 75
+export const AGE_CAP_PURCHASE       = 65
+export const MAX_PURCHASE_TENURE    = 30
+export const CANCELLATION_FEE_RATE  = 0.0075
 
 export type DecouplePropertyType = 'hdb' | 'completed_condo_ec' | 'incompleted_condo_ec' | 'landed'
+export type DecoupleScenario     = 'S1' | 'S2' | 'S3' | 'S4'
+export type TdsrOutcome          = 'both_pass' | 'refi_pass_purchase_fail' | 'both_fail'
 
 export const DECOUPLE_PROPERTY_TYPES: { value: DecouplePropertyType; label: string; tenureCap: number; buc: boolean }[] = [
-    { value: 'hdb',                  label: 'HDB',                                   tenureCap: 30, buc: false },
-    { value: 'completed_condo_ec',   label: 'Completed Condo / EC (CSC obtained)',   tenureCap: 35, buc: false },
-    { value: 'incompleted_condo_ec', label: 'Incompleted Condo / EC (No CSC)',       tenureCap: 35, buc: true  },
-    { value: 'landed',               label: 'Landed',                                tenureCap: 35, buc: false },
+    { value: 'hdb',                  label: 'HDB',                                 tenureCap: 30, buc: false },
+    { value: 'completed_condo_ec',   label: 'Completed Condo / EC (CSC obtained)', tenureCap: 35, buc: false },
+    { value: 'incompleted_condo_ec', label: 'Incompleted Condo / EC (No CSC)',     tenureCap: 35, buc: true  },
+    { value: 'landed',               label: 'Landed',                              tenureCap: 35, buc: false },
 ]
+
+export const SUBSIDY_PRESETS = ['0', '2000', '2500']
 
 export function propertyTenureCap(type?: string): number {
     return type === 'hdb' ? 30 : 35
 }
 
-export const SUBSIDY_PRESETS = ['0', '2000', '2500']
-
 // ─── Stamp duties ─────────────────────────────────────────────────────────────
 
-/** BSD tiered slabs — same as purchaseCalc. */
 export function calculateBSD(price: number): number {
     if (price <= 0) return 0
     let bsd = 0
-    if (price <= 180_000) return price * 0.01
+    if (price <= 180_000)   return price * 0.01
     bsd += 180_000 * 0.01
-    if (price <= 360_000) return bsd + (price - 180_000) * 0.02
+    if (price <= 360_000)   return bsd + (price - 180_000) * 0.02
     bsd += 180_000 * 0.02
     if (price <= 1_000_000) return bsd + (price - 360_000) * 0.03
     bsd += 640_000 * 0.03
@@ -64,21 +68,11 @@ export function calculateBSD(price: number): number {
     return bsd + (price - 3_000_000) * 0.06
 }
 
-/** ABSD — simplified flat rates from the original decoupling calculator. */
 export function calculateABSD(price: number, residency?: string): { amount: number; ratePct: number } {
     const rate = residency === 'pr' ? 0.05 : residency === 'foreigner' ? 0.60 : 0
     return { amount: price * rate, ratePct: rate * 100 }
 }
 
-/**
- * SSD — two rate tables based on year of purchase:
- *   ≤ 2022          → no SSD (past holding period)
- *   2023–2024       → old rates: 12% / 8% / 4% / 0% (3-year window)
- *   2025+           → new rates: 16% / 12% / 8% / 4% / 0% (4-year window)
- *
- * yearsHeld = currentYear − yearOfPurchase (year-only, client unlikely to recall month).
- * A remark pointing to IRAS should be shown in the UI for exact computation.
- */
 export function calculateSSD(
     yearOfPurchase: number,
     sellingPrice: number,
@@ -91,22 +85,20 @@ export function calculateSSD(
         const rate = yearsHeld < 1 ? 0.16 : yearsHeld < 2 ? 0.12 : yearsHeld < 3 ? 0.08 : yearsHeld < 4 ? 0.04 : 0
         return { amount: sellingPrice * rate, ratePct: rate * 100, rateTable: 'new' }
     }
-    // 2023 or 2024 — old rates
     const rate = yearsHeld < 1 ? 0.12 : yearsHeld < 2 ? 0.08 : yearsHeld < 3 ? 0.04 : 0
     return { amount: sellingPrice * rate, ratePct: rate * 100, rateTable: 'old' }
 }
 
 // ─── Income helpers ───────────────────────────────────────────────────────────
 
-/** Income-weighted average age, rounded up. */
 export function decoupleWeightedAge(borrowers: DecoupleBorrower[]): number | null {
     const valid = borrowers.filter(b => typeof b.age === 'number' && b.age! > 0)
     if (!valid.length) return null
     if (valid.length === 1) return valid[0].age!
     const incomes = valid.map(b => effectiveMonthlyIncome({
-        basicMonthlySalary: b.basic_salary,
+        basicMonthlySalary:   b.basic_salary,
         annualVariableIncome: b.annual_variable,
-        isSelfEmployed: b.employment === 'self_employed',
+        isSelfEmployed:       b.employment === 'self_employed',
     }))
     const total = incomes.reduce((a, x) => a + x, 0)
     if (total <= 0) return Math.ceil(valid.reduce((s, b) => s + b.age!, 0) / valid.length)
@@ -116,259 +108,337 @@ export function decoupleWeightedAge(borrowers: DecoupleBorrower[]): number | nul
 // ─── Inputs / Outputs ─────────────────────────────────────────────────────────
 
 export interface DecoupleInputs {
-    propertyType?: DecouplePropertyType
-    propertyValuation?: number
-    yearOfPurchase?: number
-    propertyUse?: 'own_stay' | 'investment'
-    buyerSharePct?: number             // 1–99
-    residency?: 'singaporean' | 'pr' | 'foreigner'
-    requiresFinancing?: boolean
-    fullyPaid?: boolean
-    outstandingDisbursed?: number
-    outstandingUndisbursed?: number
-    currentTenure?: number
-    sellerCpfUsage?: number
-    buyerCpfUsage?: number
-    buyerCpfOaBalance?: number
-    borrowers?: DecoupleBorrower[]
-    equityLoanAmount?: number
-    referenceRatePct?: number
-    preferredTenure?: number
+    propertyType?:            DecouplePropertyType
+    propertyValuation?:       number
+    yearOfPurchase?:          number
+    propertyUse?:             'own_stay' | 'investment'
+    buyerSharePct?:           number
+    residency?:               'singaporean' | 'pr' | 'foreigner'
+    requiresFinancing?:       boolean
+    fullyPaid?:               boolean
+    outstandingDisbursed?:    number
+    outstandingUndisbursed?:  number
+    currentTenure?:           number
+    sellerCpfUsage?:          number
+    buyerCpfUsage?:           number
+    buyerCpfOaBalance?:       number
+    borrowers?:               DecoupleBorrower[]
+    equityLoanAmount?:        number
+    referenceRatePct?:        number
+    preferredTenureRefi?:     number
+    preferredTenurePurchase?: number
 }
 
 export interface DecoupleComputation {
-    ready: boolean
-    // Shares
-    buyerShareFrac: number
-    sellerShareFrac: number
-    // Prices
-    purchasePrice: number            // valuation × sellerShare — what buyer acquires
-    sellingPrice: number             // same — what seller receives
-    outstandingLoan: number          // disbursed + undisbursed
-    cancellationFee: number          // undisbursed × 0.75%
-    // Liabilities
-    buyerLoanLiability: number       // outstandingLoan × buyerShare — $A (no-fin path)
-    sellerLoanLiability: number      // outstandingLoan × sellerShare
-    // Seller perspective
-    ssd: number
-    ssdRatePct: number
-    ssdRateTable: 'old' | 'new' | 'none'
-    sellerLegalFee: number
-    cashProceeds: number             // sellingPrice − sellerLoanLiability − sellerCpfUsage
-    // Buyer stamp duties
-    bsd: number
-    absd: number
-    absdRatePct: number
+    ready:    boolean
+    scenario: DecoupleScenario | null
+
+    // Shares & prices
+    buyerShareFrac:       number
+    sellerShareFrac:      number
+    purchasePrice:        number   // valuation × sellerShare
+    sellingPrice:         number   // same
+    outstandingLoan:      number
+    cancellationFee:      number
+    buyerLoanLiability:   number   // outstandingLoan × buyerShare  ($A)
+    sellerLoanLiability:  number
+
+    // Buyer stamp duties & fees
+    bsd:          number
+    absd:         number
+    absdRatePct:  number
     buyerLegalFee: number
-    // No-financing path
-    cpfUsedForPurchase: number       // min(buyerCpfOaBalance, purchasePrice)
-    cashRequired: number             // purchasePrice − cpfUsedForPurchase
-    // Yes-financing path
-    cash5: number
-    cpfCash20: number
-    bankLoan75: number
-    newTotalLoan: number             // buyerLoanLiability + bankLoan75
-    cpfUsedForDownpayment: number    // min(buyerCpfOaBalance, cpfCash20)
-    monthlyInstallment: number       // yes-fin path installment on newTotalLoan
-    // Ownership structure (shared, path-dependent)
-    loanForStructure: number         // buyerLoanLiability (no-fin) | newTotalLoan (yes-fin)
-    cpfUsedForStructure: number      // cpfUsedForPurchase | cpfUsedForDownpayment
-    totalCpfUsed: number             // buyerCpfUsage + cpfUsedForStructure — $B
-    loanPct: number                  // Z% or P%
-    cpfPct: number                   // Y%
-    cashPct: number                  // remainder
-    // Equity availability
-    equityPct: number                // 75% − loanPct − cpfPct
-    availableEquity: number          // max(0, equityPct) × valuation
-    equityEligible: boolean
+
+    // No-financing breakdown (S1, S4)
+    cpfUsedForPurchase: number
+    cashRequired:       number
+
+    // Yes-financing breakdown (S2, S3)
+    cash5:                  number
+    cpfCash20:              number
+    bankLoan75:             number
+    cpfUsedForDownpayment:  number
+    monthlyInstallment:     number   // purchase loan at reference rate
+
+    // Ownership structure (post-decoupling, as sole owner)
+    loanForStructure:   number
+    cpfUsedForStructure: number
+    totalCpfUsed:       number      // buyerCpfUsage + cpfUsedForStructure ($B)
+    loanPct:            number
+    cpfPct:             number
+    cashPct:            number
+
+    // Equity loan — two constraints
+    equityPct:            number    // 75% − loanPct − cpfPct
+    equityLoanMaxLtv:     number    // structural limit (LTV-based)
+    equityLoanMaxTdsr:    number    // income limit (TDSR headroom); 0 for S4
+    equityLoanMax:        number    // actual cap = min(ltv, tdsr) for S1-S3; ltv for S4
+    equityEligible:       boolean
     equityNotEligibleReason?: string
-    // Tenure
-    weightedAge: number | null
-    maxTenure: number                // no-fin path max
-    tenureSingle?: number            // yes-fin path: 65 − IWAA
-    effectiveTenure: number          // the tenure actually used for TDSR
-    // TDSR
-    grossMonthlyIncome: number
+
+    // Seller perspective
+    ssd:            number
+    ssdRatePct:     number
+    ssdRateTable:   'old' | 'new' | 'none'
+    sellerLegalFee: number
+    cashProceeds:   number
+
+    // Income (0 for S4 — not collected)
+    weightedAge:          number | null
+    grossMonthlyIncome:   number
     existingMonthlyDebts: number
-    estLoanEligibility: number       // max loan from TDSR capacity at effectiveTenure
-    tdsrPct: number                  // ratio for the actual loan (incl. equity if any)
-    tdsrPass: boolean
+    availableTdsr:        number   // gross × 55% − commitments
+
+    // Refi tenure & TDSR (S1, S3)
+    refiTenureMin:         number
+    refiTenureMax:         number
+    effectiveRefiTenure:   number
+    refiStressInstallment: number  // at 4% stress rate
+    refiMonthlyInstallment: number // at reference rate (display)
+    refiLoanEligibility:   number  // max refi loan from full TDSR capacity
+
+    // Purchase tenure & TDSR (S2, S3)
+    purchaseTenureMin:          number
+    purchaseTenureMax:          number
+    effectivePurchaseTenure:    number
+    purchaseStressInstallment:  number
+    purchaseLoanEligibility:    number  // S3: from balance after refi; S2: from full capacity
+
+    // S3 summary
+    balanceTdsrForPurchase: number  // available − refiStress (refi gets priority)
+    tdsrOutcome:            TdsrOutcome | null
+
+    // Pass/fail
+    refiTdsrPass:     boolean
+    purchaseTdsrPass: boolean
+
+    // Shortfalls for pledge/show guidance
+    refiLoanShortfall:     number  // partial repay needed to pass refi TDSR
+    purchaseLoanShortfall: number  // extra cash/CPF to reduce purchase loan
 }
 
 // ─── Core computation ─────────────────────────────────────────────────────────
 
 export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
-    const valuation       = inputs.propertyValuation ?? 0
-    const buyerShareFrac  = Math.max(0.01, Math.min(0.99, (inputs.buyerSharePct ?? 50) / 100))
+    const valuation      = inputs.propertyValuation ?? 0
+    const buyerShareFrac = Math.max(0.01, Math.min(0.99, (inputs.buyerSharePct ?? 50) / 100))
     const sellerShareFrac = 1 - buyerShareFrac
-    const disbursed       = inputs.outstandingDisbursed ?? 0
-    const undisbursed     = inputs.outstandingUndisbursed ?? 0
+    const disbursed      = inputs.outstandingDisbursed ?? 0
+    const undisbursed    = inputs.outstandingUndisbursed ?? 0
     const outstandingLoan = inputs.fullyPaid ? 0 : disbursed + undisbursed
     const cancellationFee = undisbursed * CANCELLATION_FEE_RATE
-    const sellerCpf       = inputs.sellerCpfUsage ?? 0
-    const buyerCpfUsage   = inputs.buyerCpfUsage ?? 0
-    const buyerCpfOa      = inputs.buyerCpfOaBalance ?? 0
-    const refRate         = inputs.referenceRatePct ?? DEFAULT_REFERENCE_RATE
-    const borrowers       = inputs.borrowers ?? []
-    const requiresFin     = inputs.requiresFinancing ?? false
+    const sellerCpf      = inputs.sellerCpfUsage ?? 0
+    const buyerCpfUsage  = inputs.buyerCpfUsage ?? 0
+    const buyerCpfOa     = inputs.buyerCpfOaBalance ?? 0
+    const refRate        = inputs.referenceRatePct ?? DEFAULT_REFERENCE_RATE
+    const borrowers      = inputs.borrowers ?? []
+    const cap            = propertyTenureCap(inputs.propertyType)
+    const yearsOwned     = inputs.yearOfPurchase ? Math.max(0, CURRENT_YEAR - inputs.yearOfPurchase) : 0
 
+    // ── Scenario ──────────────────────────────────────────────────────────────
+    const scenario: DecoupleScenario | null =
+        inputs.requiresFinancing === undefined || inputs.fullyPaid === undefined ? null
+        : !inputs.requiresFinancing &&  inputs.fullyPaid ? 'S4'
+        : !inputs.requiresFinancing && !inputs.fullyPaid ? 'S1'
+        :  inputs.requiresFinancing &&  inputs.fullyPaid ? 'S2'
+        : 'S3'
+
+    const isRefi     = scenario === 'S1' || scenario === 'S3'
+    const isPurchase = scenario === 'S2' || scenario === 'S3'
+
+    // ── Prices & liabilities ──────────────────────────────────────────────────
     const purchasePrice       = valuation * sellerShareFrac
     const sellingPrice        = purchasePrice
     const buyerLoanLiability  = outstandingLoan * buyerShareFrac
     const sellerLoanLiability = outstandingLoan * sellerShareFrac
 
-    // Stamp duties
-    const bsd                                              = calculateBSD(purchasePrice)
-    const { amount: absd, ratePct: absdRatePct }          = calculateABSD(purchasePrice, inputs.residency)
+    // ── Stamp duties ──────────────────────────────────────────────────────────
+    const bsd = calculateBSD(purchasePrice)
+    const { amount: absd, ratePct: absdRatePct } = calculateABSD(purchasePrice, inputs.residency)
     const { amount: ssd, ratePct: ssdRatePct, rateTable: ssdRateTable } = calculateSSD(inputs.yearOfPurchase ?? 0, sellingPrice)
     const buyerLegalFee  = LEGAL_FEE
     const sellerLegalFee = LEGAL_FEE
 
-    // Seller cash proceeds
+    // ── No-financing breakdown (S1, S4) ───────────────────────────────────────
+    const cpfUsedForPurchase = Math.min(buyerCpfOa, purchasePrice)
+    const cashRequired       = Math.max(0, purchasePrice - cpfUsedForPurchase)
+
+    // ── Yes-financing breakdown (S2, S3) ─────────────────────────────────────
+    const cash5              = purchasePrice * 0.05
+    const cpfCash20          = purchasePrice * 0.20
+    const bankLoan75         = purchasePrice * 0.75
+    const cpfUsedForDownpay  = Math.min(buyerCpfOa, cpfCash20)
+
+    // ── Ownership structure ───────────────────────────────────────────────────
+    const cpfUsedForStructure = isPurchase ? cpfUsedForDownpay : cpfUsedForPurchase
+    const loanForStructure    = isPurchase
+        ? buyerLoanLiability + bankLoan75   // S2: buyerLoanLiability=0 since fullyPaid
+        : buyerLoanLiability                // S1: refi loan; S4: 0 (fully paid + no new)
+    const totalCpfUsed = buyerCpfUsage + cpfUsedForStructure
+
+    const loanPct = valuation > 0 ? loanForStructure / valuation : 0
+    const cpfPct  = valuation > 0 ? totalCpfUsed / valuation : 0
+    const cashPct = Math.max(0, 1 - loanPct - cpfPct)
+
+    // ── Seller proceeds ───────────────────────────────────────────────────────
     const cashProceeds = sellingPrice - sellerLoanLiability - sellerCpf
 
-    // Income
-    const grossMonthlyIncome = borrowers.reduce((s, b) => s + effectiveMonthlyIncome({
+    // ── Income (S4 = not collected) ───────────────────────────────────────────
+    const grossMonthlyIncome = scenario === 'S4' ? 0 : borrowers.reduce((s, b) => s + effectiveMonthlyIncome({
         basicMonthlySalary:   b.basic_salary,
         annualVariableIncome: b.annual_variable,
         isSelfEmployed:       b.employment === 'self_employed',
     }), 0)
-    const existingMonthlyDebts = borrowers.reduce((s, b) => s + (b.commitments ?? 0), 0)
+    const existingMonthlyDebts = scenario === 'S4' ? 0 : borrowers.reduce((s, b) => s + (b.commitments ?? 0), 0)
+    const wa             = scenario === 'S4' ? null : decoupleWeightedAge(borrowers)
+    const availableTdsr  = tdsrAvailable(grossMonthlyIncome, existingMonthlyDebts)
 
-    const wa = decoupleWeightedAge(borrowers)
-
-    // Tenure
-    const cap         = propertyTenureCap(inputs.propertyType)
-    const yearsOwned  = inputs.yearOfPurchase ? Math.max(0, CURRENT_YEAR - inputs.yearOfPurchase) : 0
-    const maxByAge    = wa != null ? Math.max(0, MAX_AGE_CAP - wa) : cap
-    const maxByProp   = Math.max(0, cap - yearsOwned)
-    const maxTenure   = Math.max(Math.min(maxByAge, maxByProp), MIN_TENURE)
-
-    // No-fin: preferred tenure defaulting to current tenure or max
-    const noFinTenure = Math.max(MIN_TENURE, Math.min(
-        inputs.preferredTenure ?? inputs.currentTenure ?? maxTenure,
-        maxTenure,
+    // ── Tenure — refi path (S1, S3) ──────────────────────────────────────────
+    const refiMaxByAge  = wa != null ? Math.max(0, AGE_CAP_REFI - wa) : cap
+    const refiMaxByProp = Math.max(0, cap - yearsOwned)
+    const refiTenureMax = Math.max(MIN_TENURE, Math.min(refiMaxByAge, refiMaxByProp))
+    const refiTenureMin = MIN_TENURE
+    const effectiveRefiTenure = Math.max(MIN_TENURE, Math.min(
+        inputs.preferredTenureRefi ?? inputs.currentTenure ?? refiTenureMax,
+        refiTenureMax,
     ))
 
-    // Yes-fin: 65 − IWAA, capped at 30
-    const tenureSingle = requiresFin && wa != null ? Math.max(0, Math.min(30, 65 - wa)) : undefined
-    const effectiveTenure = requiresFin ? (tenureSingle ?? 30) : noFinTenure
+    // ── Tenure — purchase path (S2, S3) ──────────────────────────────────────
+    const purchaseMaxByAge = wa != null ? Math.max(0, AGE_CAP_PURCHASE - wa) : MAX_PURCHASE_TENURE
+    const purchaseTenureMax = Math.max(MIN_TENURE, Math.min(purchaseMaxByAge, MAX_PURCHASE_TENURE))
+    const purchaseTenureMin = MIN_TENURE
+    const effectivePurchaseTenure = Math.max(MIN_TENURE, Math.min(
+        inputs.preferredTenurePurchase ?? purchaseTenureMax,
+        purchaseTenureMax,
+    ))
 
-    // TDSR capacity
-    const capacity         = tdsrAvailable(grossMonthlyIncome, existingMonthlyDebts)
-    const estLoanEligibility = maxLoanFromPayment(capacity, STRESS_TEST_RATE * 100, effectiveTenure)
+    // ── TDSR calculations (scenario-aware) ───────────────────────────────────
+    const refiStressInstallment = isRefi
+        ? calcInstallment(outstandingLoan, STRESS_TEST_RATE * 100, effectiveRefiTenure)
+        : 0
+    const purchaseStressInstallment = isPurchase
+        ? calcInstallment(bankLoan75, STRESS_TEST_RATE * 100, effectivePurchaseTenure)
+        : 0
 
-    // No-financing breakdown
-    const cpfUsedForPurchase = Math.min(buyerCpfOa, purchasePrice)
-    const cashRequired       = Math.max(0, purchasePrice - cpfUsedForPurchase)
+    // Refi: assessed against full available TDSR
+    const refiLoanEligibility = isRefi
+        ? maxLoanFromPayment(availableTdsr, STRESS_TEST_RATE * 100, effectiveRefiTenure)
+        : 0
 
-    // Yes-financing breakdown
-    const cash5               = purchasePrice * 0.05
-    const cpfCash20           = purchasePrice * 0.20
-    const bankLoan75          = purchasePrice * 0.75
-    const newTotalLoan        = buyerLoanLiability + bankLoan75
-    const cpfUsedForDownpay   = Math.min(buyerCpfOa, cpfCash20)
-    const installment         = calcInstallment(newTotalLoan, refRate, tenureSingle ?? 30)
+    // Purchase (S3): balance after refi takes priority; (S2): full capacity
+    const balanceTdsrForPurchase = Math.max(0, availableTdsr - refiStressInstallment)
+    const purchaseLoanEligibility = isPurchase
+        ? maxLoanFromPayment(
+            scenario === 'S3' ? balanceTdsrForPurchase : availableTdsr,
+            STRESS_TEST_RATE * 100,
+            effectivePurchaseTenure,
+          )
+        : 0
 
-    // Ownership structure
-    const cpfUsedForStructure = requiresFin ? cpfUsedForDownpay : cpfUsedForPurchase
-    const totalCpfUsed        = buyerCpfUsage + cpfUsedForStructure
-    const loanForStructure    = requiresFin ? newTotalLoan : buyerLoanLiability
+    // Pass/fail
+    const refiTdsrPass     = !isRefi  || refiStressInstallment     <= availableTdsr
+    const purchaseTdsrPass = !isPurchase || (
+        scenario === 'S3'
+            ? purchaseStressInstallment <= balanceTdsrForPurchase
+            : purchaseStressInstallment <= availableTdsr
+    )
 
-    const loanPct  = valuation > 0 ? loanForStructure / valuation : 0
-    const cpfPct   = valuation > 0 ? totalCpfUsed / valuation : 0
-    const cashPct  = Math.max(0, 1 - loanPct - cpfPct)
-
-    // Equity
-    const equityPct      = 0.75 - loanPct - cpfPct
-    const availableEquity = valuation > 0 ? Math.max(0, equityPct) * valuation : 0
-    const equityEligible  = equityPct > 0 && availableEquity >= MIN_EQUITY_LOAN
-    let equityNotEligibleReason: string | undefined
-    if (valuation > 0) {
-        if (equityPct <= 0) {
-            equityNotEligibleReason = 'Not eligible for equity loan — combined loan and CPF exceed 75% of property value.'
-        } else if (availableEquity < MIN_EQUITY_LOAN) {
-            equityNotEligibleReason = `Available equity ($${Math.round(availableEquity).toLocaleString()}) is below the $50,000 minimum — a higher valuation is required.`
-        }
+    // S3 outcome
+    let tdsrOutcome: TdsrOutcome | null = null
+    if (scenario === 'S3' && grossMonthlyIncome > 0) {
+        tdsrOutcome = refiTdsrPass && purchaseTdsrPass ? 'both_pass'
+            : refiTdsrPass ? 'refi_pass_purchase_fail'
+            : 'both_fail'
     }
 
-    // TDSR for actual loan (incl. equity if taken)
-    const loanForTdsr    = loanForStructure + (inputs.equityLoanAmount ?? 0)
-    const stressPayment  = calcInstallment(loanForTdsr, STRESS_TEST_RATE * 100, effectiveTenure)
-    const tdsrPct        = grossMonthlyIncome > 0
-        ? ((stressPayment + existingMonthlyDebts) / grossMonthlyIncome) * 100
+    // Shortfalls
+    const refiLoanShortfall     = Math.max(0, outstandingLoan - refiLoanEligibility)
+    const purchaseLoanShortfall = Math.max(0, bankLoan75 - purchaseLoanEligibility)
+
+    // Monthly installments at reference rate (display)
+    const monthlyInstallment    = isPurchase ? calcInstallment(bankLoan75, refRate, effectivePurchaseTenure) : 0
+    const refiMonthlyInstallment = isRefi    ? calcInstallment(outstandingLoan, refRate, effectiveRefiTenure) : 0
+
+    // ── Equity loan — two constraints ─────────────────────────────────────────
+    const equityPct = 0.75 - loanPct - cpfPct
+
+    // LTV-based structural max
+    const equityLoanMaxLtv = valuation > 0 ? Math.max(0, equityPct) * valuation : 0
+
+    // TDSR headroom after all loan obligations
+    const equityRemainingTdsr = Math.max(0, availableTdsr - refiStressInstallment - purchaseStressInstallment)
+    const equityTenure = scenario === 'S2' ? effectivePurchaseTenure : effectiveRefiTenure
+    const equityLoanMaxTdsr = scenario !== 'S4' && equityRemainingTdsr > 0
+        ? maxLoanFromPayment(equityRemainingTdsr, STRESS_TEST_RATE * 100, equityTenure)
         : 0
-    const tdsrPass = grossMonthlyIncome <= 0 || tdsrPct <= 55
+
+    // Eligible equity = property headroom PLUS what leftover TDSR can service —
+    // the two stack (per the advised methodology). S4 has no income, so the
+    // property headroom is the whole figure.
+    const equityLoanMax = scenario === 'S4'
+        ? equityLoanMaxLtv
+        : equityLoanMaxLtv + equityLoanMaxTdsr
+
+    // No property headroom (loan + CPF already at 75% LTV) = nothing to secure against.
+    const equityEligible = equityPct > 0 && equityLoanMax >= MIN_EQUITY_LOAN
+
+    let equityNotEligibleReason: string | undefined
+    if (valuation > 0 && !equityEligible) {
+        equityNotEligibleReason = equityPct <= 0
+            ? 'Not eligible — combined loan and CPF already reach 75% of property value.'
+            : `Available equity (${money(equityLoanMax)}) is below the $50,000 minimum.`
+    }
 
     return {
         ready: valuation > 0 && (inputs.buyerSharePct ?? 0) > 0,
-        buyerShareFrac,
-        sellerShareFrac,
-        purchasePrice,
-        sellingPrice,
-        outstandingLoan,
-        cancellationFee,
-        buyerLoanLiability,
-        sellerLoanLiability,
-        ssd,
-        ssdRatePct,
-        ssdRateTable,
-        sellerLegalFee,
-        cashProceeds,
-        bsd,
-        absd,
-        absdRatePct,
-        buyerLegalFee,
-        cpfUsedForPurchase,
-        cashRequired,
-        cash5,
-        cpfCash20,
-        bankLoan75,
-        newTotalLoan,
-        cpfUsedForDownpayment: cpfUsedForDownpay,
-        monthlyInstallment: installment,
-        loanForStructure,
-        cpfUsedForStructure,
-        totalCpfUsed,
-        loanPct,
-        cpfPct,
-        cashPct,
-        equityPct,
-        availableEquity,
-        equityEligible,
-        equityNotEligibleReason,
-        weightedAge: wa,
-        maxTenure,
-        tenureSingle,
-        effectiveTenure,
-        grossMonthlyIncome,
-        existingMonthlyDebts,
-        estLoanEligibility,
-        tdsrPct,
-        tdsrPass,
+        scenario,
+        buyerShareFrac, sellerShareFrac,
+        purchasePrice, sellingPrice,
+        outstandingLoan, cancellationFee,
+        buyerLoanLiability, sellerLoanLiability,
+        bsd, absd, absdRatePct, buyerLegalFee,
+        cpfUsedForPurchase, cashRequired,
+        cash5, cpfCash20, bankLoan75, cpfUsedForDownpayment: cpfUsedForDownpay,
+        monthlyInstallment,
+        loanForStructure, cpfUsedForStructure, totalCpfUsed,
+        loanPct, cpfPct, cashPct,
+        equityPct, equityLoanMaxLtv, equityLoanMaxTdsr, equityLoanMax,
+        equityEligible, equityNotEligibleReason,
+        ssd, ssdRatePct, ssdRateTable, sellerLegalFee, cashProceeds,
+        weightedAge: wa, grossMonthlyIncome, existingMonthlyDebts, availableTdsr,
+        refiTenureMin, refiTenureMax, effectiveRefiTenure,
+        refiStressInstallment, refiMonthlyInstallment, refiLoanEligibility,
+        purchaseTenureMin, purchaseTenureMax, effectivePurchaseTenure,
+        purchaseStressInstallment, purchaseLoanEligibility,
+        balanceTdsrForPurchase, tdsrOutcome,
+        refiTdsrPass, purchaseTdsrPass,
+        refiLoanShortfall, purchaseLoanShortfall,
     }
 }
 
-/** Map stored workflow shape (snake_case) to calc inputs. */
+function money(n: number) { return `$${Math.round(n).toLocaleString()}` }
+
+/** Map stored workflow shape to calc inputs. */
 export function inputsFromDecoupleWorkflow(d: DecoupleWorkflow): DecoupleInputs {
     return {
-        propertyType:        d.property_type,
-        propertyValuation:   d.property_valuation,
-        yearOfPurchase:      d.year_of_purchase,
-        propertyUse:         d.property_use,
-        buyerSharePct:       d.buyer_share,
-        residency:           d.residency,
-        requiresFinancing:   d.requires_financing,
-        fullyPaid:           d.fully_paid,
-        outstandingDisbursed:   d.outstanding_disbursed,
+        propertyType:          d.property_type,
+        propertyValuation:     d.property_valuation,
+        yearOfPurchase:        d.year_of_purchase,
+        propertyUse:           d.property_use,
+        buyerSharePct:         d.buyer_share,
+        residency:             d.residency,
+        requiresFinancing:     d.requires_financing,
+        fullyPaid:             d.fully_paid,
+        outstandingDisbursed:  d.outstanding_disbursed,
         outstandingUndisbursed: d.outstanding_undisbursed,
-        currentTenure:       d.current_tenure,
-        sellerCpfUsage:      d.seller_cpf_usage,
-        buyerCpfUsage:       d.buyer_cpf_usage,
-        buyerCpfOaBalance:   d.buyer_cpf_oa_balance,
-        borrowers:           d.borrowers,
-        equityLoanAmount:    d.equity_loan_amount,
-        referenceRatePct:    d.reference_rate,
-        preferredTenure:     d.preferred_tenure,
+        currentTenure:         d.current_tenure,
+        sellerCpfUsage:        d.seller_cpf_usage,
+        buyerCpfUsage:         d.buyer_cpf_usage,
+        buyerCpfOaBalance:     d.buyer_cpf_oa_balance,
+        borrowers:             d.borrowers,
+        equityLoanAmount:      d.equity_loan_amount,
+        referenceRatePct:      d.reference_rate,
+        preferredTenureRefi:    d.preferred_tenure_refi,
+        preferredTenurePurchase: d.preferred_tenure_purchase,
     }
 }

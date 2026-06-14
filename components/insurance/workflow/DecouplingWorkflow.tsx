@@ -1,21 +1,23 @@
 'use client'
 
-import { ReactNode, useMemo, useState } from 'react'
-import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
+import React, { useMemo, useState } from 'react'
 import {
     computeDecouple,
     inputsFromDecoupleWorkflow,
-    DECOUPLE_PROPERTY_TYPES,
-    SUBSIDY_PRESETS,
     DEFAULT_REFERENCE_RATE,
     MIN_TENURE,
-    type DecouplePropertyType,
+    AGE_CAP_REFI,
+    AGE_CAP_PURCHASE,
+    SUBSIDY_PRESETS,
+    type TdsrOutcome,
 } from '@/lib/insurance/decoupleCalc'
+import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
-    Home, CheckCircle2, AlertTriangle, Info, Save, Wallet,
+    Home, CheckCircle2, AlertTriangle, Info, Save,
     ArrowRight, ExternalLink, Users, Building2, Percent,
+    Wallet,
 } from 'lucide-react'
 
 interface Props {
@@ -31,7 +33,12 @@ interface Props {
 
 const money = (n: number) => `$${Math.round(n).toLocaleString()}`
 const pct   = (frac: number, dp = 1) => `${(frac * 100).toFixed(dp)}%`
-const num   = (v: string) => (v.trim() === '' ? undefined : parseFloat(v.replace(/,/g, '')))
+const num   = (v: string | number) => {
+    const s = String(v).trim()
+    if (s === '') return undefined
+    const n = parseFloat(s.replace(/,/g, ''))
+    return isNaN(n) ? undefined : n
+}
 
 export default function DecouplingWorkflowPanel({
     data, onChange, clientName, embedded, saving, saved, hasClientName, onContinue,
@@ -42,23 +49,21 @@ export default function DecouplingWorkflowPanel({
     )
 
     const computation = useMemo(() => computeDecouple(inputsFromDecoupleWorkflow(data)), [data])
+    const { scenario } = computation
 
-    const sellerPct   = 100 - (data.buyer_share ?? 50)
-    const buyerPctStr = `${data.buyer_share ?? ''}%`
+    const sellerPct    = 100 - (data.buyer_share ?? 50)
+    const buyerPctStr  = `${data.buyer_share ?? ''}%`
     const sellerPctStr = `${sellerPct}%`
 
-    // Borrowers
+    // Single borrower only
     const defaultBorrower: DecoupleBorrower = { employment: 'employed' }
-    const borrowers = data.borrowers ?? [defaultBorrower]
-    const setBorrowerCount = (n: 1 | 2 | 3 | 4) => {
-        update({ borrowers: Array.from({ length: n }, (_, i) => borrowers[i] ?? defaultBorrower) })
-    }
-    const updateBorrower = (i: number, patch: Partial<DecoupleBorrower>) => {
-        const next = borrowers.map((b, idx) => idx === i ? { ...b, ...patch } : b)
-        update({ borrowers: next })
+    const borrowers = data.borrowers?.length ? [data.borrowers[0]] : [defaultBorrower]
+    const updateBorrower = (patch: Partial<DecoupleBorrower>) => {
+        update({ borrowers: [{ ...borrowers[0], ...patch }] })
     }
 
-    const isBuc = data.property_type === 'incompleted_condo_ec'
+    const showIncome = scenario !== null && scenario !== 'S4'
+    const showTdsr   = showIncome && computation.grossMonthlyIncome > 0
 
     return (
         <div className="space-y-5">
@@ -82,16 +87,8 @@ export default function DecouplingWorkflowPanel({
                 )}
             </div>
 
-            {/* ── PROPERTY DETAILS ── */}
+            {/* ── 1. PROPERTY DETAILS ── */}
             <Section title="Property Details" icon={<Home size={15} />}>
-                <Question label="Property Type" required>
-                    <PillSelect
-                        value={data.property_type}
-                        onChange={v => update({ property_type: v as DecouplePropertyType, outstanding_undisbursed: undefined })}
-                        options={DECOUPLE_PROPERTY_TYPES.map(p => ({ value: p.value, label: p.label }))}
-                    />
-                </Question>
-
                 <Question label="Property Valuation" required>
                     <FieldInput commas prefix="$" value={data.property_valuation ?? ''} placeholder="e.g. 1,500,000"
                         onChange={v => update({ property_valuation: num(v) })} />
@@ -102,11 +99,11 @@ export default function DecouplingWorkflowPanel({
                         onChange={v => update({ year_of_purchase: num(v) })} />
                     <p className="text-[11px] text-slate-400 flex items-start gap-1.5 mt-1">
                         <Info size={11} className="mt-0.5 shrink-0" />
-                        For exact SSD computation, check{' '}
+                        For exact SSD, check{' '}
                         <a href="https://www.iras.gov.sg/taxes/stamp-duty/for-property/selling-or-disposing-property/seller's-stamp-duty-(ssd)-for-residential-property"
                             target="_blank" rel="noopener noreferrer"
                             className="text-[#03a9e7] underline inline-flex items-center gap-0.5">
-                            IRAS website <ExternalLink size={10} />
+                            IRAS <ExternalLink size={10} />
                         </a>
                     </p>
                 </Question>
@@ -114,7 +111,7 @@ export default function DecouplingWorkflowPanel({
                 <Question label="Property Use" required>
                     <PillSelect
                         value={data.property_use}
-                        onChange={v => update({ property_use: v as 'own_stay' | 'investment' })}
+                        onChange={v => update({ property_use: v as DecoupleWorkflow['property_use'] })}
                         options={[
                             { value: 'own_stay',   label: 'Own-Stay' },
                             { value: 'investment', label: 'Investment' },
@@ -123,8 +120,8 @@ export default function DecouplingWorkflowPanel({
                 </Question>
             </Section>
 
-            {/* ── OWNERSHIP SPLIT ── */}
-            <Section title="Ownership Split" icon={<Users size={15} />}>
+            {/* ── 2. OWNERSHIP ── */}
+            <Section title="Ownership" icon={<Users size={15} />}>
                 <div className="grid grid-cols-2 gap-4">
                     <Question label="Buyer's Share (%)" required>
                         <FieldInput type="number" value={data.buyer_share ?? ''} placeholder="e.g. 50"
@@ -149,10 +146,7 @@ export default function DecouplingWorkflowPanel({
                         They will acquire seller's <span className="font-semibold text-slate-600">{sellerPctStr}</span> share to become sole owner.
                     </p>
                 )}
-            </Section>
 
-            {/* ── BUYER PROFILE ── */}
-            <Section title="Buyer Profile" icon={<Wallet size={15} />}>
                 <Question label="Residency" required>
                     <PillSelect
                         value={data.residency}
@@ -170,7 +164,7 @@ export default function DecouplingWorkflowPanel({
                     {data.requires_financing === false && (
                         <p className="text-[11px] text-slate-400 flex items-start gap-1.5 mt-1">
                             <Info size={11} className="mt-0.5 shrink-0" />
-                            Buyer pays for seller's share in cash / CPF only. Existing loan is refinanced on buyer's name.
+                            Buyer pays for seller's share in cash / CPF only. Existing loan is refinanced in buyer's name.
                         </p>
                     )}
                     {data.requires_financing === true && (
@@ -181,82 +175,38 @@ export default function DecouplingWorkflowPanel({
                     )}
                 </Question>
 
-                {/* Income — always shown for TDSR */}
-                <div className="border-t border-slate-100 pt-4 space-y-4">
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                        Borrower Income — for TDSR
-                    </p>
-                    <Question label="Number of borrowers">
-                        <PillSelect
-                            value={String(borrowers.length)}
-                            onChange={v => setBorrowerCount(Number(v) as 1 | 2 | 3 | 4)}
-                            options={[
-                                { value: '1', label: 'Solo' },
-                                { value: '2', label: 'Joint (2)' },
-                                { value: '3', label: 'Joint (3)' },
-                                { value: '4', label: 'Joint (4)' },
-                            ]}
-                        />
-                    </Question>
-                    {borrowers.map((b, i) => (
-                        <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-4">
-                            <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                                {borrowers.length === 1 ? 'Borrower' : `Borrower ${i + 1}`}
-                            </p>
-                            <Question label="Employment">
-                                <PillSelect
-                                    value={b.employment ?? 'employed'}
-                                    onChange={v => updateBorrower(i, { employment: v as DecoupleBorrower['employment'] })}
-                                    options={[
-                                        { value: 'employed',      label: 'Employed' },
-                                        { value: 'self_employed', label: 'Self-Employed' },
-                                    ]}
-                                />
-                            </Question>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                {b.employment !== 'self_employed' && (
-                                    <Question label="Monthly Basic Salary">
-                                        <FieldInput commas prefix="$" value={b.basic_salary ?? ''}
-                                            onChange={v => updateBorrower(i, { basic_salary: num(v) })} />
-                                    </Question>
-                                )}
-                                <Question label={b.employment === 'self_employed' ? 'Annual Income (NOA)' : 'Annual Bonus / Variable'}>
-                                    <FieldInput commas prefix="$" value={b.annual_variable ?? ''}
-                                        onChange={v => updateBorrower(i, { annual_variable: num(v) })} />
-                                </Question>
-                                <Question label="Age">
-                                    <FieldInput type="number" value={b.age ?? ''}
-                                        onChange={v => updateBorrower(i, { age: num(v) })} />
-                                </Question>
-                                <Question label="Monthly Commitments (excl. property)">
-                                    <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="car, credit cards…"
-                                        onChange={v => updateBorrower(i, { commitments: num(v) })} />
-                                </Question>
-                            </div>
-                        </div>
-                    ))}
-                    {computation.weightedAge != null && (
-                        <div className="flex items-center gap-4 rounded-lg bg-sky-50/50 border border-[#03a9e7]/15 px-4 py-3">
-                            <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">IWAA</p>
-                                <p className="text-base font-bold text-[#052d4a]">{computation.weightedAge} yrs</p>
-                            </div>
-                            <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Gross Monthly Income</p>
-                                <p className="text-base font-bold text-[#052d4a]">{money(computation.grossMonthlyIncome)}</p>
-                            </div>
-                            <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Max Loan Tenure</p>
-                                <p className="text-base font-bold text-[#052d4a]">
-                                    {data.requires_financing ? (computation.tenureSingle ?? '—') : computation.maxTenure} yrs
-                                </p>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                {/* Scenario badge */}
+                {scenario && (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50/60 px-3 py-2.5 flex items-center gap-2">
+                        <Info size={13} className="text-[#03a9e7] shrink-0" />
+                        <p className="text-[12px] text-slate-600">
+                            <span className="font-bold text-[#052d4a]">{scenario}:&nbsp;</span>
+                            {scenario === 'S1' && 'No new financing · Has outstanding mortgage — refi TDSR only'}
+                            {scenario === 'S2' && 'New financing · No outstanding mortgage — purchase TDSR only'}
+                            {scenario === 'S3' && 'New financing · Has outstanding mortgage — refi + purchase TDSR'}
+                            {scenario === 'S4' && 'No new financing · No outstanding mortgage — cash/CPF only, no TDSR'}
+                        </p>
+                    </div>
+                )}
             </Section>
 
-            {/* ── MORTGAGE DETAILS ── */}
+            {/* ── 3. CPF DETAILS ── */}
+            <Section title="CPF Details" icon={<Percent size={15} />}>
+                <Question label="Seller's CPF Usage on Property (Refund to OA)">
+                    <FieldInput commas prefix="$" value={data.seller_cpf_usage ?? ''} placeholder="0"
+                        onChange={v => update({ seller_cpf_usage: num(v) })} />
+                </Question>
+                <Question label="Buyer's CPF Used on Property (Existing)">
+                    <FieldInput commas prefix="$" value={data.buyer_cpf_usage ?? ''} placeholder="0"
+                        onChange={v => update({ buyer_cpf_usage: num(v) })} />
+                </Question>
+                <Question label="Buyer's CPF OA Balance (Available)">
+                    <FieldInput commas prefix="$" value={data.buyer_cpf_oa_balance ?? ''} placeholder="0"
+                        onChange={v => update({ buyer_cpf_oa_balance: num(v) })} />
+                </Question>
+            </Section>
+
+            {/* ── 4. MORTGAGE DETAILS ── */}
             <Section title="Mortgage Details" icon={<Building2 size={15} />}>
                 <Question label="Is the property fully paid?" required>
                     <YesNo value={data.fully_paid} onChange={v => update({ fully_paid: v })} />
@@ -269,28 +219,12 @@ export default function DecouplingWorkflowPanel({
                                 onChange={v => update({ outstanding_disbursed: num(v) })} />
                         </Question>
 
-                        {isBuc && (
-                            <div className="space-y-1.5">
-                                <Question label="Outstanding Loan Amount (Undisbursed)">
-                                    <FieldInput commas prefix="$" value={data.outstanding_undisbursed ?? ''} placeholder="New launch without CSC only"
-                                        onChange={v => update({ outstanding_undisbursed: num(v) })} />
-                                </Question>
-                                {(data.outstanding_undisbursed ?? 0) > 0 && (
-                                    <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                                        <Info size={11} className="text-[#03a9e7] shrink-0" />
-                                        Est. cancellation fee: <span className="font-semibold">{money(computation.cancellationFee)}</span>
-                                        <span className="text-slate-400">(undisbursed × 0.75%)</span>
-                                    </p>
-                                )}
-                            </div>
-                        )}
-
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <Question label="Current Bank">
                                 <InsuranceBankDropdown
                                     value={data.current_bank ?? ''}
                                     onChange={v => update({ current_bank: v })}
-                                    showHdb={data.property_type === 'hdb'}
+                                    showHdb={false}
                                 />
                             </Question>
                             <Question label="Remaining Tenure (years)">
@@ -307,17 +241,17 @@ export default function DecouplingWorkflowPanel({
                             </Question>
                         </div>
 
-                        <Question label="Do you need to return any subsidy to current bank?">
-                            <div className="flex flex-wrap gap-2">
+                        <Question label="Subsidy / Clawback Amount">
+                            <div className="flex flex-wrap gap-2 mb-2">
                                 {SUBSIDY_PRESETS.map(p => (
                                     <button key={p} type="button"
                                         onClick={() => { setCustomSubsidy(false); update({ subsidy_return_amount: Number(p) }) }}
                                         className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                                            !customSubsidy && data.subsidy_return_amount === Number(p)
+                                            !customSubsidy && String(data.subsidy_return_amount ?? 0) === p
                                                 ? 'bg-[#052d4a] border-[#052d4a] text-white'
                                                 : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
                                         }`}>
-                                        {p === '0' ? '$0' : `$${Number(p).toLocaleString()}`}
+                                        ${Number(p).toLocaleString()}
                                     </button>
                                 ))}
                                 <button type="button"
@@ -339,317 +273,367 @@ export default function DecouplingWorkflowPanel({
                 )}
             </Section>
 
-            {/* ── CPF DETAILS ── */}
-            <Section title="CPF Details" icon={<Percent size={15} />}>
-                <Question label="Seller's CPF Usage on Property (Refund to OA)">
-                    <FieldInput commas prefix="$" value={data.seller_cpf_usage ?? ''} placeholder="0"
-                        onChange={v => update({ seller_cpf_usage: num(v) })} />
-                </Question>
-                <Question label="Buyer's CPF Used on Property">
-                    <FieldInput commas prefix="$" value={data.buyer_cpf_usage ?? ''} placeholder="0"
-                        onChange={v => update({ buyer_cpf_usage: num(v) })} />
-                </Question>
-                <Question label="Buyer's CPF OA Balance (Available)">
-                    <FieldInput commas prefix="$" value={data.buyer_cpf_oa_balance ?? ''} placeholder="0"
-                        onChange={v => update({ buyer_cpf_oa_balance: num(v) })} />
-                </Question>
-            </Section>
+            {/* ── 5. BREAKDOWN (Buyer's Perspective) ── */}
+            {computation.ready && scenario !== null && (
+                <div className="rounded-xl border border-[#03a9e7]/30 overflow-hidden shadow-sm">
+                    <div className="px-5 py-4 bg-sky-50/70 border-b border-[#03a9e7]/15">
+                        <p className="text-sm font-bold text-[#052d4a]">Buyer's Perspective</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            Acquiring {sellerPctStr} share — property value {money(data.property_valuation ?? 0)}
+                        </p>
+                    </div>
+                    <div className="px-5 py-5 space-y-5">
+                        {/* Summary stats */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <Stat label={`Property Share (${buyerPctStr})`} value={money(computation.purchasePrice)} />
+                            <Stat label={`Loan Liability (${buyerPctStr} of Loan)`} value={money(computation.buyerLoanLiability)} />
+                        </div>
 
-            {/* ── RESULTS ── */}
-            {computation.ready && (
-                <>
-                    {/* ── BUYER'S PERSPECTIVE ── */}
-                    <div className="rounded-xl border border-[#03a9e7]/30 overflow-hidden shadow-sm">
-                        <div className="px-5 py-4 bg-sky-50/70 border-b border-[#03a9e7]/15">
-                            <p className="text-sm font-bold text-[#052d4a]">Buyer's Perspective</p>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                                Acquiring {sellerPctStr} share — property value {money(data.property_valuation ?? 0)}
+                        {/* Breakdown */}
+                        <div className="border-t border-slate-100 pt-4 space-y-2">
+                            <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Breakdown</p>
+                            <Row label={`Purchase of Part Share (${sellerPctStr})`} value={money(computation.purchasePrice)} highlight />
+
+                            {/* S1, S4 — no new financing */}
+                            {(scenario === 'S1' || scenario === 'S4') && (
+                                <>
+                                    <Row label="Cash" value={money(computation.cashRequired)} />
+                                    <Row label="CPF (as per CPF OA Balance)" value={money(computation.cpfUsedForPurchase)} />
+                                    <div className="border-t border-dashed border-slate-200 my-1" />
+                                    {scenario === 'S1' && (
+                                        <Row label={`Refinanced Loan (${pct(computation.loanPct)})`} value={money(computation.loanForStructure)} />
+                                    )}
+                                    <Row label={`Total CPF Used (${pct(computation.cpfPct)})`} value={money(computation.totalCpfUsed)} />
+                                </>
+                            )}
+
+                            {/* S2, S3 — new financing */}
+                            {(scenario === 'S2' || scenario === 'S3') && (
+                                <>
+                                    <Row label="5% Cash (Minimum Cash)" value={money(computation.cash5)} />
+                                    <Row label="20% CPF / Cash" value={money(computation.cpfCash20)} />
+                                    <Row label="75% Bank Loan (New)" value={money(computation.bankLoan75)} />
+                                    <div className="border-t border-dashed border-slate-200 my-1" />
+                                    <Row label={`New Total Loan (${pct(computation.loanPct)})`} value={money(computation.loanForStructure)} />
+                                    <Row label={`Total CPF Used (${pct(computation.cpfPct)})`} value={money(computation.totalCpfUsed)} />
+                                </>
+                            )}
+                        </div>
+
+                        {/* Fees */}
+                        <div className="border-t border-slate-100 pt-4 space-y-2">
+                            <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Est. Misc Fees</p>
+                            <Row label="Buyer's Stamp Duty (BSD)" value={money(computation.bsd)} />
+                            {computation.absd > 0 && (
+                                <Row label={`ABSD (${computation.absdRatePct}%)`} value={money(computation.absd)} />
+                            )}
+                            <Row label="Legal Fee (Cash / CPF)" value={`${money(computation.buyerLegalFee)} +/-`} />
+                        </div>
+
+                        {/* Ownership bar */}
+                        <div className="border-t border-slate-100 pt-4 space-y-3">
+                            <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Single Ownership Structure</p>
+                            <OwnershipBar
+                                loanPct={computation.loanPct}
+                                cpfPct={computation.cpfPct}
+                                cashPct={computation.cashPct}
+                                loanAmt={computation.loanForStructure}
+                                cpfAmt={computation.totalCpfUsed}
+                                cashAmt={(data.property_valuation ?? 0) - computation.loanForStructure - computation.totalCpfUsed}
+                            />
+                            <p className="text-[11px] text-slate-400">
+                                Based on property valuation of {money(data.property_valuation ?? 0)}.
                             </p>
                         </div>
 
-                        <div className="px-5 py-5 space-y-5">
-                            {/* Header summary */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <Stat label={`Property Share (${buyerPctStr} of Valuation)`} value={money(computation.buyerShareFrac * (data.property_valuation ?? 0))} />
-                                <Stat label={`Loan Liability (${buyerPctStr} of Loan)`} value={money(computation.buyerLoanLiability)}
-                                    hint="Applicable to non-borrower" />
-                            </div>
-
-                            {/* Breakdown — path-dependent */}
+                        {/* Monthly instalment (S2, S3) */}
+                        {(scenario === 'S2' || scenario === 'S3') && (
                             <div className="border-t border-slate-100 pt-4 space-y-2">
-                                <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Breakdown</p>
-                                <Row label={`Purchase of Part Share (${sellerPctStr} Share)`} value={money(computation.purchasePrice)} highlight />
-
-                                {data.requires_financing === false && (
-                                    <>
-                                        <Row label="Cash" value={money(computation.cashRequired)} />
-                                        <Row label={`CPF (as per CPF OA Balance)`} value={money(computation.cpfUsedForPurchase)} />
-                                        <div className="border-t border-dashed border-slate-200 my-1" />
-                                        <Row label={`Refinanced Loan Amount (${pct(computation.loanPct)})`} value={money(computation.loanForStructure)} />
-                                        <Row label={`Total CPF Used (${pct(computation.cpfPct)})`} value={money(computation.totalCpfUsed)} />
-                                    </>
-                                )}
-
-                                {data.requires_financing === true && (
-                                    <>
-                                        <Row label="5% Cash" value={money(computation.cash5)} />
-                                        <Row label="20% CPF / Cash" value={money(computation.cpfCash20)} />
-                                        <Row label="75% Bank Loan" value={money(computation.bankLoan75)} />
-                                        <div className="border-t border-dashed border-slate-200 my-1" />
-                                        <Row label={`New Total Loan (${pct(computation.loanPct)})`} value={money(computation.loanForStructure)} />
-                                        <Row label={`Total CPF Used (${pct(computation.cpfPct)})`} value={money(computation.totalCpfUsed)} />
-                                    </>
-                                )}
-
-                                {data.requires_financing === undefined && (
-                                    <p className="text-xs text-slate-400 italic">Select financing option above to see breakdown.</p>
-                                )}
-                            </div>
-
-                            {/* Buyer stamp duty & fees */}
-                            {data.requires_financing !== undefined && (
-                                <div className="border-t border-slate-100 pt-4 space-y-2">
-                                    <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Est. Misc Fees</p>
-                                    <Row label="Buyer's Stamp Duty (BSD)" value={money(computation.bsd)} />
-                                    {computation.absd > 0 && (
-                                        <Row label={`Additional Buyer's Stamp Duty (${computation.absdRatePct}%)`} value={money(computation.absd)} />
-                                    )}
-                                    <Row label="Legal Fee (Cash / CPF)" value={`${money(computation.buyerLegalFee)} +/-`} />
-                                </div>
-                            )}
-
-                            {/* Ownership structure diagram */}
-                            {data.requires_financing !== undefined && (
-                                <div className="border-t border-slate-100 pt-4 space-y-3">
-                                    <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">
-                                        Single Ownership Structure
-                                    </p>
-                                    <OwnershipBar
-                                        loanPct={computation.loanPct}
-                                        cpfPct={computation.cpfPct}
-                                        cashPct={computation.cashPct}
-                                        loanAmt={computation.loanForStructure}
-                                        cpfAmt={computation.totalCpfUsed}
-                                        cashAmt={(data.property_valuation ?? 0) - computation.loanForStructure - computation.totalCpfUsed}
-                                    />
-                                    <p className="text-[11px] text-slate-400">
-                                        Based on property valuation of {money(data.property_valuation ?? 0)}.
-                                    </p>
-                                </div>
-                            )}
-
-                            {/* Equity availability */}
-                            {data.requires_financing !== undefined && (
-                                <div className="border-t border-slate-100 pt-4 space-y-3">
-                                    <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
-
-                                    <div className="rounded-lg bg-slate-50 border border-slate-100 px-4 py-3 space-y-1">
-                                        <p className="text-xs text-slate-500">
-                                            75% − {pct(computation.loanPct)} (loan) − {pct(computation.cpfPct)} (CPF)
-                                            {' '}= <span className={`font-bold ${computation.equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
-                                                {pct(computation.equityPct)}
-                                            </span>
-                                        </p>
-                                        {computation.equityPct > 0 && (
-                                            <p className="text-sm font-semibold text-[#052d4a]">
-                                                Available Equity: {money(computation.availableEquity)}
-                                            </p>
-                                        )}
+                                <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Est. Monthly Instalment</p>
+                                <div className="flex items-center gap-3 rounded-lg bg-sky-50/50 border border-[#03a9e7]/15 px-4 py-3">
+                                    <div>
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">New Purchase Loan</p>
+                                        <p className="text-lg font-bold text-[#052d4a]">{money(computation.monthlyInstallment)}/mo</p>
                                     </div>
-
-                                    {computation.equityNotEligibleReason ? (
-                                        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-                                            <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-                                            <p className="text-[12px] text-amber-800">{computation.equityNotEligibleReason}</p>
-                                        </div>
-                                    ) : computation.equityEligible && (
-                                        <div className="space-y-2">
-                                            <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
-                                                <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
-                                                <p className="text-[12px] text-emerald-800">
-                                                    Eligible for equity loan — max {money(computation.availableEquity)}
-                                                </p>
-                                            </div>
-                                            <Question label="Would you like to take up an equity loan?">
-                                                <FieldInput commas prefix="$"
-                                                    value={data.equity_loan_amount ?? ''}
-                                                    placeholder={`max ${money(computation.availableEquity)}`}
-                                                    onChange={v => {
-                                                        const n = num(v)
-                                                        update({ equity_loan_amount: n !== undefined ? Math.min(n, computation.availableEquity) : undefined })
-                                                    }} />
-                                            </Question>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Tenure — path-dependent */}
-                            {data.requires_financing !== undefined && (
-                                <div className="border-t border-slate-100 pt-4 space-y-3">
-                                    <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Tenure</p>
-
-                                    {data.requires_financing === false && (
-                                        <div className="space-y-3">
-                                            <div className="flex items-center gap-4 rounded-lg bg-sky-50/50 border border-[#03a9e7]/15 px-4 py-3">
-                                                <div>
-                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Min</p>
-                                                    <p className="text-base font-bold text-[#052d4a]">{MIN_TENURE} yrs</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Max</p>
-                                                    <p className="text-base font-bold text-[#052d4a]">{computation.maxTenure} yrs</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Preferred</p>
-                                                    <p className="text-base font-bold text-[#052d4a]">{computation.effectiveTenure} yrs</p>
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <p className="text-xs font-semibold text-slate-600 mb-1.5">
-                                                    Preferred Tenure
-                                                    <span className="font-normal text-slate-400 ml-1.5">
-                                                        ({MIN_TENURE}–{computation.maxTenure} yrs · default: current tenure)
-                                                    </span>
-                                                </p>
-                                                <div className="flex items-center gap-3">
-                                                    <input type="number" min={MIN_TENURE} max={computation.maxTenure}
-                                                        value={data.preferred_tenure ?? data.current_tenure ?? ''}
-                                                        placeholder={String(data.current_tenure ?? computation.maxTenure)}
-                                                        onChange={e => {
-                                                            const v = parseInt(e.target.value, 10)
-                                                            update({ preferred_tenure: isNaN(v) ? undefined : Math.max(MIN_TENURE, Math.min(computation.maxTenure, v)) })
-                                                        }}
-                                                        className="w-24 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
-                                                    <span className="text-xs text-slate-500">years</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {data.requires_financing === true && computation.tenureSingle != null && (
-                                        <div className="flex items-center gap-4 rounded-lg bg-sky-50/50 border border-[#03a9e7]/15 px-4 py-3">
-                                            <div>
-                                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Tenure</p>
-                                                <p className="text-base font-bold text-[#052d4a]">{computation.tenureSingle} yrs</p>
-                                                <p className="text-[10px] text-slate-400">65 − IWAA</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Monthly Instalment</p>
-                                                <p className="text-lg font-bold text-[#052d4a]">{money(computation.monthlyInstallment)}</p>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {data.requires_financing === true && (
-                                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                                            <span>Est. instalment at</span>
-                                            <input type="number" step="0.05"
-                                                value={data.reference_rate ?? ''}
-                                                placeholder={`${DEFAULT_REFERENCE_RATE}`}
-                                                onChange={e => update({ reference_rate: num(e.target.value) })}
-                                                className="w-16 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
-                                            <span>% p.a.</span>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* TDSR */}
-                            {data.requires_financing !== undefined && computation.grossMonthlyIncome > 0 && (
-                                <div className="border-t border-slate-100 pt-4 space-y-3">
-                                    <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">TDSR Assessment</p>
-
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <Stat label="Est. Loan Eligibility" value={money(computation.estLoanEligibility)}
-                                            hint="TDSR capacity — excl. property installment" />
-                                        <div className={`rounded-lg border px-3 py-2.5 ${computation.tdsrPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                                            <p className="text-[11px] text-slate-500 leading-tight">TDSR Result</p>
-                                            <p className={`text-sm font-bold mt-0.5 ${computation.tdsrPass ? 'text-emerald-700' : 'text-red-600'}`}>
-                                                {computation.tdsrPass ? 'Pass' : 'Fail'}
-                                            </p>
-                                            <p className="text-[10px] text-slate-400 mt-0.5">
-                                                {computation.tdsrPct.toFixed(1)}% of income
-                                            </p>
-                                        </div>
+                                    <div className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+                                        <span>at</span>
+                                        <input type="number" step="0.05"
+                                            value={data.reference_rate ?? ''}
+                                            placeholder={`${DEFAULT_REFERENCE_RATE}`}
+                                            onChange={e => update({ reference_rate: num(e.target.value) })}
+                                            className="w-16 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
+                                        <span>% p.a.</span>
                                     </div>
-
-                                    {/* Remedies when TDSR fails */}
-                                    {!computation.tdsrPass && (
-                                        <TdsrRemedies
-                                            propertyUse={data.property_use}
-                                            hasEquityLoan={(data.equity_loan_amount ?? 0) > 0}
-                                        />
-                                    )}
                                 </div>
-                            )}
-                        </div>
+                            </div>
+                        )}
                     </div>
-
-                    {/* ── SELLER'S PERSPECTIVE ── */}
-                    <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                        <div className="px-5 py-4 bg-slate-50 border-b border-slate-100">
-                            <p className="text-sm font-bold text-[#052d4a]">Seller's Perspective</p>
-                            <p className="text-xs text-slate-500 mt-0.5">Disposing {sellerPctStr} share</p>
-                        </div>
-
-                        <div className="px-5 py-5 space-y-5">
-                            <div className="grid grid-cols-2 gap-3">
-                                <Stat label={`Property Share (${sellerPctStr} of Valuation)`} value={money(computation.sellerShareFrac * (data.property_valuation ?? 0))} />
-                                <Stat label={`Loan Liability (${sellerPctStr} of Loan)`} value={money(computation.sellerLoanLiability)}
-                                    hint="Applicable to non-borrower" />
-                            </div>
-
-                            <div className="border-t border-slate-100 pt-4 space-y-2">
-                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Breakdown</p>
-                                <Row label={`Sale of Part Share (${sellerPctStr} Share)`} value={money(computation.sellingPrice)} highlight />
-                                <Row label="Less: Loan Liability" value={`−${money(computation.sellerLoanLiability)}`} />
-                                <Row label="Less: CPF Usage (Refund to OA)" value={`−${money(data.seller_cpf_usage ?? 0)}`} />
-                                <div className="border-t border-slate-200 pt-2 mt-1">
-                                    <Row label="Cash Proceeds" value={money(computation.cashProceeds)}
-                                        valueClass={computation.cashProceeds < 0 ? 'text-red-600' : 'text-emerald-700 font-bold'} />
-                                </div>
-                            </div>
-
-                            <div className="border-t border-slate-100 pt-4 space-y-2">
-                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Est. Misc Fees</p>
-                                {computation.ssd > 0 ? (
-                                    <Row label={`Seller's Stamp Duty — ${computation.ssdRatePct}% (${computation.ssdRateTable === 'new' ? 'new' : 'old'} rates)`}
-                                        value={money(computation.ssd)} />
-                                ) : (
-                                    <Row label="Seller's Stamp Duty" value="$0" hint={
-                                        computation.ssdRateTable === 'none'
-                                            ? 'No SSD — past holding period'
-                                            : 'No SSD at current holding period'
-                                    } />
-                                )}
-                                <Row label="Legal Fee (Cash / CPF)" value={`${money(computation.sellerLegalFee)} +/-`} />
-                            </div>
-
-                            {computation.cashProceeds < 0 && (
-                                <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-                                    <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
-                                    <p className="text-[13px] text-red-800 leading-relaxed">
-                                        Cash proceeds are negative — seller may need to top up cash to complete the sale.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Disclaimer */}
-                    <p className="text-[11px] text-slate-400 leading-relaxed px-1">
-                        All figures are estimates for discussion purposes only and do not constitute a formal bank approval.
-                        Stamp duties follow prevailing IRAS rates — verify before committing.
-                    </p>
-                </>
+                </div>
             )}
 
+            {/* ── 6. BUYER INCOME ── (skip S4) */}
+            {showIncome && (
+                <Section title="Buyer Income — for TDSR" icon={<Wallet size={15} />}>
+                    {borrowers.map((b, i) => (
+                        <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-4">
+                            <Question label="Employment">
+                                <PillSelect
+                                    value={b.employment ?? 'employed'}
+                                    onChange={v => updateBorrower({ employment: v as DecoupleBorrower['employment'] })}
+                                    options={[
+                                        { value: 'employed',      label: 'Employed' },
+                                        { value: 'self_employed', label: 'Self-Employed' },
+                                    ]}
+                                />
+                            </Question>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                {b.employment !== 'self_employed' && (
+                                    <Question label="Monthly Basic Salary">
+                                        <FieldInput commas prefix="$" value={b.basic_salary ?? ''}
+                                            onChange={v => updateBorrower({ basic_salary: num(v) })} />
+                                    </Question>
+                                )}
+                                <Question label={b.employment === 'self_employed' ? 'Annual Income (NOA)' : 'Annual Bonus / Variable'}>
+                                    <FieldInput commas prefix="$" value={b.annual_variable ?? ''}
+                                        onChange={v => updateBorrower({ annual_variable: num(v) })} />
+                                </Question>
+                                <Question label="Age">
+                                    <FieldInput type="number" value={b.age ?? ''}
+                                        onChange={v => updateBorrower({ age: num(v) })} />
+                                </Question>
+                                <Question label="Monthly Commitments (excl. property)">
+                                    <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="car, credit cards…"
+                                        onChange={v => updateBorrower({ commitments: num(v) })} />
+                                </Question>
+                            </div>
+                        </div>
+                    ))}
+
+                    {computation.weightedAge != null && (
+                        <div className="flex items-center gap-4 rounded-lg bg-sky-50/50 border border-[#03a9e7]/15 px-4 py-3 flex-wrap">
+                            <div>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Age</p>
+                                <p className="text-base font-bold text-[#052d4a]">{computation.weightedAge} yrs</p>
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Gross Monthly Income</p>
+                                <p className="text-base font-bold text-[#052d4a]">{money(computation.grossMonthlyIncome)}</p>
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Available TDSR</p>
+                                <p className="text-base font-bold text-[#052d4a]">{money(computation.availableTdsr)}/mo</p>
+                            </div>
+                        </div>
+                    )}
+                </Section>
+            )}
+
+            {/* ── 7. TDSR SECTION ── (skip S4) */}
+            {showTdsr && (
+                <Section title="TDSR Assessment" icon={<Percent size={15} />}>
+                    {/* Available TDSR header */}
+                    <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/40 px-4 py-3">
+                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Available TDSR</p>
+                        <p className="text-xl font-bold text-[#052d4a]">{money(computation.availableTdsr)}<span className="text-sm font-normal text-slate-500">/month</span></p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                            {money(computation.grossMonthlyIncome)} × 55% − {money(computation.existingMonthlyDebts)} commitments
+                        </p>
+                    </div>
+
+                    {/* S1 — refi only */}
+                    {scenario === 'S1' && (
+                        <TdsrBlock
+                            title="Refinancing"
+                            tenureMin={computation.refiTenureMin}
+                            tenureMax={computation.refiTenureMax}
+                            effectiveTenure={computation.effectiveRefiTenure}
+                            ageCap={AGE_CAP_REFI}
+                            defaultLabel="current tenure"
+                            stressInstallment={computation.refiStressInstallment}
+                            loanEligibility={computation.refiLoanEligibility}
+                            pass={computation.refiTdsrPass}
+                            onTenureChange={v => update({ preferred_tenure_refi: v })}
+                            preferredTenure={data.preferred_tenure_refi}
+                        />
+                    )}
+
+                    {/* S2 — purchase only */}
+                    {scenario === 'S2' && (
+                        <TdsrBlock
+                            title="New Purchase Loan"
+                            tenureMin={computation.purchaseTenureMin}
+                            tenureMax={computation.purchaseTenureMax}
+                            effectiveTenure={computation.effectivePurchaseTenure}
+                            ageCap={AGE_CAP_PURCHASE}
+                            defaultLabel="max tenure"
+                            stressInstallment={computation.purchaseStressInstallment}
+                            loanEligibility={computation.purchaseLoanEligibility}
+                            pass={computation.purchaseTdsrPass}
+                            onTenureChange={v => update({ preferred_tenure_purchase: v })}
+                            preferredTenure={data.preferred_tenure_purchase}
+                        />
+                    )}
+
+                    {/* S3 — both */}
+                    {scenario === 'S3' && (
+                        <div className="space-y-4">
+                            <TdsrBlock
+                                title="Refinancing (Priority)"
+                                tenureMin={computation.refiTenureMin}
+                                tenureMax={computation.refiTenureMax}
+                                effectiveTenure={computation.effectiveRefiTenure}
+                                ageCap={AGE_CAP_REFI}
+                                defaultLabel="max tenure"
+                                stressInstallment={computation.refiStressInstallment}
+                                loanEligibility={computation.refiLoanEligibility}
+                                pass={computation.refiTdsrPass}
+                                onTenureChange={v => update({ preferred_tenure_refi: v })}
+                                preferredTenure={data.preferred_tenure_refi}
+                            />
+
+                            {/* Balance after refi */}
+                            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                                <div>
+                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Balance for Purchase</p>
+                                    <p className="text-base font-bold text-[#052d4a]">{money(computation.balanceTdsrForPurchase)}/mo</p>
+                                    <p className="text-[11px] text-slate-400">Available TDSR − Refi instalment</p>
+                                </div>
+                            </div>
+
+                            <TdsrBlock
+                                title="New Purchase Loan"
+                                tenureMin={computation.purchaseTenureMin}
+                                tenureMax={computation.purchaseTenureMax}
+                                effectiveTenure={computation.effectivePurchaseTenure}
+                                ageCap={AGE_CAP_PURCHASE}
+                                defaultLabel="max tenure"
+                                stressInstallment={computation.purchaseStressInstallment}
+                                loanEligibility={computation.purchaseLoanEligibility}
+                                pass={computation.purchaseTdsrPass}
+                                onTenureChange={v => update({ preferred_tenure_purchase: v })}
+                                preferredTenure={data.preferred_tenure_purchase}
+                            />
+
+                            {/* S3 summary */}
+                            {computation.tdsrOutcome && (
+                                <TdsrSummaryS3
+                                    outcome={computation.tdsrOutcome}
+                                    refiLoanShortfall={computation.refiLoanShortfall}
+                                    purchaseLoanShortfall={computation.purchaseLoanShortfall}
+                                />
+                            )}
+                        </div>
+                    )}
+                </Section>
+            )}
+
+            {/* ── 8. EQUITY LOAN ── (only when the client wants one) */}
+            {computation.ready && scenario !== null && (
+                <Section title="Equity Loan" icon={<Wallet size={15} />}>
+                    <Question label="Does the client want to take up an equity loan?">
+                        <YesNo value={data.wants_equity_loan} onChange={v => update({ wants_equity_loan: v })} />
+                    </Question>
+
+                    {data.wants_equity_loan && (
+                        scenario !== 'S4' && computation.grossMonthlyIncome === 0 ? (
+                            <p className="text-[12px] text-slate-400 flex items-start gap-1.5">
+                                <Info size={11} className="mt-0.5 shrink-0" />
+                                Enter buyer income above to assess equity-loan affordability.
+                            </p>
+                        ) : computation.equityNotEligibleReason ? (
+                            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                                <p className="text-[12px] text-amber-800">{computation.equityNotEligibleReason}</p>
+                            </div>
+                        ) : computation.equityEligible ? (
+                            <div className="space-y-3">
+                                <div className="rounded-lg bg-slate-50 border border-slate-100 px-4 py-3 space-y-2">
+                                    <Row label="Property headroom (75% LTV − loan − CPF)" value={money(computation.equityLoanMaxLtv)} />
+                                    {scenario !== 'S4' && (
+                                        <Row label="Affordability (leftover TDSR)" value={money(computation.equityLoanMaxTdsr)} />
+                                    )}
+                                    <div className="border-t border-slate-200 pt-2">
+                                        <Row
+                                            label={scenario === 'S4' ? 'Eligible (property headroom)' : 'Eligible (property + leftover TDSR)'}
+                                            value={money(computation.equityLoanMax)}
+                                            highlight valueClass="text-emerald-700"
+                                        />
+                                    </div>
+                                </div>
+                                <Question label="Equity loan amount to take">
+                                    <FieldInput commas prefix="$"
+                                        value={data.equity_loan_amount ?? ''}
+                                        placeholder={`max ${money(computation.equityLoanMax)}`}
+                                        onChange={v => {
+                                            const n = num(v)
+                                            update({ equity_loan_amount: n !== undefined ? Math.min(n, computation.equityLoanMax) : undefined })
+                                        }} />
+                                </Question>
+                            </div>
+                        ) : null
+                    )}
+                </Section>
+            )}
+
+            {/* ── 9. SELLER'S PERSPECTIVE ── */}
+            {computation.ready && scenario !== null && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="px-5 py-4 bg-slate-50 border-b border-slate-100">
+                        <p className="text-sm font-bold text-[#052d4a]">Seller's Perspective</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Disposing {sellerPctStr} share</p>
+                    </div>
+                    <div className="px-5 py-5 space-y-5">
+                        <div className="grid grid-cols-2 gap-3">
+                            <Stat label={`Property Share (${sellerPctStr})`} value={money(computation.sellingPrice)} />
+                            <Stat label={`Loan Liability Released (${sellerPctStr})`} value={money(computation.sellerLoanLiability)} />
+                        </div>
+
+                        <div className="border-t border-slate-100 pt-4 space-y-2">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Breakdown</p>
+                            <Row label={`Sale of Part Share (${sellerPctStr})`} value={money(computation.sellingPrice)} highlight />
+                            <Row label="Less: Loan Liability" value={`−${money(computation.sellerLoanLiability)}`} />
+                            <Row label="Less: CPF Usage (Refund to OA)" value={`−${money(data.seller_cpf_usage ?? 0)}`} />
+                            <div className="border-t border-slate-200 pt-2 mt-1">
+                                <Row label="Cash Proceeds" value={money(computation.cashProceeds)}
+                                    valueClass={computation.cashProceeds < 0 ? 'text-red-600' : 'text-emerald-700 font-bold'} />
+                            </div>
+                        </div>
+
+                        <div className="border-t border-slate-100 pt-4 space-y-2">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Est. Misc Fees</p>
+                            {computation.ssd > 0 ? (
+                                <Row label={`Seller's Stamp Duty — ${computation.ssdRatePct}% (${computation.ssdRateTable === 'new' ? 'new' : 'old'} rates)`}
+                                    value={money(computation.ssd)} />
+                            ) : (
+                                <Row label="Seller's Stamp Duty" value="$0"
+                                    hint={computation.ssdRateTable === 'none' ? 'Past holding period' : 'No SSD at current holding period'} />
+                            )}
+                            <Row label="Legal Fee (Cash / CPF)" value={`${money(computation.sellerLegalFee)} +/-`} />
+                        </div>
+
+                        {computation.cashProceeds < 0 && (
+                            <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                                <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                                <p className="text-[13px] text-red-800 leading-relaxed">
+                                    Cash proceeds are negative — seller may need to top up cash to complete the sale.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Placeholder when not ready */}
             {!computation.ready && (
                 <div className="card p-8 text-center text-sm text-slate-400">
                     Enter property valuation and ownership split above to see the decoupling breakdown.
                 </div>
             )}
+
+            <p className="text-[11px] text-slate-400 leading-relaxed px-1">
+                All figures are estimates for discussion purposes only.
+                Stamp duties follow prevailing IRAS rates — verify before committing.
+            </p>
 
             {/* Hand-off */}
             {embedded && onContinue && (
@@ -668,121 +652,163 @@ export default function DecouplingWorkflowPanel({
     )
 }
 
-// ─── TDSR Remedies ────────────────────────────────────────────────────────────
+// ─── TDSR Block (reusable for refi & purchase) ────────────────────────────────
 
-function TdsrRemedies({ propertyUse, hasEquityLoan }: { propertyUse?: string; hasEquityLoan: boolean }) {
-    const scenarios: { id: string; label: string; body: string }[] = []
+function TdsrBlock({
+    title, tenureMin, tenureMax, effectiveTenure, ageCap, defaultLabel,
+    stressInstallment, loanEligibility, pass,
+    onTenureChange, preferredTenure,
+}: {
+    title: string
+    tenureMin: number
+    tenureMax: number
+    effectiveTenure: number
+    ageCap: number
+    defaultLabel: string
+    stressInstallment: number
+    loanEligibility: number
+    pass: boolean
+    onTenureChange: (v: number | undefined) => void
+    preferredTenure?: number
+}) {
+    return (
+        <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+            <p className="text-xs font-bold text-[#052d4a] uppercase tracking-wide">{title}</p>
 
-    if (!propertyUse || propertyUse === 'own_stay') {
-        scenarios.push({
-            id: 'S1',
-            label: 'Own-Stay — Refi + No Equity Loan',
-            body: 'Qualifies for TDSR waiver with most banks — to double-check with banker.',
-        })
-        scenarios.push({
-            id: 'S2',
-            label: 'Own-Stay — Refi + With Equity Loan',
-            body: 'Pledge funds (locked 4 years) or show funds as an alternative.',
-        })
-    }
+            {/* Tenure range + input */}
+            <div className="space-y-2">
+                <div className="flex items-center gap-4 text-sm">
+                    <span className="text-slate-500">Tenure range:</span>
+                    <span className="font-semibold text-[#052d4a]">{tenureMin} – {tenureMax} yrs</span>
+                    <span className="text-[11px] text-slate-400">(to age {ageCap})</span>
+                </div>
+                <div className="flex items-center gap-3">
+                    <input
+                        type="number" min={tenureMin} max={tenureMax}
+                        value={preferredTenure ?? ''}
+                        placeholder={`${effectiveTenure} (${defaultLabel})`}
+                        onChange={e => {
+                            const v = parseInt(e.target.value, 10)
+                            onTenureChange(isNaN(v) ? undefined : Math.max(tenureMin, Math.min(tenureMax, v)))
+                        }}
+                        className="w-24 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
+                    />
+                    <span className="text-xs text-slate-500">years (using {effectiveTenure} yrs)</span>
+                </div>
+            </div>
 
-    if (!propertyUse || propertyUse === 'investment') {
-        scenarios.push({
-            id: 'S3',
-            label: 'Investment — Refi + No Equity Loan',
-            body: 'Paydown 3% of outstanding loan and/or show funds to prove repayment ability — to double-check with banker.',
-        })
-        scenarios.push({
-            id: 'S4',
-            label: 'Investment — Refi + With Equity Loan',
-            body: 'Pledge funds (locked 4 years) or show funds as an alternative.',
-        })
+            {/* Results */}
+            <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <p className="text-[11px] text-slate-500">Stress Instalment (4%)</p>
+                    <p className="text-sm font-bold text-[#052d4a]">{money(stressInstallment)}/mo</p>
+                </div>
+                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <p className="text-[11px] text-slate-500">Loan Eligibility</p>
+                    <p className="text-sm font-bold text-[#052d4a]">{money(loanEligibility)}</p>
+                </div>
+            </div>
+
+            <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${pass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                {pass
+                    ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR Pass</span></>
+                    : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span></>
+                }
+            </div>
+        </div>
+    )
+}
+
+// ─── S3 TDSR Summary ──────────────────────────────────────────────────────────
+
+function TdsrSummaryS3({ outcome, refiLoanShortfall, purchaseLoanShortfall }: {
+    outcome: TdsrOutcome
+    refiLoanShortfall: number
+    purchaseLoanShortfall: number
+}) {
+    if (outcome === 'both_pass') {
+        return (
+            <div className="flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <CheckCircle2 size={14} className="text-emerald-500 shrink-0 mt-0.5" />
+                <p className="text-[13px] text-emerald-800 font-medium">
+                    TDSR passes for both refinancing and new purchase loan.
+                </p>
+            </div>
+        )
     }
 
     return (
         <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 space-y-3">
             <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
-                <AlertTriangle size={13} /> Potential Remedies
+                <AlertTriangle size={13} /> TDSR Shortfall — Pledge / Show Required
             </p>
-            <div className="space-y-2">
-                {scenarios.map(s => (
-                    <div key={s.id} className={`rounded-lg border px-3 py-2.5 ${
-                        (hasEquityLoan && (s.id === 'S2' || s.id === 'S4')) || (!hasEquityLoan && (s.id === 'S1' || s.id === 'S3'))
-                            ? 'border-amber-300 bg-amber-100/60'
-                            : 'border-amber-200/60 bg-white/60'
-                    }`}>
-                        <p className="text-[11px] font-bold text-amber-900">{s.id}: {s.label}</p>
-                        <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">{s.body}</p>
+
+            {outcome === 'refi_pass_purchase_fail' && (
+                <div className="space-y-2">
+                    <div className="rounded-lg border border-amber-300 bg-amber-100/60 px-3 py-2.5">
+                        <p className="text-[11px] font-bold text-amber-900">Purchase — TDSR Fail</p>
+                        <p className="text-[11px] text-amber-800 mt-0.5">
+                            Buyer needs to reduce purchase loan by <span className="font-bold">{money(purchaseLoanShortfall)}</span> (additional cash / CPF downpayment) or pledge / show equivalent funds to pass TDSR.
+                        </p>
                     </div>
-                ))}
-            </div>
+                </div>
+            )}
+
+            {outcome === 'both_fail' && (
+                <div className="space-y-2">
+                    <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2.5">
+                        <p className="text-[11px] font-bold text-red-900">Refinancing — TDSR Fail</p>
+                        <p className="text-[11px] text-red-800 mt-0.5">
+                            Partial repayment of <span className="font-bold">{money(refiLoanShortfall)}</span> needed to bring refi loan within TDSR limit.
+                        </p>
+                    </div>
+                    <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2.5">
+                        <p className="text-[11px] font-bold text-red-900">Purchase — TDSR Fail</p>
+                        <p className="text-[11px] text-red-800 mt-0.5">
+                            Additional <span className="font-bold">{money(purchaseLoanShortfall)}</span> cash / CPF downpayment (or pledge / show) needed to pass purchase TDSR.
+                        </p>
+                    </div>
+                    <div className="rounded-lg border border-amber-300 bg-amber-100/60 px-3 py-2.5">
+                        <p className="text-[11px] font-bold text-amber-900">Combined shortfall</p>
+                        <p className="text-[11px] text-amber-800 mt-0.5">
+                            Total funds to address: <span className="font-bold">{money(refiLoanShortfall + purchaseLoanShortfall)}</span>
+                        </p>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
 
-// ─── Ownership Bar ─────────────────────────────────────────────────────────────
+// ─── Shared primitives ────────────────────────────────────────────────────────
 
-function OwnershipBar({
-    loanPct, cpfPct, cashPct, loanAmt, cpfAmt, cashAmt,
-}: { loanPct: number; cpfPct: number; cashPct: number; loanAmt: number; cpfAmt: number; cashAmt: number }) {
-    const lP = Math.max(0, Math.round(loanPct * 1000) / 10)
-    const cP = Math.max(0, Math.round(cpfPct  * 1000) / 10)
-    const aP = Math.max(0, Math.round(cashPct  * 1000) / 10)
-
-    return (
-        <div className="space-y-2">
-            <div className="flex h-6 rounded-lg overflow-hidden text-[10px] font-bold text-white">
-                {lP > 0 && (
-                    <div className="flex items-center justify-center bg-[#052d4a]" style={{ width: `${lP}%` }}>
-                        {lP > 8 ? `${lP}%` : ''}
-                    </div>
-                )}
-                {cP > 0 && (
-                    <div className="flex items-center justify-center bg-[#03a9e7]" style={{ width: `${cP}%` }}>
-                        {cP > 8 ? `${cP}%` : ''}
-                    </div>
-                )}
-                {aP > 0 && (
-                    <div className="flex items-center justify-center bg-emerald-500" style={{ width: `${aP}%` }}>
-                        {aP > 8 ? `${aP}%` : ''}
-                    </div>
-                )}
-            </div>
-            <div className="flex flex-wrap gap-3 text-[11px]">
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-[#052d4a]" /> Loan ({lP}% · {money(loanAmt)})</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-[#03a9e7]" /> CPF ({cP}% · {money(cpfAmt)})</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Cash ({aP}% · {money(Math.max(0, cashAmt))})</span>
-            </div>
-        </div>
-    )
-}
-
-// ─── Sub-components ────────────────────────────────────────────────────────────
-
-function Section({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
+function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
     return (
         <div className="card p-5 space-y-4">
-            <p className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                {icon && <span className="text-[#03a9e7]">{icon}</span>}{title}
-            </p>
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                <span className="text-[#03a9e7]">{icon}</span>
+                <h3 className="text-sm font-bold text-[#052d4a] uppercase tracking-wide">{title}</h3>
+            </div>
             {children}
         </div>
     )
 }
 
-interface PillOption { value: string; label: string; disabled?: boolean }
-function PillSelect({ value, onChange, options }: { value?: string; onChange: (v: string) => void; options: PillOption[] }) {
+function PillSelect({ value, onChange, options }: {
+    value?: string
+    onChange: (v: string) => void
+    options: { value: string; label: string }[]
+}) {
     return (
         <div className="flex flex-wrap gap-2">
-            {options.map(opt => (
-                <button key={opt.value} type="button" disabled={opt.disabled} onClick={() => onChange(opt.value)}
+            {options.map(o => (
+                <button key={o.value} type="button" onClick={() => onChange(o.value)}
                     className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                        opt.disabled ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
-                            : value === opt.value
-                                ? 'bg-[#052d4a] border-[#052d4a] text-white'
-                                : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
+                        value === o.value
+                            ? 'bg-[#052d4a] border-[#052d4a] text-white'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
                     }`}>
-                    {opt.label}
+                    {o.label}
                 </button>
             ))}
         </div>
@@ -791,35 +817,87 @@ function PillSelect({ value, onChange, options }: { value?: string; onChange: (v
 
 function YesNo({ value, onChange }: { value?: boolean; onChange: (v: boolean) => void }) {
     return (
-        <PillSelect
-            value={value === undefined ? undefined : value ? 'yes' : 'no'}
-            onChange={v => onChange(v === 'yes')}
-            options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]}
-        />
+        <div className="flex gap-2">
+            {([true, false] as const).map(v => (
+                <button key={String(v)} type="button" onClick={() => onChange(v)}
+                    className={`px-4 py-1.5 rounded-lg border text-sm font-medium transition-all ${
+                        value === v
+                            ? 'bg-[#052d4a] border-[#052d4a] text-white'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
+                    }`}>
+                    {v ? 'Yes' : 'No'}
+                </button>
+            ))}
+        </div>
     )
 }
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
     return (
-        <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5">
+        <div className="rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5">
             <p className="text-[11px] text-slate-500 leading-tight">{label}</p>
-            <p className="text-sm font-bold text-[#052d4a] mt-0.5">{value}</p>
+            <p className="text-base font-bold text-[#052d4a] mt-0.5">{value}</p>
             {hint && <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p>}
         </div>
     )
 }
 
-function Row({
-    label, value, hint, highlight, valueClass,
-}: { label: string; value: string; hint?: string; highlight?: boolean; valueClass?: string }) {
+function Row({ label, value, hint, highlight, valueClass }: {
+    label: string; value: string; hint?: string; highlight?: boolean; valueClass?: string
+}) {
     return (
-        <div className={`flex items-start justify-between gap-3 text-sm ${highlight ? 'py-1' : ''}`}>
-            <span className={`text-slate-600 leading-snug ${highlight ? 'font-semibold text-slate-700' : ''}`}>{label}</span>
-            <div className="text-right shrink-0">
-                <span className={valueClass ?? (highlight ? 'font-bold text-[#052d4a]' : 'font-semibold text-slate-700')}>
-                    {value}
+        <div className={`flex items-start justify-between gap-4 py-1 ${highlight ? 'font-semibold' : ''}`}>
+            <div>
+                <span className="text-sm text-slate-700">{label}</span>
+                {hint && <span className="text-[11px] text-slate-400 ml-1.5">({hint})</span>}
+            </div>
+            <span className={`text-sm font-semibold text-[#052d4a] shrink-0 ${valueClass ?? ''}`}>{value}</span>
+        </div>
+    )
+}
+
+function OwnershipBar({ loanPct, cpfPct, cashPct, loanAmt, cpfAmt, cashAmt }: {
+    loanPct: number; cpfPct: number; cashPct: number
+    loanAmt: number; cpfAmt: number; cashAmt: number
+}) {
+    const total = loanPct + cpfPct + cashPct
+    const lW = total > 0 ? (loanPct / total) * 100 : 0
+    const cW = total > 0 ? (cpfPct  / total) * 100 : 0
+    const hW = total > 0 ? (cashPct / total) * 100 : 0
+    const fmt = (p: number) => `${(p * 100).toFixed(1)}%`
+
+    return (
+        <div className="space-y-2">
+            <div className="flex rounded-lg overflow-hidden h-8" style={{ fontSize: 11 }}>
+                {lW > 0 && (
+                    <div style={{ width: `${lW}%` }} className="bg-[#052d4a] flex items-center justify-center text-white font-semibold">
+                        {lW > 12 ? fmt(loanPct) : ''}
+                    </div>
+                )}
+                {cW > 0 && (
+                    <div style={{ width: `${cW}%` }} className="bg-sky-400 flex items-center justify-center text-white font-semibold">
+                        {cW > 12 ? fmt(cpfPct) : ''}
+                    </div>
+                )}
+                {hW > 0 && (
+                    <div style={{ width: `${hW}%` }} className="bg-emerald-400 flex items-center justify-center text-white font-semibold">
+                        {hW > 12 ? fmt(cashPct) : ''}
+                    </div>
+                )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-[#052d4a]" />
+                    Loan {fmt(loanPct)} · {money(loanAmt)}
                 </span>
-                {hint && <p className="text-[10px] text-slate-400">{hint}</p>}
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-sky-400" />
+                    CPF {fmt(cpfPct)} · {money(cpfAmt)}
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-emerald-400" />
+                    Cash {fmt(cashPct)} · {money(cashAmt)}
+                </span>
             </div>
         </div>
     )
