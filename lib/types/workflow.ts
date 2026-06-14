@@ -140,9 +140,69 @@ export function getPurchaseWorkflow(data: unknown): PurchaseWorkflow {
     return data as PurchaseWorkflow
 }
 
+// ─── Decoupling workflow ───────────────────────────────────────────────────────
+// Stored in cases.workflow_data when case_type === 'Decouple'.
+
+export interface DecoupleBorrower {
+    employment?: 'employed' | 'self_employed'
+    basic_salary?: number
+    annual_variable?: number
+    age?: number
+    commitments?: number
+}
+
+export interface DecoupleWorkflow {
+    // Property
+    property_type?: 'hdb' | 'completed_condo_ec' | 'incompleted_condo_ec' | 'landed'
+    property_valuation?: number
+    year_of_purchase?: number
+    property_use?: 'own_stay' | 'investment'
+
+    // Ownership split (buyer acquires seller's share)
+    buyer_share?: number              // buyer's current ownership % (1–99)
+
+    // Buyer profile
+    residency?: 'singaporean' | 'pr' | 'foreigner'
+    requires_financing?: boolean      // does buyer need a new loan for the part-purchase?
+
+    // Mortgage details (existing loan on the property)
+    fully_paid?: boolean
+    outstanding_disbursed?: number
+    outstanding_undisbursed?: number  // incompleted_condo_ec only (no CSC)
+    current_bank?: string
+    current_tenure?: number           // remaining years on the current loan
+    lockin_end_date?: string
+    current_rate?: number
+    subsidy_return_amount?: number    // $0 / $2,000 / $2,500 / custom
+
+    // CPF
+    seller_cpf_usage?: number         // seller's CPF used on property (refunded to OA on sale)
+    buyer_cpf_usage?: number          // buyer's CPF already used on the property
+    buyer_cpf_oa_balance?: number     // buyer's available CPF OA balance
+
+    // Borrowers — income for TDSR (always collected, both financing paths)
+    borrowers?: DecoupleBorrower[]
+
+    // Equity loan (optional, shown when eligible after ownership structure)
+    equity_loan_amount?: number
+
+    // Reference rate for monthly-installment estimate (yes-financing path)
+    reference_rate?: number
+
+    // Preferred tenure (no-financing path; defaults to current_tenure)
+    preferred_tenure?: number
+
+    completed_steps?: string[]
+    flags?: WorkflowFlags
+}
+
+export function getDecoupleWorkflow(data: unknown): DecoupleWorkflow {
+    if (!data || typeof data !== 'object') return {}
+    return data as DecoupleWorkflow
+}
+
 // ─── Other case type placeholders (to be built out later) ─────────────────────
 
-export interface DecoupleWorkflow { completed_steps?: string[]; flags?: WorkflowFlags }
 export interface EquityLoanWorkflow { completed_steps?: string[]; flags?: WorkflowFlags }
 export interface DivorceWorkflow { completed_steps?: string[]; flags?: WorkflowFlags }
 

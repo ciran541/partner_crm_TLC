@@ -4,9 +4,10 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Case, PipelineStage } from '@/lib/types'
-import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow, PurchaseWorkflow, getPurchaseWorkflow } from '@/lib/types/workflow'
+import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow, PurchaseWorkflow, getPurchaseWorkflow, DecoupleWorkflow, getDecoupleWorkflow } from '@/lib/types/workflow'
 import RefinancingWorkflowPanel from '@/components/insurance/workflow/RefinancingWorkflow'
 import PurchaseWorkflowPanel from '@/components/insurance/workflow/PurchaseWorkflow'
+import DecouplingWorkflowPanel from '@/components/insurance/workflow/DecouplingWorkflow'
 import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
 import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
@@ -63,7 +64,7 @@ export default function CaseDetailPage() {
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
     // Workflow state (shape depends on case_type)
-    const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData | PurchaseWorkflow>({})
+    const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow>({})
     const [workflowSaving, setWorkflowSaving] = useState(false)
     const [workflowSaved, setWorkflowSaved] = useState(false)
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -119,9 +120,13 @@ export default function CaseDetailPage() {
         } else {
             caseTypeRef.current = data.case_type
             setCaseData(data)
-            setWorkflowData(data.case_type === 'Purchase'
-                ? getPurchaseWorkflow(data.workflow_data)
-                : getRefinancingWorkflow(data.workflow_data))
+            setWorkflowData(
+                data.case_type === 'Purchase'
+                    ? getPurchaseWorkflow(data.workflow_data)
+                    : data.case_type === 'Decouple'
+                        ? getDecoupleWorkflow(data.workflow_data)
+                        : getRefinancingWorkflow(data.workflow_data)
+            )
         }
         setLoading(false)
     }
@@ -162,7 +167,7 @@ export default function CaseDetailPage() {
     }
 
     // Extract case-column values from workflow data so Overview stays in sync
-    const extractCaseFields = (wf: RefinancingWorkflowData | PurchaseWorkflow): Partial<Case> => {
+    const extractCaseFields = (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow): Partial<Case> => {
         const updates: Partial<Case> = {}
 
         if (caseTypeRef.current === 'Purchase') {
@@ -178,6 +183,21 @@ export default function CaseDetailPage() {
             // Sync overview "Loan Amount" with the computed final loan of the headline option.
             const loan = computePurchase(inputsFromWorkflow(p)).options[0]?.finalLoan
             if (loan && loan > 0) updates.loan_size = Math.floor(loan)
+            return updates
+        }
+
+        if (caseTypeRef.current === 'Decouple') {
+            const d = wf as DecoupleWorkflow
+            if (d.current_bank) updates.current_bank = d.current_bank
+            if (d.property_valuation) updates.property_price = d.property_valuation
+            const totalOutstanding = (d.outstanding_disbursed ?? 0) + (d.outstanding_undisbursed ?? 0)
+            if (totalOutstanding > 0) updates.existing_loan_amount = totalOutstanding
+            if (d.property_type) {
+                const map: Record<string, string> = {
+                    hdb: 'HDB', completed_condo_ec: 'Private Condo', incompleted_condo_ec: 'Private Condo', landed: 'Landed',
+                }
+                updates.property_type = map[d.property_type] ?? d.property_type
+            }
             return updates
         }
 
@@ -198,7 +218,7 @@ export default function CaseDetailPage() {
         return updates
     }
 
-    const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData | PurchaseWorkflow) => {
+    const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow) => {
         setWorkflowSaving(true)
         setWorkflowSaved(false)
         const caseFields = extractCaseFields(wf)
@@ -209,7 +229,7 @@ export default function CaseDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [persistCaseUpdate])
 
-    const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData | PurchaseWorkflow) => {
+    const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow) => {
         setWorkflowData(updated)
         // Immediately update caseData state so Overview reflects workflow changes without waiting for DB save
         const caseFields = extractCaseFields(updated)
@@ -405,6 +425,13 @@ export default function CaseDetailPage() {
                             followUpDate={caseData.follow_up_date}
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
+                    ) : caseData.case_type === 'Decouple' ? (
+                        <RefiOverview
+                            workflow={{}}
+                            stage={caseData.stage}
+                            followUpDate={caseData.follow_up_date}
+                            onOpenWorkflow={() => setActiveTab('workflow')}
+                        />
                     ) : (
                         <RefiOverview
                             workflow={workflowData as RefinancingWorkflowData}
@@ -471,8 +498,23 @@ export default function CaseDetailPage() {
                         saved={workflowSaved}
                         hasClientName={!!caseData.client_name?.trim()}
                         onContinue={() => {
-                            // Draft → open Overview in edit mode, then the tab effect
-                            // scrolls to the client form and focuses the name field.
+                            if (!caseData.client_name?.trim()) {
+                                wantScrollToClientRef.current = true
+                                setIsEditing(true)
+                            }
+                            setActiveTab('overview')
+                        }}
+                    />
+                ) : caseData.case_type === 'Decouple' ? (
+                    <DecouplingWorkflowPanel
+                        data={workflowData as DecoupleWorkflow}
+                        onChange={handleWorkflowChange}
+                        clientName={caseData.client_name}
+                        embedded
+                        saving={workflowSaving}
+                        saved={workflowSaved}
+                        hasClientName={!!caseData.client_name?.trim()}
+                        onContinue={() => {
                             if (!caseData.client_name?.trim()) {
                                 wantScrollToClientRef.current = true
                                 setIsEditing(true)
