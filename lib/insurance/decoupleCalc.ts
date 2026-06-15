@@ -32,22 +32,30 @@ export const AGE_CAP_REFI           = 75
 export const AGE_CAP_PURCHASE       = 65
 export const MAX_PURCHASE_TENURE    = 30
 export const CANCELLATION_FEE_RATE  = 0.0075
+export const TDSR_DIVISOR           = 0.55   // pledge formula divisor for TDSR cases
+export const SHOW_DIVISOR           = 0.30   // showFund = pledgeFund × this
 
-export type DecouplePropertyType = 'hdb' | 'completed_condo_ec' | 'incompleted_condo_ec' | 'landed'
+export interface DecouplePledge {
+    shortfall:   number   // loan amount - TDSR-eligible loan
+    pledgeFund:  number   // funds to pledge (locked)
+    showFund:    number   // funds to show (unlocked alternative)
+}
+
+export type DecouplePropertyType = 'completed_condo' | 'completed_ec' | 'incompleted_condo' | 'landed'
 export type DecoupleScenario     = 'S1' | 'S2' | 'S3' | 'S4'
 export type TdsrOutcome          = 'both_pass' | 'refi_pass_purchase_fail' | 'both_fail'
 
 export const DECOUPLE_PROPERTY_TYPES: { value: DecouplePropertyType; label: string; tenureCap: number; buc: boolean }[] = [
-    { value: 'hdb',                  label: 'HDB',                                 tenureCap: 30, buc: false },
-    { value: 'completed_condo_ec',   label: 'Completed Condo / EC (CSC obtained)', tenureCap: 35, buc: false },
-    { value: 'incompleted_condo_ec', label: 'Incompleted Condo / EC (No CSC)',     tenureCap: 35, buc: true  },
-    { value: 'landed',               label: 'Landed',                              tenureCap: 35, buc: false },
+    { value: 'completed_condo',  label: 'Completed Condo (CSC obtained)',              tenureCap: 35, buc: false },
+    { value: 'completed_ec',     label: 'Completed EC (MOP obtained)',                 tenureCap: 35, buc: false },
+    { value: 'incompleted_condo', label: 'Incompleted Condo (TOP obtained, no CSC)',   tenureCap: 35, buc: true  },
+    { value: 'landed',           label: 'Landed',                                      tenureCap: 35, buc: false },
 ]
 
 export const SUBSIDY_PRESETS = ['0', '2000', '2500']
 
-export function propertyTenureCap(type?: string): number {
-    return type === 'hdb' ? 30 : 35
+export function propertyTenureCap(_type?: string): number {
+    return 35
 }
 
 // ─── Stamp duties ─────────────────────────────────────────────────────────────
@@ -116,17 +124,19 @@ export interface DecoupleInputs {
     residency?:               'singaporean' | 'pr' | 'foreigner'
     requiresFinancing?:       boolean
     fullyPaid?:               boolean
-    outstandingDisbursed?:    number
+    outstandingHomeLoan?:     number
+    outstandingEquityLoan?:   number
     outstandingUndisbursed?:  number
     currentTenure?:           number
     sellerCpfUsage?:          number
     buyerCpfUsage?:           number
     buyerCpfOaBalance?:       number
     borrowers?:               DecoupleBorrower[]
-    equityLoanAmount?:        number
+    equityLoanAmount?:        number   // amount the client wants to take (from UI input)
     referenceRatePct?:        number
     preferredTenureRefi?:     number
     preferredTenurePurchase?: number
+    preferredTenureEquity?:   number
 }
 
 export interface DecoupleComputation {
@@ -171,7 +181,7 @@ export interface DecoupleComputation {
     // Equity loan — two constraints
     equityPct:            number    // 75% − loanPct − cpfPct
     equityLoanMaxLtv:     number    // structural limit (LTV-based)
-    equityLoanMaxTdsr:    number    // income limit (TDSR headroom); 0 for S4
+
     equityLoanMax:        number    // actual cap = min(ltv, tdsr) for S1-S3; ltv for S4
     equityEligible:       boolean
     equityNotEligibleReason?: string
@@ -208,13 +218,21 @@ export interface DecoupleComputation {
     balanceTdsrForPurchase: number  // available − refiStress (refi gets priority)
     tdsrOutcome:            TdsrOutcome | null
 
-    // Pass/fail
+    // Pass/fail + pledge/show guidance (null = no shortfall)
     refiTdsrPass:     boolean
     purchaseTdsrPass: boolean
+    refiPledge:       DecouplePledge | null
+    purchasePledge:   DecouplePledge | null
 
-    // Shortfalls for pledge/show guidance
-    refiLoanShortfall:     number  // partial repay needed to pass refi TDSR
-    purchaseLoanShortfall: number  // extra cash/CPF to reduce purchase loan
+    // Equity loan TDSR check (only active when equityLoanAmount > 0 and scenario ≠ S4)
+    equityTenureMin:         number
+    equityTenureMax:         number
+    effectiveEquityTenure:   number
+    remainingTdsrAfterLoans: number   // availableTdsr − refi − purchase (what's left for equity)
+    equityStressInstallment: number   // monthly payment on requested equity amount at 4%
+    equityLoanEligibility:   number   // max equity loan the remaining TDSR can service
+    equityTdsrPass:          boolean
+    equityPledge:            DecouplePledge | null
 }
 
 // ─── Core computation ─────────────────────────────────────────────────────────
@@ -223,9 +241,11 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     const valuation      = inputs.propertyValuation ?? 0
     const buyerShareFrac = Math.max(0.01, Math.min(0.99, (inputs.buyerSharePct ?? 50) / 100))
     const sellerShareFrac = 1 - buyerShareFrac
-    const disbursed      = inputs.outstandingDisbursed ?? 0
+    const homeLoan       = inputs.outstandingHomeLoan ?? 0
+    const equityOutstanding = inputs.outstandingEquityLoan ?? 0
     const undisbursed    = inputs.outstandingUndisbursed ?? 0
-    const outstandingLoan = inputs.fullyPaid ? 0 : disbursed + undisbursed
+    // Refinanced liability = existing home loan + existing equity loan (item 6).
+    const outstandingLoan = inputs.fullyPaid ? 0 : homeLoan + equityOutstanding
     const cancellationFee = undisbursed * CANCELLATION_FEE_RATE
     const sellerCpf      = inputs.sellerCpfUsage ?? 0
     const buyerCpfUsage  = inputs.buyerCpfUsage ?? 0
@@ -336,14 +356,14 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
         : 0
 
     // Pass/fail
-    const refiTdsrPass     = !isRefi  || refiStressInstallment     <= availableTdsr
+    const refiTdsrPass     = !isRefi     || refiStressInstallment     <= availableTdsr
     const purchaseTdsrPass = !isPurchase || (
         scenario === 'S3'
             ? purchaseStressInstallment <= balanceTdsrForPurchase
             : purchaseStressInstallment <= availableTdsr
     )
 
-    // S3 outcome
+    // S3 combined outcome
     let tdsrOutcome: TdsrOutcome | null = null
     if (scenario === 'S3' && grossMonthlyIncome > 0) {
         tdsrOutcome = refiTdsrPass && purchaseTdsrPass ? 'both_pass'
@@ -351,36 +371,40 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
             : 'both_fail'
     }
 
-    // Shortfalls
-    const refiLoanShortfall     = Math.max(0, outstandingLoan - refiLoanEligibility)
-    const purchaseLoanShortfall = Math.max(0, bankLoan75 - purchaseLoanEligibility)
+    // Pledge / show funds (same formula as purchaseCalc — TDSR divisor 0.55)
+    function computePledge(
+        loanAmt: number, eligibility: number, capacity: number, tenure: number,
+    ): DecouplePledge | null {
+        const shortfall = loanAmt - eligibility
+        if (shortfall <= 1 || capacity <= 0) return null
+        const shortfallPayment = eligibility > 0
+            ? capacity * (shortfall / eligibility)
+            : calcInstallment(shortfall, STRESS_TEST_RATE * 100, tenure)
+        const pledgeFund = (shortfallPayment * 48) / TDSR_DIVISOR
+        const showFund   = pledgeFund / SHOW_DIVISOR
+        return pledgeFund > 1 && showFund > 1 ? { shortfall, pledgeFund, showFund } : null
+    }
+
+    const refiPledge = isRefi && !refiTdsrPass
+        ? computePledge(outstandingLoan, refiLoanEligibility, availableTdsr, effectiveRefiTenure)
+        : null
+    const purchasePledge = isPurchase && !purchaseTdsrPass
+        ? computePledge(
+            bankLoan75, purchaseLoanEligibility,
+            scenario === 'S3' ? balanceTdsrForPurchase : availableTdsr,
+            effectivePurchaseTenure,
+          )
+        : null
 
     // Monthly installments at reference rate (display)
     const monthlyInstallment    = isPurchase ? calcInstallment(bankLoan75, refRate, effectivePurchaseTenure) : 0
     const refiMonthlyInstallment = isRefi    ? calcInstallment(outstandingLoan, refRate, effectiveRefiTenure) : 0
 
-    // ── Equity loan — two constraints ─────────────────────────────────────────
-    const equityPct = 0.75 - loanPct - cpfPct
-
-    // LTV-based structural max
+    // ── Equity loan — structural (LTV only) ──────────────────────────────────
+    const equityPct        = 0.75 - loanPct - cpfPct
     const equityLoanMaxLtv = valuation > 0 ? Math.max(0, equityPct) * valuation : 0
-
-    // TDSR headroom after all loan obligations
-    const equityRemainingTdsr = Math.max(0, availableTdsr - refiStressInstallment - purchaseStressInstallment)
-    const equityTenure = scenario === 'S2' ? effectivePurchaseTenure : effectiveRefiTenure
-    const equityLoanMaxTdsr = scenario !== 'S4' && equityRemainingTdsr > 0
-        ? maxLoanFromPayment(equityRemainingTdsr, STRESS_TEST_RATE * 100, equityTenure)
-        : 0
-
-    // Eligible equity = property headroom PLUS what leftover TDSR can service —
-    // the two stack (per the advised methodology). S4 has no income, so the
-    // property headroom is the whole figure.
-    const equityLoanMax = scenario === 'S4'
-        ? equityLoanMaxLtv
-        : equityLoanMaxLtv + equityLoanMaxTdsr
-
-    // No property headroom (loan + CPF already at 75% LTV) = nothing to secure against.
-    const equityEligible = equityPct > 0 && equityLoanMax >= MIN_EQUITY_LOAN
+    const equityLoanMax    = equityLoanMaxLtv   // size = LTV only; TDSR is a separate check
+    const equityEligible   = equityPct > 0 && equityLoanMax >= MIN_EQUITY_LOAN
 
     let equityNotEligibleReason: string | undefined
     if (valuation > 0 && !equityEligible) {
@@ -388,6 +412,34 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
             ? 'Not eligible — combined loan and CPF already reach 75% of property value.'
             : `Available equity (${money(equityLoanMax)}) is below the $50,000 minimum.`
     }
+
+    // ── Equity loan — TDSR affordability check ────────────────────────────────
+    // Equity loan tenure follows the same caps as refi (age 75, property cap − yearsOwned).
+    const equityTenureMax        = refiTenureMax
+    const equityTenureMin        = MIN_TENURE
+    const effectiveEquityTenure  = Math.max(MIN_TENURE, Math.min(
+        inputs.preferredTenureEquity ?? inputs.currentTenure ?? equityTenureMax,
+        equityTenureMax,
+    ))
+
+    // Remaining TDSR after refi + purchase obligations — this is what the equity loan draws from.
+    const remainingTdsrAfterLoans = Math.max(0, availableTdsr - refiStressInstallment - purchaseStressInstallment)
+
+    // What the remaining TDSR can service (shown as "Est. Loan Eligibility" in the equity block).
+    const equityLoanEligibility = scenario !== 'S4' && remainingTdsrAfterLoans > 0
+        ? maxLoanFromPayment(remainingTdsrAfterLoans, STRESS_TEST_RATE * 100, effectiveEquityTenure)
+        : 0
+
+    // Check the actual requested equity amount against remaining TDSR.
+    const reqEquity              = inputs.equityLoanAmount ?? 0
+    const equityStressInstallment = reqEquity > 0 && scenario !== 'S4'
+        ? calcInstallment(reqEquity, STRESS_TEST_RATE * 100, effectiveEquityTenure)
+        : 0
+    const equityTdsrPass = reqEquity === 0 || scenario === 'S4'
+        || equityStressInstallment <= remainingTdsrAfterLoans
+    const equityPledge = reqEquity > 0 && !equityTdsrPass
+        ? computePledge(reqEquity, equityLoanEligibility, remainingTdsrAfterLoans, effectiveEquityTenure)
+        : null
 
     return {
         ready: valuation > 0 && (inputs.buyerSharePct ?? 0) > 0,
@@ -402,7 +454,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
         monthlyInstallment,
         loanForStructure, cpfUsedForStructure, totalCpfUsed,
         loanPct, cpfPct, cashPct,
-        equityPct, equityLoanMaxLtv, equityLoanMaxTdsr, equityLoanMax,
+        equityPct, equityLoanMaxLtv, equityLoanMax,
         equityEligible, equityNotEligibleReason,
         ssd, ssdRatePct, ssdRateTable, sellerLegalFee, cashProceeds,
         weightedAge: wa, grossMonthlyIncome, existingMonthlyDebts, availableTdsr,
@@ -412,7 +464,11 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
         purchaseStressInstallment, purchaseLoanEligibility,
         balanceTdsrForPurchase, tdsrOutcome,
         refiTdsrPass, purchaseTdsrPass,
-        refiLoanShortfall, purchaseLoanShortfall,
+        refiPledge, purchasePledge,
+        equityTenureMin, equityTenureMax, effectiveEquityTenure,
+        remainingTdsrAfterLoans,
+        equityStressInstallment, equityLoanEligibility,
+        equityTdsrPass, equityPledge,
     }
 }
 
@@ -429,7 +485,8 @@ export function inputsFromDecoupleWorkflow(d: DecoupleWorkflow): DecoupleInputs 
         residency:             d.residency,
         requiresFinancing:     d.requires_financing,
         fullyPaid:             d.fully_paid,
-        outstandingDisbursed:  d.outstanding_disbursed,
+        outstandingHomeLoan:   d.outstanding_home_loan,
+        outstandingEquityLoan: d.outstanding_equity_loan,
         outstandingUndisbursed: d.outstanding_undisbursed,
         currentTenure:         d.current_tenure,
         sellerCpfUsage:        d.seller_cpf_usage,
@@ -438,7 +495,8 @@ export function inputsFromDecoupleWorkflow(d: DecoupleWorkflow): DecoupleInputs 
         borrowers:             d.borrowers,
         equityLoanAmount:      d.equity_loan_amount,
         referenceRatePct:      d.reference_rate,
-        preferredTenureRefi:    d.preferred_tenure_refi,
+        preferredTenureRefi:     d.preferred_tenure_refi,
         preferredTenurePurchase: d.preferred_tenure_purchase,
+        preferredTenureEquity:   d.preferred_tenure_equity,
     }
 }

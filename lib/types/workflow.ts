@@ -153,7 +153,7 @@ export interface DecoupleBorrower {
 
 export interface DecoupleWorkflow {
     // Property
-    property_type?: 'hdb' | 'completed_condo_ec' | 'incompleted_condo_ec' | 'landed'
+    property_type?: 'completed_condo' | 'completed_ec' | 'incompleted_condo' | 'landed'
     property_valuation?: number
     year_of_purchase?: number
     property_use?: 'own_stay' | 'investment'
@@ -167,8 +167,9 @@ export interface DecoupleWorkflow {
 
     // Mortgage details (existing loan on the property)
     fully_paid?: boolean
-    outstanding_disbursed?: number
-    outstanding_undisbursed?: number  // incompleted_condo_ec only (no CSC)
+    outstanding_home_loan?: number
+    outstanding_equity_loan?: number
+    outstanding_undisbursed?: number  // incompleted_condo only (TOP but no CSC)
     current_bank?: string
     current_tenure?: number           // remaining years on the current loan
     lockin_end_date?: string
@@ -183,8 +184,7 @@ export interface DecoupleWorkflow {
     // Borrowers — income for TDSR (always collected, both financing paths)
     borrowers?: DecoupleBorrower[]
 
-    // Equity loan (optional — only surfaced when the client wants one)
-    wants_equity_loan?: boolean
+    // Equity loan amount (filled in if the client wants one)
     equity_loan_amount?: number
 
     // Reference rate for monthly-installment estimate (yes-financing path)
@@ -193,6 +193,7 @@ export interface DecoupleWorkflow {
     // Preferred tenures (scenario-dependent)
     preferred_tenure_refi?: number      // S1: refi tenure; S3: refi portion
     preferred_tenure_purchase?: number  // S2: purchase tenure; S3: purchase portion
+    preferred_tenure_equity?: number    // equity loan tenure (if taken)
 
     completed_steps?: string[]
     flags?: WorkflowFlags

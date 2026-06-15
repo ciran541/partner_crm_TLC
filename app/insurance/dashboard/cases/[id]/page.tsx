@@ -190,11 +190,11 @@ export default function CaseDetailPage() {
             const d = wf as DecoupleWorkflow
             if (d.current_bank) updates.current_bank = d.current_bank
             if (d.property_valuation) updates.property_price = d.property_valuation
-            const totalOutstanding = (d.outstanding_disbursed ?? 0) + (d.outstanding_undisbursed ?? 0)
+            const totalOutstanding = (d.outstanding_home_loan ?? 0) + (d.outstanding_equity_loan ?? 0) + (d.outstanding_undisbursed ?? 0)
             if (totalOutstanding > 0) updates.existing_loan_amount = totalOutstanding
             if (d.property_type) {
                 const map: Record<string, string> = {
-                    hdb: 'HDB', completed_condo_ec: 'Private Condo', incompleted_condo_ec: 'Private Condo', landed: 'Landed',
+                    completed_condo: 'Private Condo', completed_ec: 'Private Condo', incompleted_condo: 'Private Condo', landed: 'Landed',
                 }
                 updates.property_type = map[d.property_type] ?? d.property_type
             }

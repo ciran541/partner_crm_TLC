@@ -9,9 +9,11 @@ import {
     AGE_CAP_REFI,
     AGE_CAP_PURCHASE,
     SUBSIDY_PRESETS,
+    DECOUPLE_PROPERTY_TYPES,
     type TdsrOutcome,
 } from '@/lib/insurance/decoupleCalc'
 import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
+import type { DecouplePledge } from '@/lib/insurance/decoupleCalc'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
@@ -89,6 +91,14 @@ export default function DecouplingWorkflowPanel({
 
             {/* ── 1. PROPERTY DETAILS ── */}
             <Section title="Property Details" icon={<Home size={15} />}>
+                <Question label="Property Type" required>
+                    <PillSelect
+                        value={data.property_type}
+                        onChange={v => update({ property_type: v as DecoupleWorkflow['property_type'] })}
+                        options={DECOUPLE_PROPERTY_TYPES.map(t => ({ value: t.value, label: t.label }))}
+                    />
+                </Question>
+
                 <Question label="Property Valuation" required>
                     <FieldInput commas prefix="$" value={data.property_valuation ?? ''} placeholder="e.g. 1,500,000"
                         onChange={v => update({ property_valuation: num(v) })} />
@@ -214,10 +224,27 @@ export default function DecouplingWorkflowPanel({
 
                 {data.fully_paid === false && (
                     <>
-                        <Question label="Outstanding Loan Amount (Disbursed)">
-                            <FieldInput commas prefix="$" value={data.outstanding_disbursed ?? ''}
-                                onChange={v => update({ outstanding_disbursed: num(v) })} />
-                        </Question>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <Question label="Outstanding Home Loan">
+                                <FieldInput commas prefix="$" value={data.outstanding_home_loan ?? ''}
+                                    onChange={v => update({ outstanding_home_loan: num(v) })} />
+                            </Question>
+                            <Question label="Outstanding Equity Loan">
+                                <FieldInput commas prefix="$" value={data.outstanding_equity_loan ?? ''}
+                                    onChange={v => update({ outstanding_equity_loan: num(v) })} />
+                            </Question>
+                        </div>
+
+                        {data.property_type === 'incompleted_condo' && (
+                            <Question label="Outstanding Undisbursed Loan">
+                                <FieldInput commas prefix="$" value={data.outstanding_undisbursed ?? ''}
+                                    onChange={v => update({ outstanding_undisbursed: num(v) })} />
+                                <p className="text-[11px] text-slate-400 flex items-start gap-1.5 mt-1">
+                                    <Info size={11} className="mt-0.5 shrink-0" />
+                                    Only applicable for Incompleted Condo that has not obtained CSC.
+                                </p>
+                            </Question>
+                        )}
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <Question label="Current Bank">
@@ -301,9 +328,15 @@ export default function DecouplingWorkflowPanel({
                                     <Row label="CPF (as per CPF OA Balance)" value={money(computation.cpfUsedForPurchase)} />
                                     <div className="border-t border-dashed border-slate-200 my-1" />
                                     {scenario === 'S1' && (
-                                        <Row label={`Refinanced Loan (${pct(computation.loanPct)})`} value={money(computation.loanForStructure)} />
+                                        <>
+                                            <Row label={`Refinanced Loan (${pct(computation.loanPct)} of Valuation)`} value={money(computation.loanForStructure)} />
+                                            {computation.buyerLoanLiability > 0 && (
+                                                <SubNote>Includes current loan liability of {money(computation.buyerLoanLiability)}</SubNote>
+                                            )}
+                                        </>
                                     )}
-                                    <Row label={`Total CPF Used (${pct(computation.cpfPct)})`} value={money(computation.totalCpfUsed)} />
+                                    <Row label={`Total CPF Used (${pct(computation.cpfPct)} of Valuation)`} value={money(computation.totalCpfUsed)} />
+                                    <SubNote>Includes current CPF usage + CPF in OA balance</SubNote>
                                 </>
                             )}
 
@@ -314,8 +347,12 @@ export default function DecouplingWorkflowPanel({
                                     <Row label="20% CPF / Cash" value={money(computation.cpfCash20)} />
                                     <Row label="75% Bank Loan (New)" value={money(computation.bankLoan75)} />
                                     <div className="border-t border-dashed border-slate-200 my-1" />
-                                    <Row label={`New Total Loan (${pct(computation.loanPct)})`} value={money(computation.loanForStructure)} />
-                                    <Row label={`Total CPF Used (${pct(computation.cpfPct)})`} value={money(computation.totalCpfUsed)} />
+                                    <Row label={`New Total Loan (${pct(computation.loanPct)} of Valuation)`} value={money(computation.loanForStructure)} />
+                                    {computation.buyerLoanLiability > 0 && (
+                                        <SubNote>Includes current loan liability of {money(computation.buyerLoanLiability)}</SubNote>
+                                    )}
+                                    <Row label={`Total CPF Used (${pct(computation.cpfPct)} of Valuation)`} value={money(computation.totalCpfUsed)} />
+                                    <SubNote>Includes current CPF usage + CPF in OA balance</SubNote>
                                 </>
                             )}
                         </div>
@@ -344,6 +381,48 @@ export default function DecouplingWorkflowPanel({
                             <p className="text-[11px] text-slate-400">
                                 Based on property valuation of {money(data.property_valuation ?? 0)}.
                             </p>
+                        </div>
+
+                        {/* Equity loan eligibility — always shown below diagram */}
+                        <div className="border-t border-slate-100 pt-4 space-y-2">
+                            <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
+                            <p className="text-sm text-slate-600">
+                                75% − {pct(computation.loanPct)} (loan) − {pct(computation.cpfPct)} (CPF)
+                                {' '}= <span className={`font-bold ${computation.equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                                    {pct(computation.equityPct)}
+                                </span>
+                            </p>
+                            {computation.equityPct <= 0 ? (
+                                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+                                    <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                                    <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
+                                </div>
+                            ) : !computation.equityEligible ? (
+                                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                    <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                                    <p className="text-[12px] text-amber-800">
+                                        Available equity {money(computation.equityLoanMax)} — below $50,000 minimum. Require higher valuation; min equity loan amount is $50,000.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                                        <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
+                                        <p className="text-[12px] text-emerald-800 font-semibold">
+                                            Available Equity: {money(computation.equityLoanMax)} — eligible.
+                                        </p>
+                                    </div>
+                                    <Question label="Would you like to take up an equity loan?">
+                                        <FieldInput commas prefix="$"
+                                            value={data.equity_loan_amount ?? ''}
+                                            placeholder={`max ${money(computation.equityLoanMax)}`}
+                                            onChange={v => {
+                                                const n = num(v)
+                                                update({ equity_loan_amount: n !== undefined ? Math.min(n, computation.equityLoanMax) : undefined })
+                                            }} />
+                                    </Question>
+                                </div>
+                            )}
                         </div>
 
                         {/* Monthly instalment (S2, S3) */}
@@ -419,10 +498,6 @@ export default function DecouplingWorkflowPanel({
                                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Gross Monthly Income</p>
                                 <p className="text-base font-bold text-[#052d4a]">{money(computation.grossMonthlyIncome)}</p>
                             </div>
-                            <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Available TDSR</p>
-                                <p className="text-base font-bold text-[#052d4a]">{money(computation.availableTdsr)}/mo</p>
-                            </div>
                         </div>
                     )}
                 </Section>
@@ -442,36 +517,46 @@ export default function DecouplingWorkflowPanel({
 
                     {/* S1 — refi only */}
                     {scenario === 'S1' && (
-                        <TdsrBlock
-                            title="Refinancing"
-                            tenureMin={computation.refiTenureMin}
-                            tenureMax={computation.refiTenureMax}
-                            effectiveTenure={computation.effectiveRefiTenure}
-                            ageCap={AGE_CAP_REFI}
-                            defaultLabel="current tenure"
-                            stressInstallment={computation.refiStressInstallment}
-                            loanEligibility={computation.refiLoanEligibility}
-                            pass={computation.refiTdsrPass}
-                            onTenureChange={v => update({ preferred_tenure_refi: v })}
-                            preferredTenure={data.preferred_tenure_refi}
-                        />
+                        <>
+                            <TdsrBlock
+                                title="Refinancing"
+                                tenureMin={computation.refiTenureMin}
+                                tenureMax={computation.refiTenureMax}
+                                effectiveTenure={computation.effectiveRefiTenure}
+                                ageCap={AGE_CAP_REFI}
+                                defaultLabel="current tenure"
+                                stressInstallment={computation.refiStressInstallment}
+                                loanEligibility={computation.refiLoanEligibility}
+                                pass={computation.refiTdsrPass}
+                                onTenureChange={v => update({ preferred_tenure_refi: v })}
+                                preferredTenure={data.preferred_tenure_refi}
+                            />
+                            {!computation.refiTdsrPass && (
+                                <TdsrRemedy propertyUse={data.property_use} equityLoanAmount={data.equity_loan_amount} pledge={computation.refiPledge} />
+                            )}
+                        </>
                     )}
 
                     {/* S2 — purchase only */}
                     {scenario === 'S2' && (
-                        <TdsrBlock
-                            title="New Purchase Loan"
-                            tenureMin={computation.purchaseTenureMin}
-                            tenureMax={computation.purchaseTenureMax}
-                            effectiveTenure={computation.effectivePurchaseTenure}
-                            ageCap={AGE_CAP_PURCHASE}
-                            defaultLabel="max tenure"
-                            stressInstallment={computation.purchaseStressInstallment}
-                            loanEligibility={computation.purchaseLoanEligibility}
-                            pass={computation.purchaseTdsrPass}
-                            onTenureChange={v => update({ preferred_tenure_purchase: v })}
-                            preferredTenure={data.preferred_tenure_purchase}
-                        />
+                        <>
+                            <TdsrBlock
+                                title="New Purchase Loan"
+                                tenureMin={computation.purchaseTenureMin}
+                                tenureMax={computation.purchaseTenureMax}
+                                effectiveTenure={computation.effectivePurchaseTenure}
+                                ageCap={AGE_CAP_PURCHASE}
+                                defaultLabel="max tenure"
+                                stressInstallment={computation.purchaseStressInstallment}
+                                loanEligibility={computation.purchaseLoanEligibility}
+                                pass={computation.purchaseTdsrPass}
+                                onTenureChange={v => update({ preferred_tenure_purchase: v })}
+                                preferredTenure={data.preferred_tenure_purchase}
+                            />
+                            {!computation.purchaseTdsrPass && (
+                                <TdsrRemedy propertyUse={data.property_use} equityLoanAmount={data.equity_loan_amount} pledge={computation.purchasePledge} />
+                            )}
+                        </>
                     )}
 
                     {/* S3 — both */}
@@ -518,8 +603,10 @@ export default function DecouplingWorkflowPanel({
                             {computation.tdsrOutcome && (
                                 <TdsrSummaryS3
                                     outcome={computation.tdsrOutcome}
-                                    refiLoanShortfall={computation.refiLoanShortfall}
-                                    purchaseLoanShortfall={computation.purchaseLoanShortfall}
+                                    propertyUse={data.property_use}
+                                    equityLoanAmount={data.equity_loan_amount}
+                                    refiPledge={computation.refiPledge}
+                                    purchasePledge={computation.purchasePledge}
                                 />
                             )}
                         </div>
@@ -527,50 +614,37 @@ export default function DecouplingWorkflowPanel({
                 </Section>
             )}
 
-            {/* ── 8. EQUITY LOAN ── (only when the client wants one) */}
-            {computation.ready && scenario !== null && (
-                <Section title="Equity Loan" icon={<Wallet size={15} />}>
-                    <Question label="Does the client want to take up an equity loan?">
-                        <YesNo value={data.wants_equity_loan} onChange={v => update({ wants_equity_loan: v })} />
-                    </Question>
+            {/* ── 8. EQUITY LOAN TDSR CHECK ── (only when client requested an equity loan) */}
+            {showTdsr && (data.equity_loan_amount ?? 0) > 0 && (
+                <Section title="Equity Loan — TDSR Check" icon={<Wallet size={15} />}>
+                    <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/40 px-4 py-3">
+                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Remaining TDSR after all other loans</p>
+                        <p className="text-xl font-bold text-[#052d4a]">
+                            {money(computation.remainingTdsrAfterLoans)}<span className="text-sm font-normal text-slate-500">/month</span>
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Available TDSR − refi − purchase instalments</p>
+                    </div>
 
-                    {data.wants_equity_loan && (
-                        scenario !== 'S4' && computation.grossMonthlyIncome === 0 ? (
-                            <p className="text-[12px] text-slate-400 flex items-start gap-1.5">
-                                <Info size={11} className="mt-0.5 shrink-0" />
-                                Enter buyer income above to assess equity-loan affordability.
-                            </p>
-                        ) : computation.equityNotEligibleReason ? (
-                            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-                                <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-                                <p className="text-[12px] text-amber-800">{computation.equityNotEligibleReason}</p>
-                            </div>
-                        ) : computation.equityEligible ? (
-                            <div className="space-y-3">
-                                <div className="rounded-lg bg-slate-50 border border-slate-100 px-4 py-3 space-y-2">
-                                    <Row label="Property headroom (75% LTV − loan − CPF)" value={money(computation.equityLoanMaxLtv)} />
-                                    {scenario !== 'S4' && (
-                                        <Row label="Affordability (leftover TDSR)" value={money(computation.equityLoanMaxTdsr)} />
-                                    )}
-                                    <div className="border-t border-slate-200 pt-2">
-                                        <Row
-                                            label={scenario === 'S4' ? 'Eligible (property headroom)' : 'Eligible (property + leftover TDSR)'}
-                                            value={money(computation.equityLoanMax)}
-                                            highlight valueClass="text-emerald-700"
-                                        />
-                                    </div>
-                                </div>
-                                <Question label="Equity loan amount to take">
-                                    <FieldInput commas prefix="$"
-                                        value={data.equity_loan_amount ?? ''}
-                                        placeholder={`max ${money(computation.equityLoanMax)}`}
-                                        onChange={v => {
-                                            const n = num(v)
-                                            update({ equity_loan_amount: n !== undefined ? Math.min(n, computation.equityLoanMax) : undefined })
-                                        }} />
-                                </Question>
-                            </div>
-                        ) : null
+                    <TdsrBlock
+                        title={`Equity Loan (${money(data.equity_loan_amount ?? 0)} requested)`}
+                        tenureMin={computation.equityTenureMin}
+                        tenureMax={computation.equityTenureMax}
+                        effectiveTenure={computation.effectiveEquityTenure}
+                        ageCap={AGE_CAP_REFI}
+                        defaultLabel="current tenure"
+                        stressInstallment={computation.equityStressInstallment}
+                        loanEligibility={computation.equityLoanEligibility}
+                        pass={computation.equityTdsrPass}
+                        onTenureChange={v => update({ preferred_tenure_equity: v })}
+                        preferredTenure={data.preferred_tenure_equity}
+                    />
+
+                    {!computation.equityTdsrPass && (
+                        <TdsrRemedy
+                            propertyUse={data.property_use}
+                            equityLoanAmount={data.equity_loan_amount}
+                            pledge={computation.equityPledge}
+                        />
                     )}
                 </Section>
             )}
@@ -675,7 +749,6 @@ function TdsrBlock({
         <div className="rounded-lg border border-slate-200 p-4 space-y-3">
             <p className="text-xs font-bold text-[#052d4a] uppercase tracking-wide">{title}</p>
 
-            {/* Tenure range + input */}
             <div className="space-y-2">
                 <div className="flex items-center gap-4 text-sm">
                     <span className="text-slate-500">Tenure range:</span>
@@ -697,14 +770,13 @@ function TdsrBlock({
                 </div>
             </div>
 
-            {/* Results */}
             <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
                     <p className="text-[11px] text-slate-500">Stress Instalment (4%)</p>
                     <p className="text-sm font-bold text-[#052d4a]">{money(stressInstallment)}/mo</p>
                 </div>
                 <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
-                    <p className="text-[11px] text-slate-500">Loan Eligibility</p>
+                    <p className="text-[11px] text-slate-500">Est. Loan Eligibility</p>
                     <p className="text-sm font-bold text-[#052d4a]">{money(loanEligibility)}</p>
                 </div>
             </div>
@@ -719,12 +791,51 @@ function TdsrBlock({
     )
 }
 
+// ─── TDSR Remedy (same logic as refinancing + pledge/show from purchaseCalc) ──
+
+function TdsrRemedy({ propertyUse, equityLoanAmount, pledge }: {
+    propertyUse?: string
+    equityLoanAmount?: number
+    pledge?: DecouplePledge | null
+}) {
+    const isOwnStay = propertyUse === 'own_stay'
+    const hasEquity = (equityLoanAmount ?? 0) > 0
+
+    const text = isOwnStay && !hasEquity
+        ? 'Client may qualify for TDSR Waiver with most banks — to double check with banker.'
+        : isOwnStay && hasEquity
+        ? 'Pledge / Show funds required to pass TDSR for the equity loan component.'
+        : !isOwnStay && !hasEquity
+        ? 'Bank will require client to pay down 3% of outstanding loan and / or show some funds to prove repayment ability — to double check with banker.'
+        : 'Pledge / Show funds required to pass TDSR.'
+
+    return (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+            <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
+            <p className="text-[12px] text-amber-700 leading-relaxed">{text}</p>
+            {pledge && (
+                <div className="rounded-lg border border-amber-300 bg-amber-100/60 px-3 py-2.5 space-y-1">
+                    <p className="text-[11px] font-semibold text-amber-900">
+                        Loan shortfall: {money(pledge.shortfall)}
+                    </p>
+                    <p className="text-[11px] text-amber-800">
+                        <span className="font-semibold">Pledge {money(pledge.pledgeFund)}</span> (locked 4 yrs)
+                        {' '}or <span className="font-semibold">Show {money(pledge.showFund)}</span> in funds.
+                    </p>
+                </div>
+            )}
+        </div>
+    )
+}
+
 // ─── S3 TDSR Summary ──────────────────────────────────────────────────────────
 
-function TdsrSummaryS3({ outcome, refiLoanShortfall, purchaseLoanShortfall }: {
+function TdsrSummaryS3({ outcome, propertyUse, equityLoanAmount, refiPledge, purchasePledge }: {
     outcome: TdsrOutcome
-    refiLoanShortfall: number
-    purchaseLoanShortfall: number
+    propertyUse?: string
+    equityLoanAmount?: number
+    refiPledge:     DecouplePledge | null
+    purchasePledge: DecouplePledge | null
 }) {
     if (outcome === 'both_pass') {
         return (
@@ -738,44 +849,24 @@ function TdsrSummaryS3({ outcome, refiLoanShortfall, purchaseLoanShortfall }: {
     }
 
     return (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 space-y-3">
-            <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
-                <AlertTriangle size={13} /> TDSR Shortfall — Pledge / Show Required
-            </p>
-
-            {outcome === 'refi_pass_purchase_fail' && (
-                <div className="space-y-2">
-                    <div className="rounded-lg border border-amber-300 bg-amber-100/60 px-3 py-2.5">
-                        <p className="text-[11px] font-bold text-amber-900">Purchase — TDSR Fail</p>
-                        <p className="text-[11px] text-amber-800 mt-0.5">
-                            Buyer needs to reduce purchase loan by <span className="font-bold">{money(purchaseLoanShortfall)}</span> (additional cash / CPF downpayment) or pledge / show equivalent funds to pass TDSR.
-                        </p>
-                    </div>
-                </div>
-            )}
-
+        <div className="space-y-2">
             {outcome === 'both_fail' && (
-                <div className="space-y-2">
-                    <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2.5">
-                        <p className="text-[11px] font-bold text-red-900">Refinancing — TDSR Fail</p>
-                        <p className="text-[11px] text-red-800 mt-0.5">
-                            Partial repayment of <span className="font-bold">{money(refiLoanShortfall)}</span> needed to bring refi loan within TDSR limit.
-                        </p>
-                    </div>
-                    <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2.5">
-                        <p className="text-[11px] font-bold text-red-900">Purchase — TDSR Fail</p>
-                        <p className="text-[11px] text-red-800 mt-0.5">
-                            Additional <span className="font-bold">{money(purchaseLoanShortfall)}</span> cash / CPF downpayment (or pledge / show) needed to pass purchase TDSR.
-                        </p>
-                    </div>
-                    <div className="rounded-lg border border-amber-300 bg-amber-100/60 px-3 py-2.5">
-                        <p className="text-[11px] font-bold text-amber-900">Combined shortfall</p>
-                        <p className="text-[11px] text-amber-800 mt-0.5">
-                            Total funds to address: <span className="font-bold">{money(refiLoanShortfall + purchaseLoanShortfall)}</span>
-                        </p>
-                    </div>
+                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+                    <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                    <p className="text-[12px] text-red-800">TDSR fails on both refinancing and new purchase loan.</p>
                 </div>
             )}
+            {outcome === 'refi_pass_purchase_fail' && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                    <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[12px] text-amber-800">Refinancing passes — new purchase loan fails TDSR.</p>
+                </div>
+            )}
+            <TdsrRemedy
+                propertyUse={propertyUse}
+                equityLoanAmount={equityLoanAmount}
+                pledge={outcome === 'both_fail' ? refiPledge : purchasePledge}
+            />
         </div>
     )
 }
@@ -840,6 +931,10 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
             {hint && <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p>}
         </div>
     )
+}
+
+function SubNote({ children }: { children: React.ReactNode }) {
+    return <p className="text-[11px] text-slate-400 -mt-1 pl-0.5">{children}</p>
 }
 
 function Row({ label, value, hint, highlight, valueClass }: {
