@@ -112,6 +112,7 @@ export interface PurchaseWorkflow {
     ipa_done?: boolean
     ipa?: PurchaseIpa
     outstanding_housing_loans?: '0' | '1' | '2plus'
+    residential_properties_owned?: '1' | '2' | '3plus'
     borrowers?: PurchaseBorrower[]
     property_price?: number
     reference_rate?: number

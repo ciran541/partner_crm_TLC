@@ -143,6 +143,7 @@ export interface PurchaseInputs {
     propertyPrice?: number
     referenceRatePct?: number     // for the headline monthly-installment estimate
     outstanding?: OutstandingLoans
+    residentialPropertiesOwned?: '1' | '2' | '3plus'  // drives ABSD; separate from mortgage loans
     ipaDone?: boolean
     ipa?: { amount?: number; tenure?: number; ageCap?: 65 | 75 }
     borrowers?: BorrowerInput[]   // used only when ipaDone is false
@@ -235,21 +236,50 @@ export function calculateABSD(args: {
     price: number
     residencies: (Residency | undefined)[]
     outstanding: OutstandingLoans
+    residentialPropertiesOwned?: '1' | '2' | '3plus'
 }): { amount: number; ratePct: number; residency: Residency } {
     const residency = worstResidency(args.residencies)
-    const rate = absdRate(residency, outstandingToCount(args.outstanding))
+    // Residential properties owned drives ABSD; fall back to mortgage loans if not set.
+    const propertyCount: 1 | 2 | 3 = args.residentialPropertiesOwned === '3plus' ? 3
+        : args.residentialPropertiesOwned === '2' ? 2
+        : args.residentialPropertiesOwned === '1' ? 1
+        : outstandingToCount(args.outstanding)
+    const rate = absdRate(residency, propertyCount)
     return { amount: args.price * rate, ratePct: rate * 100, residency }
 }
 
 export function legalFee(type?: PurchasePropertyType | null): number {
-    return propertyMeta(type)?.hdbClass ? 1800 : 2500
+    switch (type) {
+        case 'bto':            return 2000
+        case 'resale_hdb':     return 1800
+        case 'new_launch_condo':
+        case 'ec_new_launch':  return 2800
+        case 'resale_landed':  return 3000
+        case 'resale_condo':
+        default:               return 2500
+    }
+}
+
+function _valuationAbove5m(price: number): number {
+    return Math.round((700 + 0.0002 * (price - 5_000_000)) * 1.09)
 }
 
 export function valuationFee(type: PurchasePropertyType | null | undefined, price: number): number {
-    if (propertyMeta(type)?.hdbClass) return 120
-    if (price < 1000000) return 300
-    if (price < 2000000) return 400
-    return 500
+    switch (type) {
+        case 'bto':            return 0
+        case 'resale_hdb':     return 120
+        case 'new_launch_condo':
+        case 'ec_new_launch':  return 100
+        case 'resale_landed':
+            if (price < 3_000_000)  return 550
+            if (price <= 5_000_000) return 750
+            return _valuationAbove5m(price)
+        case 'resale_condo':
+        default:
+            if (price < 3_000_000)  return 500
+            if (price <= 5_000_000) return 700
+            return _valuationAbove5m(price)
+    }
 }
 // ─── Per-option computation ───────────────────────────────────────────────────
 
@@ -391,6 +421,7 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
         price,
         residencies: borrowers.map(b => b.residency),
         outstanding,
+        residentialPropertiesOwned: inputs.residentialPropertiesOwned,
     })
 
     // Tenure range: needs property type + IWAA only (independent of income).
@@ -436,6 +467,7 @@ export function inputsFromWorkflow(d: PurchaseWorkflow): PurchaseInputs {
         propertyPrice: d.property_price,
         referenceRatePct: d.reference_rate,
         outstanding: d.outstanding_housing_loans,
+        residentialPropertiesOwned: d.residential_properties_owned,
         ipaDone: d.ipa_done,
         ipa: d.ipa ? { amount: d.ipa.amount, tenure: d.ipa.tenure, ageCap: d.ipa.age_cap } : undefined,
         preferredTenure: d.preferred_tenure,

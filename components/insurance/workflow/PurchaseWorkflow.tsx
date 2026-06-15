@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode, useMemo, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useState } from 'react'
 import type { PurchaseWorkflow, PurchaseBorrower } from '@/lib/types/workflow'
 import {
     computePurchase,
@@ -16,7 +16,7 @@ import {
     type OptionResult,
     type OutstandingLoans,
 } from '@/lib/insurance/purchaseCalc'
-import { buildRemarks, nextActions, OTP_NOT_OBTAINED_REMARK, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
+import { buildRemarks, nextActions, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
 import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchaseProposal'
 import { monthlyInstallment } from '@/lib/insurance/loanCalc'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
@@ -26,7 +26,7 @@ import type { SoraRates } from '@/lib/insurance/sora'
 import PurchasePackages from './PurchasePackages'
 import PurchasePresentation from './PurchasePresentation'
 import {
-    Home, CheckCircle2, AlertTriangle, Info, Lightbulb, Save, FileText, Wallet,
+    Home, CheckCircle2, AlertTriangle, Info, Save, FileText, Wallet, XCircle,
     ArrowRight, ClipboardList, Copy, Printer, Circle,
     Presentation, MessageSquare,
 } from 'lucide-react'
@@ -59,9 +59,22 @@ export default function PurchaseWorkflowPanel({
     const [presentationOpen, setPresentationOpen] = useState(false)
     const [rawPrefTenure, setRawPrefTenure] = useState('')
     const [liquidityOption, setLiquidityOption] = useState<'1' | '2'>('1')
+    const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
+    const [rawPrefTenure2, setRawPrefTenure2] = useState('')
 
     const meta = propertyMeta(data.property_type)
     const computation = useMemo(() => computePurchase(inputsFromWorkflow(data)), [data])
+
+    // Auto-switch liquidity view away from an option whose max tenure the client can't meet
+    useEffect(() => {
+        if (!computation.ready || computation.options.length < 2) return
+        const pref = data.preferred_tenure
+        const currentBlocked = computation.options.find(o => o.key === liquidityOption && pref != null && pref > o.maxTenure)
+        if (currentBlocked) {
+            const other = computation.options.find(o => o.key !== liquidityOption && !(pref != null && pref > o.maxTenure))
+            if (other) setLiquidityOption(other.key as '1' | '2')
+        }
+    }, [data.preferred_tenure, computation.options, computation.ready, liquidityOption])
     const remarks = useMemo<PurchaseRemarks>(() => buildRemarks({
         propertyType: data.property_type,
         otpObtained: data.otp_obtained,
@@ -179,6 +192,15 @@ export default function PurchaseWorkflowPanel({
                     <FieldInput commas prefix="$" value={data.property_price ?? ''} placeholder="e.g. 1,500,000"
                         onChange={v => update({ property_price: num(v) })} />
                 </Question>
+                {isResale(data.property_type) && (
+                    <TipGroup>
+                        <Tip>Valuations are determined by banks — we can obtain indicative valuations from banks, which are useful for your negotiations with the seller(s).</Tip>
+                        <Tip>The maximum Loan-To-Valuation (LTV) is based on the purchase price or valuation, whichever is lower.</Tip>
+                        {data.property_type === 'resale_landed' && (
+                            <Tip>Double-check with the seller(s) whether the landed property has obtained its Certificate of Statutory Completion (CSC) or only Temporary Occupation Permit (TOP) — some ID contractors don't obtain CSC after works are done. Without CSC, most banks will not finance; DBS/SCB are open to it for now.</Tip>
+                        )}
+                    </TipGroup>
+                )}
             </Section>
 
             {/* OTP */}
@@ -187,15 +209,36 @@ export default function PurchaseWorkflowPanel({
                     <Question label="Have you obtained the OTP from seller/developer?" required>
                         <YesNo value={data.otp_obtained} onChange={v => update({ otp_obtained: v })} />
                     </Question>
-                    {data.otp_obtained && otpDateFields.length > 0 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-1">
-                            {otpDateFields.map(f => (
-                                <Question key={f.key} label={f.label}>
-                                    <FieldInput type={f.type} value={(data.otp_dates?.[f.key] as string) ?? ''}
-                                        onChange={v => update({ otp_dates: { ...data.otp_dates, [f.key]: v } })} />
+                    {data.otp_obtained && (
+                        isResale(data.property_type) ? (
+                            <>
+                                <Question label="Option Expiry Date">
+                                    <FieldInput type="date" value={data.otp_dates?.option_expiry ?? ''}
+                                        onChange={v => update({ otp_dates: { ...data.otp_dates, option_expiry: v } })} />
                                 </Question>
-                            ))}
-                        </div>
+                                <TipGroup>
+                                    <Tip>Recommended to get a bank loan approved before exercising option.</Tip>
+                                    <Tip>Law firm has to be under the bank's panel.</Tip>
+                                </TipGroup>
+                                <Question label="Expected Purchase Completion Date">
+                                    <FieldInput type="date" value={data.otp_dates?.completion ?? ''}
+                                        onChange={v => update({ otp_dates: { ...data.otp_dates, completion: v } })} />
+                                </Question>
+                                <TipGroup>
+                                    <Tip>Most banks have a 6 months validity period for their letter of offer.</Tip>
+                                    <Tip>Law firms will generally require 5–8 weeks to disburse the mortgage loan.</Tip>
+                                </TipGroup>
+                            </>
+                        ) : otpDateFields.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-1">
+                                {otpDateFields.map(f => (
+                                    <Question key={f.key} label={f.label}>
+                                        <FieldInput type={f.type} value={(data.otp_dates?.[f.key] as string) ?? ''}
+                                            onChange={v => update({ otp_dates: { ...data.otp_dates, [f.key]: v } })} />
+                                    </Question>
+                                ))}
+                            </div>
+                        )
                     )}
                     {data.otp_obtained === false && (
                         <Question label="Roughly when do you intend to buy?">
@@ -212,6 +255,7 @@ export default function PurchaseWorkflowPanel({
                     <Question label="Have you done an IPA with any bank before?" required>
                         <YesNo value={data.ipa_done} onChange={v => update({ ipa_done: v })} />
                     </Question>
+                    <Tip>An IPA is free, non-obligatory and has a validity period of 1 month.</Tip>
                     {data.ipa_done && (
                         <>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -267,6 +311,27 @@ export default function PurchaseWorkflowPanel({
                             <AlertTriangle size={12} /> HDB / BTO / EC New Launch can only be a first housing loan — select 1.
                         </p>
                     )}
+                    <TipGroup>
+                        <Tip>This will impact Loan-To-Valuation (LTV).</Tip>
+                    </TipGroup>
+                </Section>
+            )}
+
+            {/* Number of Residential Properties */}
+            {data.property_type && (
+                <Section title="Number of Residential Properties Owned" icon={<Home size={15} />}>
+                    <Question label='Select "1" if the next property purchase will be your only property' required>
+                        <PillSelect
+                            value={data.residential_properties_owned}
+                            onChange={v => update({ residential_properties_owned: v as '1' | '2' | '3plus' })}
+                            options={[
+                                { value: '1', label: '1' },
+                                { value: '2', label: '2' },
+                                { value: '3plus', label: '3 or more' },
+                            ]}
+                        />
+                    </Question>
+                    <Tip>This will impact Additional Buyer&apos;s Stamp Duty (ABSD).</Tip>
                 </Section>
             )}
 
@@ -283,6 +348,10 @@ export default function PurchaseWorkflowPanel({
                                 <Info size={12} className="mt-0.5 shrink-0" />
                                 A bridging loan is recommended if your sales proceeds cannot make it in time to fund the down-payment on your purchase completion date.
                             </p>
+                            <TipGroup>
+                                <Tip>It will be a floating rate charged on a pro-rated daily basis.</Tip>
+                                <Tip>Banks will require sale OTP before you can apply for a bridging loan.</Tip>
+                            </TipGroup>
                         </Question>
                     )}
                     {data.property_type === 'new_launch_condo' && (
@@ -429,17 +498,22 @@ export default function PurchaseWorkflowPanel({
             {computation.ready ? (
                 <>
                     <div className={`grid gap-4 ${computation.options.length > 1 ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
-                        {computation.options.map(opt => (
-                            <OptionCard
-                                key={opt.key}
-                                opt={opt}
-                                ipa={!!data.ipa_done}
-                                price={data.property_price ?? 0}
-                                selectable={computation.options.length > 1}
-                                selected={liquidityOption === opt.key}
-                                onSelect={() => setLiquidityOption(opt.key as '1' | '2')}
-                            />
-                        ))}
+                        {computation.options.map(opt => {
+                            const blocked = data.preferred_tenure != null && data.preferred_tenure > opt.maxTenure
+                            return (
+                                <OptionCard
+                                    key={opt.key}
+                                    opt={opt}
+                                    ipa={!!data.ipa_done}
+                                    price={data.property_price ?? 0}
+                                    selectable={computation.options.length > 1}
+                                    selected={liquidityOption === opt.key}
+                                    onSelect={() => setLiquidityOption(opt.key as '1' | '2')}
+                                    blocked={blocked}
+                                    preferredTenure={data.preferred_tenure}
+                                />
+                            )
+                        })}
                     </div>
 
                     {/* Stamp duty + fees */}
@@ -454,6 +528,7 @@ export default function PurchaseWorkflowPanel({
                             <Stat label="Legal Fee (est.)" value={money(computation.legalFee)} />
                             <Stat label="Valuation Fee (est.)" value={money(computation.valuationFee)} />
                         </div>
+                        <Tip>BSD and ABSD (if applicable) must be paid in cash to IRAS, with optional reimbursement from CPF on completion. In practice, CPF cannot disburse monies to IRAS within the 2-week BSD/ABSD deadline.</Tip>
                     </Section>
 
                     <LiquidityCard
@@ -461,17 +536,6 @@ export default function PurchaseWorkflowPanel({
                         miscFees={computation.bsd + computation.absd + computation.legalFee + computation.valuationFee}
                         price={data.property_price ?? 0}
                     />
-
-                    {/* Remarks */}
-                    <RemarksCard remarks={remarks} />
-
-                    {/* OTP not obtained — shown just above the rate packages */}
-                    {data.otp_obtained === false && (
-                        <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                            <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-                            <p className="text-[13px] text-amber-800 leading-relaxed">{OTP_NOT_OBTAINED_REMARK}</p>
-                        </div>
-                    )}
 
                     {/* Rate preference — just above the package list */}
                     <Section title="Rate Preference" icon={<Info size={15} />}>
@@ -493,6 +557,7 @@ export default function PurchaseWorkflowPanel({
                                 Only floating rates are available until TOP — package suggestions are floating-only.
                             </p>
                         )}
+                        <Tip>Interest rates can only be secured once the OTP from the seller has been obtained.</Tip>
                     </Section>
 
                     {/* Packages */}
@@ -508,37 +573,114 @@ export default function PurchaseWorkflowPanel({
                         />
                     )}
 
-                    {/* Monthly Instalment — computed from selected package rate + option tenure */}
-                    <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
-                        {pkg?.avg_rate_lockin_pct != null ? (
-                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                                <Info size={12} className="text-[#03a9e7]" />
-                                Based on <span className="font-semibold">{String(pkg.bank)}</span> @ {Number(pkg.avg_rate_lockin_pct).toFixed(2)}% avg lock-in rate
-                            </p>
-                        ) : (
-                            <div className="flex items-center gap-2 text-xs text-slate-500">
-                                <span>No package selected — estimating at</span>
-                                <input type="number" step="0.05" value={data.reference_rate ?? ''} placeholder={`${DEFAULT_REFERENCE_RATE}`}
-                                    onChange={e => update({ reference_rate: num(e.target.value) })}
-                                    className="w-16 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
-                                <span>% p.a.</span>
-                            </div>
-                        )}
-                        <div className={`grid gap-4 ${computation.options.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                            {computation.options.map(opt => {
-                                const rate = (pkg?.avg_rate_lockin_pct as number | undefined) ?? data.reference_rate ?? DEFAULT_REFERENCE_RATE
-                                const monthly = monthlyInstallment(opt.finalLoan, rate, opt.tenure)
-                                return (
-                                    <div key={opt.key} className="rounded-lg border border-slate-200 p-4">
-                                        <p className="text-xs text-slate-500 mb-1">Option {opt.key} · {opt.tenure} yrs</p>
-                                        <p className="text-2xl font-extrabold text-[#052d4a]">
-                                            {money(monthly)}<span className="text-sm font-normal text-slate-400"> /mo</span>
-                                        </p>
+                    {/* Monthly Instalment — tenure comparison tool */}
+                    {(() => {
+                        const selectedOpt = computation.options.find(o => o.key === liquidityOption) ?? computation.options[0]
+                        if (!selectedOpt) return null
+                        const rate = (pkg?.avg_rate_lockin_pct as number | undefined) ?? data.reference_rate ?? DEFAULT_REFERENCE_RATE
+                        const t1 = data.preferred_tenure ?? selectedOpt.maxTenure
+                        const t2 = preferredTenure2 ?? selectedOpt.maxTenure
+                        const loan = selectedOpt.finalLoan
+                        const m1 = monthlyInstallment(loan, rate, t1)
+                        const m2 = monthlyInstallment(loan, rate, t2)
+                        const i1 = Math.max(0, m1 * t1 * 12 - loan)
+                        const i2 = Math.max(0, m2 * t2 * 12 - loan)
+                        const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
+                        return (
+                            <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
+                                {/* Rate source */}
+                                {pkg?.avg_rate_lockin_pct != null ? (
+                                    <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                                        <Info size={12} className="text-[#03a9e7]" />
+                                        Based on <span className="font-semibold">{String(pkg.bank)}</span> @ {Number(pkg.avg_rate_lockin_pct).toFixed(2)}% avg lock-in rate
+                                    </p>
+                                ) : (
+                                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                                        <span>No package selected — estimating at</span>
+                                        <input type="number" step="0.05" value={data.reference_rate ?? ''} placeholder={`${DEFAULT_REFERENCE_RATE}`}
+                                            onChange={e => update({ reference_rate: num(e.target.value) })}
+                                            className="w-16 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
+                                        <span>% p.a.</span>
                                     </div>
-                                )
-                            })}
-                        </div>
-                    </Section>
+                                )}
+
+                                {/* Tenure range header */}
+                                <p className="text-xs text-slate-600">
+                                    Tenure Range based off Option {selectedOpt.key}:{' '}
+                                    <span className="font-semibold">5 – {selectedOpt.maxTenure} yrs</span>
+                                </p>
+
+                                {/* Two tenure inputs */}
+                                <div className="grid grid-cols-2 gap-5">
+                                    <div>
+                                        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Preferred Tenure 1</p>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number" min={5} max={selectedOpt.maxTenure}
+                                                value={rawPrefTenure !== '' ? rawPrefTenure : t1}
+                                                onChange={e => setRawPrefTenure(e.target.value)}
+                                                onBlur={() => {
+                                                    const parsed = parseInt(rawPrefTenure, 10)
+                                                    setRawPrefTenure('')
+                                                    if (!isNaN(parsed) && parsed > 0) {
+                                                        update({ preferred_tenure: Math.max(5, Math.min(selectedOpt.maxTenure, parsed)) })
+                                                    }
+                                                }}
+                                                className={inputCls}
+                                            />
+                                            <span className="text-xs text-slate-400">yrs</span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 mt-1">Synced with preferred tenure above</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Preferred Tenure 2</p>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number" min={5} max={selectedOpt.maxTenure}
+                                                value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? preferredTenure2 : '')}
+                                                placeholder={String(selectedOpt.maxTenure)}
+                                                onChange={e => setRawPrefTenure2(e.target.value)}
+                                                onBlur={() => {
+                                                    const parsed = parseInt(rawPrefTenure2, 10)
+                                                    setRawPrefTenure2('')
+                                                    if (!isNaN(parsed) && parsed > 0) {
+                                                        setPreferredTenure2(Math.max(5, Math.min(selectedOpt.maxTenure, parsed)))
+                                                    }
+                                                }}
+                                                className={inputCls}
+                                            />
+                                            <span className="text-xs text-slate-400">yrs</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Comparison table */}
+                                <div className="rounded-lg border border-slate-200 overflow-hidden text-sm">
+                                    <div className="grid grid-cols-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50 border-b border-slate-200">
+                                        <div className="px-3 py-2">Option {selectedOpt.key}</div>
+                                        <div className="px-3 py-2 text-right border-l border-slate-200">Tenure 1 ({t1} yrs)</div>
+                                        <div className="px-3 py-2 text-right border-l border-slate-200">Tenure 2 ({t2} yrs)</div>
+                                    </div>
+                                    <div className="grid grid-cols-3 border-b border-slate-100">
+                                        <div className="px-3 py-2.5 text-slate-500">Monthly Instalment</div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">{money(m1)}<span className="text-slate-400 font-normal">/mo</span></div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
+                                            {money(m2)}<span className="text-slate-400 font-normal">/mo</span>
+                                            {t1 !== t2 && <span className={`ml-1.5 text-[11px] font-semibold ${m2 < m1 ? 'text-emerald-600' : 'text-red-500'}`}>{m2 < m1 ? '↓' : '↑'}{money(Math.abs(m2 - m1))}</span>}
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-3">
+                                        <div className="px-3 py-2.5 text-slate-500">Total Interest</div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">{money(i1)}</div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
+                                            {money(i2)}
+                                            {t1 !== t2 && <span className={`ml-1.5 text-[11px] font-semibold ${i2 < i1 ? 'text-emerald-600' : 'text-red-500'}`}>{i2 < i1 ? '↓' : '↑'}{money(Math.abs(i2 - i1))}</span>}
+                                        </div>
+                                    </div>
+                                </div>
+                            </Section>
+                        )
+                    })()}
 
                     {/* Next step — client-facing only (Present / Chat summary / client checklist).
                         Pipeline stage + follow-up live on the internal Overview tab. */}
@@ -596,6 +738,11 @@ export default function PurchaseWorkflowPanel({
 }
 
 // ─── OTP date fields per property type ────────────────────────────────────────
+const RESALE_TYPES: PurchasePropertyType[] = ['resale_condo', 'resale_landed', 'resale_hdb']
+function isResale(type?: PurchasePropertyType | string): boolean {
+    return RESALE_TYPES.includes(type as PurchasePropertyType)
+}
+
 type OtpFieldKey = 'option_expiry' | 'completion' | 'top_year' | 'snp_date' | 'key_collection_year'
 function otpFieldsFor(type?: PurchasePropertyType): { key: OtpFieldKey; label: string; type: string }[] {
     if (!type) return []
@@ -730,9 +877,10 @@ function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; 
     )
 }
 
-function OptionCard({ opt, ipa, price, selectable, selected, onSelect }: {
+function OptionCard({ opt, ipa, price, selectable, selected, onSelect, blocked, preferredTenure }: {
     opt: OptionResult; ipa: boolean; price: number
     selectable?: boolean; selected?: boolean; onSelect?: () => void
+    blocked?: boolean; preferredTenure?: number
 }) {
     const isOpt1 = opt.key === '1'
     const ltvPctLabel = `${Math.round(opt.ltvPct * 100)}%`
@@ -747,28 +895,35 @@ function OptionCard({ opt, ipa, price, selectable, selected, onSelect }: {
     const actualLtvPctLabel = fmtPct(actualLtvPctNum)
     const balancePctLabel = fmtPct(balancePctNum)
 
-    const borderClass = selected
-        ? 'border-[#03a9e7] ring-2 ring-[#03a9e7]/20'
-        : isOpt1 ? 'border-[#03a9e7]/30' : 'border-slate-200'
+    const borderClass = blocked
+        ? 'border-slate-200'
+        : selected
+            ? 'border-emerald-500 ring-2 ring-emerald-500/20'
+            : isOpt1 ? 'border-[#03a9e7]/30' : 'border-slate-200'
 
     return (
         <div
-            className={`rounded-xl border shadow-sm overflow-hidden transition-all ${borderClass} ${selectable ? 'cursor-pointer' : ''}`}
-            onClick={selectable ? onSelect : undefined}
+            className={`rounded-xl border shadow-sm overflow-hidden transition-all ${borderClass} ${selectable && !blocked ? 'cursor-pointer' : ''}`}
+            onClick={selectable && !blocked ? onSelect : undefined}
         >
             {/* Header */}
-            <div className={`px-5 py-4 border-b flex items-center justify-between ${isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'}`}>
-                <p className="text-sm font-bold text-[#052d4a]">
+            <div className={`px-5 py-4 border-b flex items-center justify-between ${
+                blocked ? 'bg-slate-100 border-slate-200'
+                    : isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'
+            }`}>
+                <p className={`text-sm font-bold ${blocked ? 'text-slate-400' : 'text-[#052d4a]'}`}>
                     Option {opt.key} (Loan-To-Valuation {ltvPctLabel})
                 </p>
                 {selectable && (
-                    selected
-                        ? <span className="text-[11px] font-semibold text-[#03a9e7] flex items-center gap-1"><CheckCircle2 size={13} /> Selected for liquidity</span>
-                        : <span className="text-[11px] text-slate-400">Click to view liquidity</span>
+                    blocked
+                        ? <span className="text-[11px] font-semibold text-amber-600 flex items-center gap-1.5"><XCircle size={13} /> Preferred {preferredTenure} yrs exceeds {opt.maxTenure} yr max</span>
+                        : selected
+                            ? <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1"><CheckCircle2 size={13} /> Selected for liquidity</span>
+                            : <span className="text-[11px] text-slate-400">Click to view liquidity</span>
                 )}
             </div>
 
-            <div className="px-5 py-4 space-y-5">
+            <div className={`px-5 py-4 space-y-5 ${blocked ? 'opacity-40 pointer-events-none select-none' : ''}`}>
                 {/* Payment Structure */}
                 <div className="space-y-2">
                     <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Payment Structure</p>
@@ -789,13 +944,19 @@ function OptionCard({ opt, ipa, price, selectable, selected, onSelect }: {
                     </div>
                 </div>
 
-                {/* Estimated Loan Eligibility */}
-                {!ipa && opt.incomeEligibility != null && (
-                    <div className="flex items-center justify-between gap-3 border-t border-dashed border-slate-200 pt-4 text-sm">
-                        <span className="text-slate-500">Estimated Loan Eligibility</span>
-                        <span className="font-semibold text-slate-700">{money(opt.incomeEligibility)}</span>
+                {/* Tenure + Eligibility */}
+                <div className="border-t border-dashed border-slate-200 pt-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-slate-500">Tenure</span>
+                        <span className="font-semibold text-slate-700">{opt.tenure} yrs</span>
                     </div>
-                )}
+                    {!ipa && opt.incomeEligibility != null && (
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-slate-500">Estimated Loan Eligibility</span>
+                            <span className="font-semibold text-slate-700">{money(opt.incomeEligibility)}</span>
+                        </div>
+                    )}
+                </div>
 
                 {/* Breakdown */}
                 <div className="space-y-3 border-t border-slate-200 pt-4">
@@ -874,34 +1035,17 @@ function Row({ label, value, strong, muted }: { label: ReactNode; value: string;
     )
 }
 
-function RemarksCard({ remarks }: { remarks: PurchaseRemarks }) {
-    const all = [...remarks.standard, ...remarks.propertyType]
-    if (!all.length && !remarks.alerts.length) return null
+function Tip({ children }: { children: ReactNode }) {
     return (
-        <div className="space-y-3">
-            {remarks.alerts.map((a, i) => (
-                <div key={i} className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                    <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-                    <p className="text-[13px] text-amber-800 leading-relaxed">{a}</p>
-                </div>
-            ))}
-            {all.length > 0 && (
-                <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-5">
-                    <p className="text-sm font-bold text-violet-800 flex items-center gap-2 mb-3">
-                        <Lightbulb size={15} /> Remarks — advise the client
-                    </p>
-                    <ul className="space-y-2.5">
-                        {all.map((r, i) => (
-                            <li key={i} className="flex items-start gap-2.5 text-[13px] text-violet-900 leading-relaxed">
-                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0 mt-1.5" />
-                                <span>{r}</span>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-        </div>
+        <p className="text-[12px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
+            <Info size={12} className="shrink-0 mt-0.5 text-[#03a9e7]" />
+            <span>{children}</span>
+        </p>
     )
+}
+
+function TipGroup({ children }: { children: ReactNode }) {
+    return <div className="space-y-1.5 mt-1">{children}</div>
 }
 
 // ─── Next step ────────────────────────────────────────────────────────────────
