@@ -55,8 +55,14 @@ export interface RefinancingWorkflow {
     priority_client?: boolean                       // captured agent context
     priority_banks?: string[]                       // which banks the client has priority status with
     property_use?: 'own_stay' | 'investment'        // own-stay or investment property
+    outstanding_equity_loan?: number                // private only: current equity loan outstanding
+    current_equity_loan_tenure?: number             // private only: remaining equity loan tenure (years)
+    decouple_now?: boolean                          // within decouple consideration: is client decoupling now?
+    cpf_used?: number                               // total CPF accrued by all owners (equity section)
+    equity_loan_amount?: number                     // desired new equity loan amount
+    preferred_tenure_equity?: number                // equity loan tenure for TDSR calc
     year_of_purchase?: number
-    current_tenure?: number                         // remaining tenure on the current loan (years)
+    current_tenure?: number                         // remaining home loan tenure (years)
     preferred_tenure_1?: number                     // Tenure Planner — comparison slot 1
     preferred_tenure_2?: number                     // Tenure Planner — comparison slot 2
     rate_preference?: 'fixed' | 'floating' | 'both'

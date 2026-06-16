@@ -27,6 +27,8 @@ import {
     Presentation, MessageSquare, Percent,
 } from 'lucide-react'
 
+const pct = (frac: number, dp = 1) => `${(frac * 100).toFixed(dp)}%`
+
 interface Props {
     data: RefinancingWorkflow
     onChange: (updated: RefinancingWorkflow) => void
@@ -98,6 +100,15 @@ export default function RefinancingWorkflowPanel({
         const patch: Partial<RefinancingWorkflow> = { property_type: type }
         // Undisbursed only applies to the incompleted (BUC) type — clear otherwise.
         if (!refiPropertyMeta(type)?.buc) patch.outstanding_undisbursed = undefined
+        // Equity loan fields only apply to private property types.
+        if (!refiPropertyMeta(type)?.isPrivate) {
+            patch.outstanding_equity_loan = undefined
+            patch.current_equity_loan_tenure = undefined
+            patch.decouple_now = undefined
+            patch.cpf_used = undefined
+            patch.equity_loan_amount = undefined
+            patch.preferred_tenure_equity = undefined
+        }
         update(patch)
     }
 
@@ -162,7 +173,6 @@ export default function RefinancingWorkflowPanel({
 
     // ── Tenure Comparison — TDSR inputs ──
     const grossForTdsr = useMemo(() => {
-        if (!data.provide_income) return null
         const total = agedBorrowers.reduce((s, { b }) => s + effectiveMonthlyIncome({
             basicMonthlySalary: b.basic_salary,
             annualVariableIncome: b.annual_variable,
@@ -170,7 +180,7 @@ export default function RefinancingWorkflowPanel({
         }), 0)
         return total > 0 ? total : null
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [data.provide_income, data.borrowers])
+    }, [data.borrowers])
 
     const debtsForTdsr = useMemo(() =>
         agedBorrowers.reduce((s, { b }) => s + (b.commitments ?? 0), 0)
@@ -225,15 +235,32 @@ export default function RefinancingWorkflowPanel({
                     <FieldInput commas prefix="$" value={data.market_price ?? ''} placeholder="e.g. 1,500,000"
                         onChange={v => update({ market_price: num(v) })} />
                 </Question>
+                <Question label="Year of purchase" required>
+                    <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2018"
+                        onChange={v => update({ year_of_purchase: num(v) })} />
+                </Question>
             </Section>
 
             {/* ── Current loan ── */}
             {data.property_type && (
                 <Section title="Current Loan" icon={<Wallet size={15} />}>
-                    <Question label="Outstanding loan amount (disbursed)" required>
-                        <FieldInput commas prefix="$" value={data.outstanding_disbursed ?? ''} placeholder="e.g. 800,000"
-                            onChange={v => update({ outstanding_disbursed: num(v) })} />
-                    </Question>
+                    {meta?.isPrivate ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <Question label="Outstanding Home Loan" required>
+                                <FieldInput commas prefix="$" value={data.outstanding_disbursed ?? ''} placeholder="e.g. 800,000"
+                                    onChange={v => update({ outstanding_disbursed: num(v) })} />
+                            </Question>
+                            <Question label="Outstanding Equity Loan">
+                                <FieldInput commas prefix="$" value={data.outstanding_equity_loan ?? ''} placeholder="e.g. 100,000"
+                                    onChange={v => update({ outstanding_equity_loan: num(v) })} />
+                            </Question>
+                        </div>
+                    ) : (
+                        <Question label="Outstanding loan amount" required>
+                            <FieldInput commas prefix="$" value={data.outstanding_disbursed ?? ''} placeholder="e.g. 800,000"
+                                onChange={v => update({ outstanding_disbursed: num(v) })} />
+                        </Question>
+                    )}
 
                     {meta?.buc && (
                         <Question label="Outstanding loan amount (undisbursed)">
@@ -248,7 +275,7 @@ export default function RefinancingWorkflowPanel({
                     )}
 
                     {(() => {
-                        const total = (data.outstanding_disbursed ?? 0) + (data.outstanding_undisbursed ?? 0)
+                        const total = (data.outstanding_disbursed ?? 0) + (data.outstanding_equity_loan ?? 0) + (data.outstanding_undisbursed ?? 0)
                         const cap = (data.market_price ?? 0) * 0.75
                         if (!data.market_price || total === 0 || total <= cap) return null
                         return (
@@ -265,11 +292,11 @@ export default function RefinancingWorkflowPanel({
                         <Question label="Lock-in end date">
                             <FieldInput type="date" value={data.lockin_end_date ?? ''} onChange={v => update({ lockin_end_date: v })} />
                         </Question>
-                        <Question label="Current interest rate">
-                            <FieldInput type="number" suffix="% p.a." value={data.current_rate ?? ''} placeholder="e.g. 3.5"
-                                onChange={v => update({ current_rate: num(v) })} />
-                        </Question>
                     </div>
+                    <Question label="Current interest rate">
+                        <FieldInput type="number" suffix="% p.a." value={data.current_rate ?? ''} placeholder="e.g. 3.5"
+                            onChange={v => update({ current_rate: num(v) })} />
+                    </Question>
 
                     <Question label="Do you need to return any subsidy to the current bank?">
                         <p className="text-[11px] text-slate-400 -mt-1 mb-2">Only applicable if the current bank gave a subsidy and you&apos;ve been with them less than 3 years.</p>
@@ -293,6 +320,29 @@ export default function RefinancingWorkflowPanel({
                             </div>
                         )}
                     </Question>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Question label={meta?.isPrivate ? 'Current Home Loan Tenure (remaining years)' : 'Current Tenure (remaining years on existing loan)'}>
+                            <FieldInput type="number" value={data.current_tenure ?? ''} placeholder="e.g. 20"
+                                onChange={v => update({ current_tenure: num(v) })} />
+                            {data.current_tenure != null && data.current_tenure < 5 && (
+                                <p className="text-[11px] text-red-500 mt-1">Cannot be less than 5 years</p>
+                            )}
+                            {data.current_tenure != null && data.current_tenure > (meta?.tenureCap ?? 35) && (
+                                <p className="text-[11px] text-red-500 mt-1">Cannot be more than {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private property'}</p>
+                            )}
+                            {!(data.current_tenure != null && (data.current_tenure < 5 || data.current_tenure > (meta?.tenureCap ?? 35))) && (
+                                <p className="text-[11px] text-slate-400 mt-1">5 – {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private'}</p>
+                            )}
+                        </Question>
+                        {meta?.isPrivate && (data.outstanding_equity_loan ?? 0) > 0 && (
+                            <Question label="Current Equity Loan Tenure (remaining years)">
+                                <FieldInput type="number" value={data.current_equity_loan_tenure ?? ''} placeholder="e.g. 10"
+                                    onChange={v => update({ current_equity_loan_tenure: num(v) })} />
+                                <p className="text-[11px] text-slate-400 mt-1">Up to 35 years, to age 75</p>
+                            </Question>
+                        )}
+                    </div>
                 </Section>
             )}
 
@@ -307,6 +357,100 @@ export default function RefinancingWorkflowPanel({
                             <CheckRow label="Equity Loan" hint="Not applicable for HDB or EC within MOP" checked={!!data.considerations?.equity_loan} onToggle={() => toggleConsideration('equity_loan')} />
                         </div>
                     </Question>
+
+                    {/* Decouple now? */}
+                    {data.considerations?.decouple && meta?.isPrivate && (
+                        <div className="pl-1 space-y-3">
+                            <Question label="Do you plan to decouple now?">
+                                <YesNo value={data.decouple_now} onChange={v => update({ decouple_now: v })} />
+                            </Question>
+                            {data.decouple_now && (
+                                <div className="flex items-start gap-2.5 rounded-lg border border-[#03a9e7]/40 bg-sky-50 px-4 py-3">
+                                    <Lightbulb size={14} className="text-[#03a9e7] shrink-0 mt-0.5" />
+                                    <p className="text-[12px] text-[#052d4a] leading-relaxed">
+                                        <span className="font-semibold">Tip:</span> Recommended to use the <span className="font-semibold">Decoupling Mortgage Planner</span> for a full breakdown.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Equity loan — CPF input + available equity diagram */}
+                    {data.considerations?.equity_loan && meta?.isPrivate && (() => {
+                        const totalLoan = (data.outstanding_disbursed ?? 0) + (data.outstanding_equity_loan ?? 0)
+                        const valuation = data.market_price ?? 0
+                        const cpfUsed = data.cpf_used ?? 0
+                        const loanPct = valuation > 0 ? totalLoan / valuation : 0
+                        const cpfPct  = valuation > 0 ? cpfUsed / valuation : 0
+                        const equityPct = Math.max(0, 0.75 - loanPct - cpfPct)
+                        const equityAmt = equityPct * valuation
+                        const cashPct = Math.max(0, 1 - loanPct - cpfPct)
+                        const cashAmt = cashPct * valuation
+                        const equityEligible = equityAmt >= 50_000
+                        const hasInputs = valuation > 0 && totalLoan > 0
+
+                        return (
+                            <div className="pl-1 space-y-4">
+                                <Question label="Total CPF accrued by all owner(s)">
+                                    <FieldInput commas prefix="$" value={data.cpf_used ?? ''} placeholder="e.g. 100,000"
+                                        onChange={v => update({ cpf_used: num(v) })} />
+                                </Question>
+
+                                {hasInputs && (
+                                    <div className="rounded-xl border border-[#03a9e7]/30 overflow-hidden">
+                                        <div className="px-4 py-3 bg-sky-50/70 border-b border-[#03a9e7]/15">
+                                            <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Single Ownership Structure</p>
+                                        </div>
+                                        <div className="p-4 space-y-4">
+                                            <OwnershipBar
+                                                loanPct={loanPct}
+                                                cpfPct={cpfPct}
+                                                cashPct={cashPct}
+                                                loanAmt={totalLoan}
+                                                cpfAmt={cpfUsed}
+                                                cashAmt={cashAmt}
+                                            />
+                                            <p className="text-[11px] text-slate-400">Based on property valuation of {money(valuation)}.</p>
+
+                                            <div className="space-y-2">
+                                                <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
+                                                <p className="text-sm text-slate-600">
+                                                    75% − {pct(loanPct)} (loan) − {pct(cpfPct)} (CPF) = <span className={`font-bold ${equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPct)}</span>
+                                                </p>
+                                                {equityPct <= 0 ? (
+                                                    <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+                                                        <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                                                        <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
+                                                    </div>
+                                                ) : !equityEligible ? (
+                                                    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                                        <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                                                        <p className="text-[12px] text-amber-800">Available equity {money(equityAmt)} — below $50,000 minimum for an equity loan.</p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="space-y-3">
+                                                        <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                                                            <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
+                                                            <p className="text-[12px] text-emerald-800 font-semibold">Available Equity: {money(equityAmt)} — eligible.</p>
+                                                        </div>
+                                                        <Question label="Would you like to take up an equity loan?">
+                                                            <FieldInput commas prefix="$"
+                                                                value={data.equity_loan_amount ?? ''}
+                                                                placeholder={`max ${money(equityAmt)}`}
+                                                                onChange={v => {
+                                                                    const n = num(v)
+                                                                    update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
+                                                                }} />
+                                                        </Question>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })()}
                 </Section>
             )}
 
@@ -337,49 +481,39 @@ export default function RefinancingWorkflowPanel({
                         )}
                     </Question>
 
-                    <Question label="Provide income details for an Income-Weighted Average Age (more accurate tenure)?">
-                        <YesNo value={data.provide_income} onChange={v => update({ provide_income: v })} />
-                        <p className="text-[11px] text-slate-400 mt-1.5 flex items-start gap-1.5">
-                            <Info size={12} className="mt-0.5 shrink-0" />
-                            If no, we use the simple average age for the tenure range.
-                        </p>
-                    </Question>
-
-                    {data.provide_income && (
-                        agedBorrowers.length > 0 ? (
-                            <div className="space-y-3">
-                                {agedBorrowers.map(({ b, i }) => (
-                                    <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-3">
-                                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Borrower {i + 1} · age {b.age}</p>
-                                        <Question label="Employment">
-                                            <PillSelect
-                                                value={b.employment ?? 'employed'}
-                                                onChange={v => updateBorrower(i, { employment: v as 'employed' | 'self_employed' })}
-                                                options={[{ value: 'employed', label: 'Employed' }, { value: 'self_employed', label: 'Self-Employed' }]}
-                                            />
+                    {agedBorrowers.length > 0 ? (
+                        <div className="space-y-3">
+                            {agedBorrowers.map(({ b, i }) => (
+                                <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-3">
+                                    <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Borrower {i + 1} · age {b.age}</p>
+                                    <Question label="Employment">
+                                        <PillSelect
+                                            value={b.employment ?? 'employed'}
+                                            onChange={v => updateBorrower(i, { employment: v as 'employed' | 'self_employed' })}
+                                            options={[{ value: 'employed', label: 'Employed' }, { value: 'self_employed', label: 'Self-Employed' }]}
+                                        />
+                                    </Question>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        {b.employment !== 'self_employed' && (
+                                            <Question label="Monthly Basic Salary">
+                                                <FieldInput commas prefix="$" value={b.basic_salary ?? ''}
+                                                    onChange={v => updateBorrower(i, { basic_salary: num(v) })} />
+                                            </Question>
+                                        )}
+                                        <Question label={b.employment === 'self_employed' ? 'Annual income (NOA)' : 'Annual Bonus / Variable Income'}>
+                                            <FieldInput commas prefix="$" value={b.annual_variable ?? ''}
+                                                onChange={v => updateBorrower(i, { annual_variable: num(v) })} />
                                         </Question>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            {b.employment !== 'self_employed' && (
-                                                <Question label="Monthly basic salary">
-                                                    <FieldInput commas prefix="$" value={b.basic_salary ?? ''}
-                                                        onChange={v => updateBorrower(i, { basic_salary: num(v) })} />
-                                                </Question>
-                                            )}
-                                            <Question label={b.employment === 'self_employed' ? 'Annual income (NOA)' : 'Annual bonus / variable income'}>
-                                                <FieldInput commas prefix="$" value={b.annual_variable ?? ''}
-                                                    onChange={v => updateBorrower(i, { annual_variable: num(v) })} />
-                                            </Question>
-                                            <Question label="Monthly Liabilities">
-                                                <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="e.g. 500"
-                                                    onChange={v => updateBorrower(i, { commitments: num(v) })} />
-                                            </Question>
-                                        </div>
+                                        <Question label="Monthly Liabilities">
+                                            <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="e.g. 500"
+                                                onChange={v => updateBorrower(i, { commitments: num(v) })} />
+                                        </Question>
                                     </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <p className="text-[12px] text-amber-600 flex items-center gap-1.5"><AlertTriangle size={12} /> Enter at least one borrower&apos;s age above to capture income.</p>
-                        )
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-[12px] text-slate-400 flex items-center gap-1.5"><Info size={12} /> Enter borrower age(s) above to capture income for TDSR assessment.</p>
                     )}
 
                     <Question label="Is any borrower a priority client with any bank?">
@@ -395,6 +529,161 @@ export default function RefinancingWorkflowPanel({
                     )}
                 </Section>
             )}
+
+            {/* ── TDSR Assessment ── */}
+            {data.property_type && grossForTdsr != null && grossForTdsr > 0 && (() => {
+                const availableTdsr = Math.max(grossForTdsr * 0.55 - debtsForTdsr, 0)
+
+                // Refinancing TDSR: home loan at current_tenure, 4% stress
+                const refiLoan = (data.outstanding_disbursed ?? 0)
+                const refiTenure = data.current_tenure ?? (t?.max ?? 0)
+                const refiStress = refiLoan > 0 && refiTenure > 0
+                    ? monthlyInstallment(refiLoan, STRESS_TEST_RATE * 100, refiTenure)
+                    : 0
+                // If there's also an outstanding equity loan being refinanced, add its stress installment
+                const equityOutstandingLoan = meta?.isPrivate ? (data.outstanding_equity_loan ?? 0) : 0
+                const equityOutstandingTenure = data.current_equity_loan_tenure ?? refiTenure
+                const equityOutstandingStress = equityOutstandingLoan > 0 && equityOutstandingTenure > 0
+                    ? monthlyInstallment(equityOutstandingLoan, STRESS_TEST_RATE * 100, equityOutstandingTenure)
+                    : 0
+                const refiTotalStress = refiStress + equityOutstandingStress
+                const refiPass = refiTotalStress > 0 ? refiTotalStress <= availableTdsr : null
+
+                // New equity loan TDSR
+                const newEquityLoan = data.equity_loan_amount ?? 0
+                const maxEquityAge = agedBorrowers.length > 0 ? Math.max(...agedBorrowers.map(({ b }) => b.age ?? 0)) : 0
+                const equityTenureMax = maxEquityAge > 0 ? Math.min(75 - maxEquityAge, 35) : 35
+                const equityTenureMin = 5
+                const preferredEquityTenure = data.preferred_tenure_equity != null
+                    ? Math.max(equityTenureMin, Math.min(equityTenureMax, data.preferred_tenure_equity))
+                    : equityTenureMax
+                const equityNewStress = newEquityLoan > 0 && preferredEquityTenure > 0
+                    ? monthlyInstallment(newEquityLoan, STRESS_TEST_RATE * 100, preferredEquityTenure)
+                    : 0
+                const balanceAfterRefi = availableTdsr - refiTotalStress
+                const equityPass = newEquityLoan > 0 && equityNewStress > 0 ? equityNewStress <= balanceAfterRefi : null
+
+                const showEquityBlock = newEquityLoan > 0 && data.considerations?.equity_loan
+
+                return (
+                    <Section title="TDSR Assessment" icon={<Percent size={15} />}>
+                        {/* Available TDSR header */}
+                        <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/40 px-4 py-3 flex items-start justify-between gap-4 flex-wrap">
+                            <div>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Available TDSR</p>
+                                <p className="text-xl font-bold text-[#052d4a]">{money(availableTdsr)}/mo</p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                    {money(grossForTdsr)} × 55%{debtsForTdsr > 0 ? ` − ${money(debtsForTdsr)} commitments` : ''}
+                                </p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Gross Monthly Income</p>
+                                <p className="text-base font-bold text-[#052d4a]">{money(grossForTdsr)}</p>
+                            </div>
+                        </div>
+
+                        {/* Refinancing block */}
+                        {refiTotalStress > 0 && (
+                            <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                                <p className="text-xs font-bold text-[#052d4a] uppercase tracking-wide">Refinancing</p>
+                                {equityOutstandingStress > 0 && (
+                                    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 space-y-1">
+                                        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Loan breakdown at 4% stress</p>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <p className="text-[11px] text-slate-500">Home Loan ({refiTenure} yrs)</p>
+                                                <p className="text-sm font-bold text-[#052d4a]">{money(refiStress)}/mo</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[11px] text-slate-500">Equity Loan ({equityOutstandingTenure} yrs)</p>
+                                                <p className="text-sm font-bold text-[#052d4a]">{money(equityOutstandingStress)}/mo</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                                    <p className="text-[11px] text-slate-500">TDSR Required{equityOutstandingStress > 0 ? ' (combined)' : ` at ${refiTenure} yrs, 4% stress`}</p>
+                                    <p className="text-sm font-bold text-[#052d4a]">{money(refiTotalStress)}/mo</p>
+                                </div>
+                                {refiPass !== null && (
+                                    <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${refiPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                                        {refiPass
+                                            ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR Pass</span></>
+                                            : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span>
+                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(refiTotalStress - availableTdsr)}/mo</span></>
+                                        }
+                                    </div>
+                                )}
+                                {refiPass === false && (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                                        <p className="text-[12px] font-semibold text-amber-800 mb-1">Potential Remedies</p>
+                                        <p className="text-[12px] text-amber-700 leading-relaxed">
+                                            {data.property_use === 'investment'
+                                                ? 'Bank will require client to pay down 3% of outstanding loan and/or show some funds to prove repayment ability.'
+                                                : 'Client may qualify for TDSR Waiver with most banks — to double check with banker.'}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* New equity loan TDSR block */}
+                        {showEquityBlock && (
+                            <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+                                <p className="text-xs font-bold text-[#052d4a] uppercase tracking-wide">Equity Loan ({money(newEquityLoan)} requested)</p>
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-4 text-sm">
+                                        <span className="text-slate-500">Tenure range:</span>
+                                        <span className="font-semibold text-[#052d4a]">{equityTenureMin} – {equityTenureMax} yrs</span>
+                                        <span className="text-[11px] text-slate-400">(to age 75)</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="number"
+                                            value={data.preferred_tenure_equity ?? ''}
+                                            placeholder={String(equityTenureMax)}
+                                            onChange={e => {
+                                                const v = parseInt(e.target.value, 10)
+                                                const clamped = isNaN(v) ? undefined : Math.max(equityTenureMin, Math.min(equityTenureMax, v))
+                                                update({ preferred_tenure_equity: clamped })
+                                            }}
+                                            className="w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
+                                        />
+                                        <span className="text-xs text-slate-500">years (using {preferredEquityTenure} yrs)</span>
+                                    </div>
+                                </div>
+                                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                                    <p className="text-[11px] text-slate-500">TDSR Required at {preferredEquityTenure} yrs, 4% stress</p>
+                                    <p className="text-sm font-bold text-[#052d4a]">{money(equityNewStress)}/mo</p>
+                                </div>
+                                {equityPass !== null && (
+                                    <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${equityPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                                        {equityPass
+                                            ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR Pass</span></>
+                                            : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span>
+                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(equityNewStress - balanceAfterRefi)}/mo</span></>
+                                        }
+                                    </div>
+                                )}
+                                {equityPass === false && (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                                        <p className="text-[12px] font-semibold text-amber-800 mb-1">Potential Remedies</p>
+                                        <p className="text-[12px] text-amber-700 leading-relaxed">
+                                            Pledge or show funds required to pass TDSR for the equity loan component.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {refiTotalStress === 0 && (
+                            <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                                <Info size={12} /> Enter outstanding loan amount and tenure to see TDSR required.
+                            </p>
+                        )}
+                    </Section>
+                )
+            })()}
 
             {/* ── Rate preference ── */}
             {data.property_type && (
@@ -426,31 +715,6 @@ export default function RefinancingWorkflowPanel({
                     selectedId={selectedPkgId}
                     onSelect={onSelectPackage}
                 />
-            )}
-
-            {/* ── Year of purchase + current tenure ── */}
-            {data.property_type && (
-                <Section title="Tenure" icon={<CalendarRange size={15} />}>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <Question label="Year of purchase" required>
-                            <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2018"
-                                onChange={v => update({ year_of_purchase: num(v) })} />
-                        </Question>
-                        <Question label="Current Tenure (remaining years on existing loan)">
-                            <FieldInput type="number" value={data.current_tenure ?? ''} placeholder="e.g. 20"
-                                onChange={v => update({ current_tenure: num(v) })} />
-                            {data.current_tenure != null && data.current_tenure < 5 && (
-                                <p className="text-[11px] text-red-500 mt-1">Cannot be less than 5 years</p>
-                            )}
-                            {data.current_tenure != null && data.current_tenure > (meta?.tenureCap ?? 35) && (
-                                <p className="text-[11px] text-red-500 mt-1">Cannot be more than {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private property'}</p>
-                            )}
-                            {!(data.current_tenure != null && (data.current_tenure < 5 || data.current_tenure > (meta?.tenureCap ?? 35))) && (
-                                <p className="text-[11px] text-slate-400 mt-1">5 – {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private'}</p>
-                            )}
-                        </Question>
-                    </div>
-                </Section>
             )}
 
             {/* ── RESULTS ── */}
@@ -948,6 +1212,52 @@ function MultiBankSelect({ value, onChange }: { value: string[]; onChange: (v: s
                     {b.name}
                 </button>
             ))}
+        </div>
+    )
+}
+
+function OwnershipBar({ loanPct, cpfPct, cashPct, loanAmt, cpfAmt, cashAmt }: {
+    loanPct: number; cpfPct: number; cashPct: number
+    loanAmt: number; cpfAmt: number; cashAmt: number
+}) {
+    const total = loanPct + cpfPct + cashPct
+    const lW = total > 0 ? (loanPct / total) * 100 : 0
+    const cW = total > 0 ? (cpfPct  / total) * 100 : 0
+    const hW = total > 0 ? (cashPct / total) * 100 : 0
+    const fmt = (p: number) => `${(p * 100).toFixed(1)}%`
+    return (
+        <div className="space-y-2">
+            <div className="flex rounded-lg overflow-hidden h-8" style={{ fontSize: 11 }}>
+                {lW > 0 && (
+                    <div style={{ width: `${lW}%` }} className="bg-[#052d4a] flex items-center justify-center text-white font-semibold">
+                        {lW > 12 ? fmt(loanPct) : ''}
+                    </div>
+                )}
+                {cW > 0 && (
+                    <div style={{ width: `${cW}%` }} className="bg-sky-400 flex items-center justify-center text-white font-semibold">
+                        {cW > 12 ? fmt(cpfPct) : ''}
+                    </div>
+                )}
+                {hW > 0 && (
+                    <div style={{ width: `${hW}%` }} className="bg-emerald-400 flex items-center justify-center text-white font-semibold">
+                        {hW > 12 ? fmt(cashPct) : ''}
+                    </div>
+                )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-[#052d4a]" />
+                    Loan {fmt(loanPct)} · {money(loanAmt)}
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-sky-400" />
+                    CPF {fmt(cpfPct)} · {money(cpfAmt)}
+                </span>
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="inline-block w-3 h-3 rounded-sm bg-emerald-400" />
+                    Cash {fmt(cashPct)} · {money(cashAmt)}
+                </span>
+            </div>
         </div>
     )
 }

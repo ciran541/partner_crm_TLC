@@ -76,6 +76,7 @@ export interface RefiBorrowerInput {
 export interface RefiInputs {
     propertyType?: RefiPropertyType
     disbursed?: number
+    equityLoan?: number          // private only: current outstanding equity loan
     undisbursed?: number
     currentRatePct?: number
     subsidyReturn?: number
@@ -84,6 +85,7 @@ export interface RefiInputs {
     borrowers?: RefiBorrowerInput[]
     provideIncome?: boolean
     yearOfPurchase?: number
+    decoupleNow?: boolean        // client is decoupling during this refinancing → $6k legal fee
 }
 
 // ─── Age helpers ──────────────────────────────────────────────────────────────
@@ -163,7 +165,7 @@ export interface RefiCost {
 export function refinancingCost(args: {
     propertyType: RefiPropertyType
     totalOutstanding: number
-    decouple?: boolean
+    decoupleNow?: boolean   // client is decoupling NOW → $6k; false/undefined = standard refi fee
     equityLoan?: boolean
 }): RefiCost | undefined {
     const meta = refiPropertyMeta(args.propertyType)
@@ -179,9 +181,9 @@ export function refinancingCost(args: {
             estSubsidy: args.totalOutstanding > HDB_SMALL_LOAN ? 2000 : 0,
         }
     }
-    // Private — decoupling supersedes everything, then equity loan, else standard.
-    const legalFee = args.decouple ? 6000 : args.equityLoan ? 2100 : 1800
-    const legalNote = args.decouple ? 'est cash/CPF (decoupling)'
+    // Private — decoupling now supersedes everything, then equity loan, else standard.
+    const legalFee = args.decoupleNow ? 6000 : args.equityLoan ? 2100 : 1800
+    const legalNote = args.decoupleNow ? 'est cash/CPF (decoupling)'
         : args.equityLoan ? 'est cash/CPF (equity loan)'
         : 'nett cash/CPF'
     return {
@@ -213,9 +215,11 @@ export interface RefiComputation {
 export function computeRefi(inputs: RefiInputs): RefiComputation {
     const meta = refiPropertyMeta(inputs.propertyType)
     const disbursed = inputs.disbursed ?? 0
+    // Equity loan only applies to private properties.
+    const equityLoan = (meta?.isPrivate ? (inputs.equityLoan ?? 0) : 0)
     // Undisbursed only counts for the BUC (incompleted) type.
     const undisbursed = meta?.buc ? (inputs.undisbursed ?? 0) : 0
-    const totalOutstanding = disbursed + undisbursed
+    const totalOutstanding = disbursed + equityLoan + undisbursed
     const cancellationFee = meta?.buc ? undisbursed * CANCELLATION_FEE_RATE : 0
 
     const borrowers = inputs.borrowers ?? []
@@ -234,7 +238,7 @@ export function computeRefi(inputs: RefiInputs): RefiComputation {
     const cost = meta ? refinancingCost({
         propertyType: meta.value,
         totalOutstanding,
-        decouple: inputs.considerations?.decouple,
+        decoupleNow: inputs.decoupleNow,
         equityLoan: inputs.considerations?.equity_loan,
     }) : undefined
 
@@ -265,13 +269,15 @@ export function inputsFromWorkflow(d: RefinancingWorkflow): RefiInputs {
     return {
         propertyType: d.property_type,
         disbursed: d.outstanding_disbursed,
+        equityLoan: d.outstanding_equity_loan,
         undisbursed: d.outstanding_undisbursed,
         currentRatePct: d.current_rate,
         subsidyReturn: d.subsidy_return_amount,
         considerations: d.considerations,
         marketPrice: d.market_price,
-        provideIncome: d.provide_income,
+        provideIncome: true,   // always use income for IWAA when entered
         yearOfPurchase: d.year_of_purchase,
+        decoupleNow: d.decouple_now,
         borrowers: (d.borrowers ?? []).map(b => ({
             age: b.age,
             employment: b.employment,
