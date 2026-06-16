@@ -327,6 +327,19 @@ function computeOption(
         tenure = inputs.ipa?.tenure ?? maxTenure
         incomeEligibility = null
         finalLoan = Math.min(inputs.ipa?.amount ?? 0, ltvCeiling)
+
+        // If the IPA loan is less than the LTV ceiling, compute pledge / show-fund amounts
+        // so the agent can explain how the client could reach the full LTV.
+        const shortfall = ltvCeiling - finalLoan
+        if (shortfall > 1 && finalLoan > 0) {
+            const pledgeDivisor = ctx.rule === 'tdsr' ? 0.55 : 0.30
+            const r = STRESS_TEST_RATE / 12
+            const n = tenure * 12
+            const shortfallPayment = n > 0 ? shortfall * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1) : 0
+            const pledgeFund = Math.max(0, (shortfallPayment * 48) / pledgeDivisor)
+            const showFund = Math.max(0, pledgeFund / 0.3)
+            if (pledgeFund > 1 && showFund > 1) pledge = { shortfall, pledgeFund, showFund }
+        }
     } else {
         // Apply preferred tenure if set, capped at the age-limit max for this option.
         tenure = inputs.preferredTenure != null
@@ -415,7 +428,8 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
         isSelfEmployed: b.employment === 'self_employed',
     }), 0)
     const debts = inputs.ipaDone ? 0 : borrowers.reduce((s, b) => s + (b.commitments ?? 0), 0)
-    const age = inputs.ipaDone ? null : weightedAge(borrowers)
+    // Always compute IWAA — used for display on both IPA and non-IPA paths.
+    const age = weightedAge(borrowers)
 
     const stamp = calculateABSD({
         price,
@@ -424,9 +438,9 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
         residentialPropertiesOwned: inputs.residentialPropertiesOwned,
     })
 
-    // Tenure range: needs property type + IWAA only (independent of income).
+    // Tenure range: needs property type + IWAA only (shown on both paths when ages are known).
     let tenureRange: { opt1: number; opt2: number } | undefined
-    if (meta && age != null && !inputs.ipaDone) {
+    if (meta && age != null) {
         const [o1, o2] = OPTION_MATRIX[outstanding]
         tenureRange = {
             opt1: optionTenure(o1, meta.hdbClass, age),

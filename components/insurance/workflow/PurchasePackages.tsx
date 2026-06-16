@@ -15,6 +15,7 @@ interface Props {
     bucOnly?: boolean                              // uncompleted property → floating/BUC packages only
     preference?: 'fixed' | 'floating' | 'either'   // rate preference
     selectedId?: string
+    excludeBank?: string                           // omit packages from this bank (e.g. IPA bank)
     onSelect: (rec: PurchaseRecommendation, sora: SoraRates | null) => void
 }
 
@@ -23,7 +24,7 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 // New-purchase recommendation deliberately uses only loan size, property type and
 // rate preference — no income/TDSR (precise on paper but unreliable vs the bank's
 // real assessment), no horizon signals.
-export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, preference, selectedId, onSelect }: Props) {
+export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, preference, selectedId, excludeBank, onSelect }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
     const [loading, setLoading] = useState(true)
@@ -52,10 +53,10 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
         return () => { active = false }
     }, [])
 
-    const ranked = useMemo(
-        () => recommendPurchasePackages(packages, sora, { loan, tenureYears, propertyType, bucOnly, preference }),
-        [packages, sora, loan, tenureYears, propertyType, preference, bucOnly],
-    )
+    const ranked = useMemo(() => {
+        const all = recommendPurchasePackages(packages, sora, { loan, tenureYears, propertyType, bucOnly, preference })
+        return excludeBank ? all.filter(r => r.pkg.bank !== excludeBank) : all
+    }, [packages, sora, loan, tenureYears, propertyType, preference, bucOnly, excludeBank])
 
     const visible = expanded ? ranked : ranked.slice(0, 3)
 
@@ -99,6 +100,11 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                 <div className="mx-4 mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800 flex items-start gap-1.5">
                     <AlertTriangle size={13} className="mt-0.5 shrink-0" />
                     No live SORA yet — floating rates can&apos;t be priced. Ask an admin to hit &ldquo;Refresh SORA&rdquo; on the Rates page. Fixed packages still compute.
+                </div>
+            )}
+            {excludeBank && (
+                <div className="mx-4 mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[12px] text-slate-500">
+                    Packages from <span className="font-semibold">{excludeBank}</span> (IPA bank) are excluded — compare other banks before deciding.
                 </div>
             )}
 

@@ -21,6 +21,7 @@ import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchas
 import { monthlyInstallment } from '@/lib/insurance/loanCalc'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import Modal from '@/components/shared/Modal'
+import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import type { PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
 import type { SoraRates } from '@/lib/insurance/sora'
 import PurchasePackages from './PurchasePackages'
@@ -166,7 +167,7 @@ export default function PurchaseWorkflowPanel({
                     <span className="text-xs text-slate-400 flex items-center gap-1.5">
                         {saving ? <><Save size={13} className="animate-pulse" /> Saving…</>
                             : saved ? <><CheckCircle2 size={13} className="text-emerald-500" /> Saved</>
-                            : null}
+                                : null}
                     </span>
                 )}
             </div>
@@ -183,7 +184,7 @@ export default function PurchaseWorkflowPanel({
                         <p className="text-[11px] text-slate-400 mt-1.5">
                             {meta.rule === 'tdsr' ? 'Assessed on TDSR (55%).'
                                 : meta.rule === 'msr' ? 'Assessed on MSR (30%).'
-                                : 'Assessed on both TDSR (55%) and MSR (30%) — the lower binds.'}
+                                    : 'Assessed on both TDSR (55%) and MSR (30%) — the lower binds.'}
                         </p>
                     )}
                 </Question>
@@ -194,7 +195,7 @@ export default function PurchaseWorkflowPanel({
                 </Question>
                 {isResale(data.property_type) && (
                     <TipGroup>
-                        <Tip>Valuations are determined by banks — we can obtain indicative valuations from banks, which are useful for your negotiations with the seller(s).</Tip>
+                        <Tip>Valuations are determined by HDB directly, you can submit a valuation request to HDB after obtaining the OTP from seller.</Tip>
                         <Tip>The maximum Loan-To-Valuation (LTV) is based on the purchase price or valuation, whichever is lower.</Tip>
                         {data.property_type === 'resale_landed' && (
                             <Tip>Double-check with the seller(s) whether the landed property has obtained its Certificate of Statutory Completion (CSC) or only Temporary Occupation Permit (TOP) — some ID contractors don't obtain CSC after works are done. Without CSC, most banks will not finance; DBS/SCB are open to it for now.</Tip>
@@ -217,7 +218,7 @@ export default function PurchaseWorkflowPanel({
                                         onChange={v => update({ otp_dates: { ...data.otp_dates, option_expiry: v } })} />
                                 </Question>
                                 <TipGroup>
-                                    <Tip>Recommended to get a bank loan approved before exercising option.</Tip>
+                                    <Tip>You need to have a valid letter of offer from the bank before exercising the option.</Tip>
                                     <Tip>Law firm has to be under the bank's panel.</Tip>
                                 </TipGroup>
                                 <Question label="Expected Purchase Completion Date">
@@ -260,8 +261,11 @@ export default function PurchaseWorkflowPanel({
                         <>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <Question label="Which bank?">
-                                    <FieldInput value={data.ipa?.bank ?? ''} placeholder="e.g. DBS"
-                                        onChange={v => update({ ipa: { ...data.ipa, bank: v } })} />
+                                    <InsuranceBankDropdown
+                                        value={data.ipa?.bank ?? ''}
+                                        onChange={v => update({ ipa: { ...data.ipa, bank: v } })}
+                                        showHdb={data.property_type === 'resale_hdb' || data.property_type === 'bto'}
+                                    />
                                 </Question>
                                 <Question label="When was the IPA done?">
                                     <FieldInput type="date" value={data.ipa?.date ?? ''}
@@ -287,6 +291,66 @@ export default function PurchaseWorkflowPanel({
                                 <Info size={12} className="mt-0.5 shrink-0" />
                                 Income questions are skipped — results use the IPA amount and tenure, and show only the option matching the chosen age cap.
                             </p>
+
+                            {/* Borrower profile — age + residency for IWAA and ABSD */}
+                            <div className="border-t border-slate-200 pt-4 space-y-3">
+                                <p className="text-xs font-semibold text-slate-600">Borrower Profile</p>
+                                <p className="text-[11px] text-slate-400">Residency determines ABSD rate. Ages compute income-weighted average age (IWAA) and max eligible tenure.</p>
+                                <Question label="Number of borrowers">
+                                    <PillSelect
+                                        value={String(borrowers.length)}
+                                        onChange={v => setBorrowerCount(Number(v) as 1 | 2 | 3 | 4)}
+                                        options={[
+                                            { value: '1', label: 'Solo' },
+                                            { value: '2', label: 'Joint (2)' },
+                                            { value: '3', label: 'Joint (3)' },
+                                            { value: '4', label: 'Joint (4)' },
+                                        ]}
+                                    />
+                                </Question>
+                                {borrowers.map((b, i) => (
+                                    <div key={i} className="rounded-lg border border-slate-200 p-3 grid grid-cols-2 gap-3">
+                                        <p className="col-span-2 text-xs font-bold text-slate-600 uppercase tracking-wide">
+                                            {borrowers.length === 1 ? 'Borrower' : `Borrower ${i + 1}`}
+                                        </p>
+                                        <Question label="Residency">
+                                            <PillSelect
+                                                value={b.residency ?? 'singaporean'}
+                                                onChange={v => updateBorrower(i, { residency: v as PurchaseBorrower['residency'] })}
+                                                options={RESIDENCY_OPTIONS.map(r => ({
+                                                    value: r.value, label: r.label,
+                                                    disabled: r.value === 'foreigner' && foreignerBlocked,
+                                                }))}
+                                            />
+                                        </Question>
+                                        <Question label="Age">
+                                            <FieldInput type="number" value={b.age ?? ''}
+                                                onChange={v => updateBorrower(i, { age: num(v) })} />
+                                        </Question>
+                                    </div>
+                                ))}
+
+                                {/* IWAA + tenure range — shown once ages are entered */}
+                                {computation.weightedAge != null && computation.tenureRange && (
+                                    <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/30 p-4 grid grid-cols-3 gap-4">
+                                        <div>
+                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">IWAA</p>
+                                            <p className="text-base font-bold text-[#052d4a]">{computation.weightedAge} yrs</p>
+                                            <p className="text-[10px] text-slate-400">Income-weighted avg age</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Option 1 Tenure</p>
+                                            <p className="text-base font-bold text-[#052d4a]">{computation.tenureRange.opt1} yrs</p>
+                                            <p className="text-[10px] text-slate-400">Max (age cap 65)</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Option 2 Tenure</p>
+                                            <p className="text-base font-bold text-[#052d4a]">{computation.tenureRange.opt2} yrs</p>
+                                            <p className="text-[10px] text-slate-400">Max (age cap 75)</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </>
                     )}
                 </Section>
@@ -320,7 +384,7 @@ export default function PurchaseWorkflowPanel({
             {/* Number of Residential Properties */}
             {data.property_type && (
                 <Section title="Number of Residential Properties Owned" icon={<Home size={15} />}>
-                    <Question label='Select "1" if the next property purchase will be your only property' required>
+                    <Question label='Select "1" if the next property purchase will be your Only Residential Property.' required>
                         <PillSelect
                             value={data.residential_properties_owned}
                             onChange={v => update({ residential_properties_owned: v as '1' | '2' | '3plus' })}
@@ -499,7 +563,8 @@ export default function PurchaseWorkflowPanel({
                 <>
                     <div className={`grid gap-4 ${computation.options.length > 1 ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
                         {computation.options.map(opt => {
-                            const blocked = data.preferred_tenure != null && data.preferred_tenure > opt.maxTenure
+                            // Never block on the IPA path — the bank already validated the tenure.
+                            const blocked = !data.ipa_done && data.preferred_tenure != null && data.preferred_tenure > opt.maxTenure
                             return (
                                 <OptionCard
                                     key={opt.key}
@@ -569,6 +634,7 @@ export default function PurchaseWorkflowPanel({
                             bucOnly={!!meta?.buc}
                             preference={meta?.buc ? 'floating' : (data.rate_preference ?? 'either')}
                             selectedId={selectedPkgId}
+                            excludeBank={data.ipa_done && data.ipa?.bank ? data.ipa.bank : undefined}
                             onSelect={onSelectPackage}
                         />
                     )}
@@ -783,12 +849,11 @@ function PillSelect({ value, onChange, options }: { value?: string; onChange: (v
         <div className="flex flex-wrap gap-2">
             {options.map(opt => (
                 <button key={opt.value} type="button" disabled={opt.disabled} onClick={() => onChange(opt.value)}
-                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                        opt.disabled ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
-                            : value === opt.value
-                                ? 'bg-[#052d4a] border-[#052d4a] text-white'
-                                : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
-                    }`}>
+                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${opt.disabled ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                        : value === opt.value
+                            ? 'bg-[#052d4a] border-[#052d4a] text-white'
+                            : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
+                        }`}>
                     {opt.label}
                 </button>
             ))}
@@ -818,6 +883,11 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 
 function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; miscFees: number; price: number }) {
     if (!options.length || price <= 0) return null
+    // 1-decimal percentage helper for liquidity card (avoids 59.64% → shows 59.6%)
+    const fmtFrac = (frac: number) => {
+        const v = frac * 100
+        return `${Number.isInteger(v) ? v : v.toFixed(1)}%`
+    }
     return (
         <Section title="Total Liquidity Required" icon={<Wallet size={15} />}>
             <p className="text-[11px] text-slate-400 -mt-1">
@@ -825,19 +895,26 @@ function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; 
             </p>
             <div className={`grid gap-4 ${options.length > 1 ? 'md:grid-cols-2' : ''}`}>
                 {options.map(opt => {
+                    // matrix-derived fraction for full-LTV scenarios (S2 / S3)
                     const matrixCashCpfPct = 1 - opt.ltvPct - opt.minCashPct
                     const matrixCashCpfDown = price * matrixCashCpfPct
+                    // S1: use the actual loan (income-eligible or IPA amount, not necessarily full LTV)
                     const s1Total = opt.minCashDown + opt.cashCpfDown + miscFees
+                    // S2 / S3: get to the full LTV ceiling via pledge or show
                     const s2Total = opt.pledge ? opt.pledge.pledgeFund + opt.minCashDown + matrixCashCpfDown + miscFees : null
                     const s3Total = opt.pledge ? opt.pledge.showFund + opt.minCashDown + matrixCashCpfDown + miscFees : null
                     return (
                         <div key={opt.key} className={`rounded-lg border p-4 space-y-3 ${opt.key === '1' ? 'border-sky-200 bg-sky-50/30' : 'border-slate-200 bg-slate-50/50'}`}>
                             <p className="text-xs font-bold text-[#052d4a]">Option {opt.key} — {pct(opt.ltvPct)} LTV</p>
 
+                            {/* S1 — income / IPA eligible loan (no pledge required) */}
                             <div className="space-y-1.5">
                                 <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S1 — Without pledging / showing</p>
-                                <Row label={<>Min Cash <span className="text-[#03a9e7]">({pct(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                <Row label={<>Balance Cash / CPF <span className="text-[#03a9e7]">({pct(opt.cashCpfPct)})</span></>} value={money(opt.cashCpfDown)} />
+                                <p className="text-[11px] text-slate-500 pb-0.5">
+                                    No Pledging/Showing to get {money(opt.finalLoan)} loan ({fmtFrac(price > 0 ? opt.finalLoan / price : opt.ltvPct)})
+                                </p>
+                                <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
+                                <Row label={<>Balance Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(opt.cashCpfPct)})</span></>} value={money(opt.cashCpfDown)} />
                                 <Row label="Misc Fees" value={money(miscFees)} muted />
                                 <div className="border-t border-dashed border-slate-200 pt-1.5">
                                     <Row label="Total Required" value={money(s1Total)} strong />
@@ -846,22 +923,32 @@ function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; 
 
                             {opt.pledge && s2Total !== null && s3Total !== null && (
                                 <>
+                                    {/* S2 — pledge funds to reach full LTV */}
                                     <div className="border-t border-slate-200 pt-3 space-y-1.5">
                                         <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S2 — With pledging</p>
-                                        <Row label="Pledged Funds (locked 4 yrs)" value={money(opt.pledge.pledgeFund)} />
-                                        <Row label={<>Min Cash <span className="text-[#03a9e7]">({pct(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({pct(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
+                                        <Row
+                                            label={<>Pledging of Funds to get {money(opt.ltvCeiling)} Loan ({pct(opt.ltvPct)})</>}
+                                            value={money(opt.pledge.pledgeFund)}
+                                            highlight
+                                        />
+                                        <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
+                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
                                         <Row label="Misc Fees" value={money(miscFees)} muted />
                                         <div className="border-t border-dashed border-slate-200 pt-1.5">
                                             <Row label="Total Required" value={money(s2Total)} strong />
                                         </div>
                                     </div>
 
+                                    {/* S3 — show funds to reach full LTV */}
                                     <div className="border-t border-slate-200 pt-3 space-y-1.5">
                                         <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S3 — With show funds</p>
-                                        <Row label="Show Funds (unlocked)" value={money(opt.pledge.showFund)} />
-                                        <Row label={<>Min Cash <span className="text-[#03a9e7]">({pct(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({pct(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
+                                        <Row
+                                            label={<>Showing of Funds to get {money(opt.ltvCeiling)} Loan ({pct(opt.ltvPct)})</>}
+                                            value={money(opt.pledge.showFund)}
+                                            highlight
+                                        />
+                                        <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
+                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
                                         <Row label="Misc Fees" value={money(miscFees)} muted />
                                         <div className="border-t border-dashed border-slate-200 pt-1.5">
                                             <Row label="Total Required" value={money(s3Total)} strong />
@@ -907,10 +994,9 @@ function OptionCard({ opt, ipa, price, selectable, selected, onSelect, blocked, 
             onClick={selectable && !blocked ? onSelect : undefined}
         >
             {/* Header */}
-            <div className={`px-5 py-4 border-b flex items-center justify-between ${
-                blocked ? 'bg-slate-100 border-slate-200'
-                    : isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'
-            }`}>
+            <div className={`px-5 py-4 border-b flex items-center justify-between ${blocked ? 'bg-slate-100 border-slate-200'
+                : isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'
+                }`}>
                 <p className={`text-sm font-bold ${blocked ? 'text-slate-400' : 'text-[#052d4a]'}`}>
                     Option {opt.key} (Loan-To-Valuation {ltvPctLabel})
                 </p>
@@ -1026,11 +1112,11 @@ function Blue({ children }: { children: ReactNode }) {
     return <span className="text-[#03a9e7] font-semibold">{children}</span>
 }
 
-function Row({ label, value, strong, muted }: { label: ReactNode; value: string; strong?: boolean; muted?: boolean }) {
+function Row({ label, value, strong, muted, highlight }: { label: ReactNode; value: string; strong?: boolean; muted?: boolean; highlight?: boolean }) {
     return (
         <div className="flex items-center justify-between gap-3 text-sm">
-            <span className={`${muted ? 'text-slate-400' : 'text-slate-600'} leading-tight`}>{label}</span>
-            <span className={`shrink-0 ${strong ? 'text-base font-bold text-[#052d4a]' : muted ? 'text-slate-400' : 'font-semibold text-slate-800'}`}>{value}</span>
+            <span className={`${muted ? 'text-slate-400' : highlight ? 'font-semibold text-[#052d4a]' : 'text-slate-600'} leading-tight`}>{label}</span>
+            <span className={`shrink-0 ${strong ? 'text-base font-bold text-[#052d4a]' : muted ? 'text-slate-400' : highlight ? 'font-bold text-[#052d4a]' : 'font-semibold text-slate-800'}`}>{value}</span>
         </div>
     )
 }

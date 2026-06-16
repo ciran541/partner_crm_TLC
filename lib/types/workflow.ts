@@ -172,7 +172,8 @@ export interface DecoupleWorkflow {
     outstanding_equity_loan?: number
     outstanding_undisbursed?: number  // incompleted_condo only (TOP but no CSC)
     current_bank?: string
-    current_tenure?: number           // remaining years on the current loan
+    current_tenure?: number           // remaining years on the home loan
+    current_tenure_equity_loan?: number  // remaining years on the existing equity loan (if any)
     lockin_end_date?: string
     current_rate?: number
     subsidy_return_amount?: number    // $0 / $2,000 / $2,500 / custom
