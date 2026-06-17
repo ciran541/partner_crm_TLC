@@ -37,8 +37,8 @@ const money = (n: number) => {
     const r = Math.round(n)
     return r < 0 ? `-$${(-r).toLocaleString()}` : `$${r.toLocaleString()}`
 }
-const pct   = (frac: number, dp = 1) => `${(frac * 100).toFixed(dp)}%`
-const num   = (v: string | number) => {
+const pct = (frac: number, dp = 1) => `${(frac * 100).toFixed(dp)}%`
+const num = (v: string | number) => {
     const s = String(v).trim()
     if (s === '') return undefined
     const n = parseFloat(s.replace(/,/g, ''))
@@ -56,8 +56,8 @@ export default function DecouplingWorkflowPanel({
     const computation = useMemo(() => computeDecouple(inputsFromDecoupleWorkflow(data)), [data])
     const { scenario } = computation
 
-    const sellerPct    = 100 - (data.buyer_share ?? 50)
-    const buyerPctStr  = `${data.buyer_share ?? ''}%`
+    const sellerPct = 100 - (data.buyer_share ?? 50)
+    const buyerPctStr = `${data.buyer_share ?? ''}%`
     const sellerPctStr = `${sellerPct}%`
 
     // Single borrower only
@@ -68,7 +68,7 @@ export default function DecouplingWorkflowPanel({
     }
 
     const showIncome = scenario !== null && scenario !== 'S4'
-    const showTdsr   = showIncome && computation.grossMonthlyIncome > 0
+    const showTdsr = showIncome && computation.grossMonthlyIncome > 0
 
     // Standalone loan liability card — local tenure only, not saved to workflow
     const eligTenureMin = scenario === 'S2' ? computation.purchaseTenureMin : computation.refiTenureMin
@@ -78,7 +78,7 @@ export default function DecouplingWorkflowPanel({
     React.useEffect(() => { setEligTenure(undefined); setEligDraft('') }, [scenario])
     const effectiveEligTenure = eligTenure ?? eligTenureMax
     // Show loan liability (what they need to borrow) and compute TDSR required at chosen tenure
-    const standaloneLoanAmount = scenario === 'S2' ? computation.bankLoan75 : computation.outstandingLoan
+    const standaloneLoanAmount = scenario === 'S2' ? computation.bankLoan75 : computation.buyerLoanLiability
     const r04 = 0.04 / 12
     const standaloneTdsrRequired = standaloneLoanAmount > 0 && effectiveEligTenure > 0
         ? standaloneLoanAmount * r04 / (1 - Math.pow(1 + r04, -effectiveEligTenure * 12))
@@ -101,7 +101,7 @@ export default function DecouplingWorkflowPanel({
                     <span className="text-xs text-slate-400 flex items-center gap-1.5">
                         {saving ? <><Save size={13} className="animate-pulse" /> Saving…</>
                             : saved ? <><CheckCircle2 size={13} className="text-emerald-500" /> Saved</>
-                            : null}
+                                : null}
                     </span>
                 )}
             </div>
@@ -140,7 +140,7 @@ export default function DecouplingWorkflowPanel({
                         value={data.property_use}
                         onChange={v => update({ property_use: v as DecoupleWorkflow['property_use'] })}
                         options={[
-                            { value: 'own_stay',   label: 'Own-Stay' },
+                            { value: 'own_stay', label: 'Own-Stay' },
                             { value: 'investment', label: 'Investment' },
                         ]}
                     />
@@ -180,8 +180,8 @@ export default function DecouplingWorkflowPanel({
                         onChange={v => update({ residency: v as DecoupleWorkflow['residency'] })}
                         options={[
                             { value: 'singaporean', label: 'Singapore Citizen' },
-                            { value: 'pr',          label: 'PR' },
-                            { value: 'foreigner',   label: 'Foreigner' },
+                            { value: 'pr', label: 'PR' },
+                            { value: 'foreigner', label: 'Foreigner' },
                         ]}
                     />
                 </Question>
@@ -296,21 +296,19 @@ export default function DecouplingWorkflowPanel({
                                 {SUBSIDY_PRESETS.map(p => (
                                     <button key={p} type="button"
                                         onClick={() => { setCustomSubsidy(false); update({ subsidy_return_amount: Number(p) }) }}
-                                        className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                                            !customSubsidy && String(data.subsidy_return_amount ?? 0) === p
+                                        className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${!customSubsidy && String(data.subsidy_return_amount ?? 0) === p
                                                 ? 'bg-[#052d4a] border-[#052d4a] text-white'
                                                 : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
-                                        }`}>
+                                            }`}>
                                         ${Number(p).toLocaleString()}
                                     </button>
                                 ))}
                                 <button type="button"
                                     onClick={() => setCustomSubsidy(true)}
-                                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                                        customSubsidy
+                                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${customSubsidy
                                             ? 'bg-[#052d4a] border-[#052d4a] text-white'
                                             : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
-                                    }`}>
+                                        }`}>
                                     Custom
                                 </button>
                             </div>
@@ -462,7 +460,7 @@ export default function DecouplingWorkflowPanel({
                                     value={b.employment ?? 'employed'}
                                     onChange={v => updateBorrower({ employment: v as DecoupleBorrower['employment'] })}
                                     options={[
-                                        { value: 'employed',      label: 'Employed' },
+                                        { value: 'employed', label: 'Employed' },
                                         { value: 'self_employed', label: 'Self-Employed' },
                                     ]}
                                 />
@@ -521,11 +519,11 @@ export default function DecouplingWorkflowPanel({
                             <div className="flex items-start justify-between gap-4">
                                 <div>
                                     <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                                        {scenario === 'S2' ? 'Purchase Loan (75%)' : 'Refinancing Loan Liability'}
+                                        {scenario === 'S2' ? 'Purchase Loan (75%)' : `Loan Liability (${Math.round(computation.buyerShareFrac * 100)}% of Loan)`}
                                     </p>
                                     <p className="text-2xl font-bold text-[#052d4a]">{money(standaloneLoanAmount)}</p>
                                     {scenario !== 'S2' && (
-                                        <p className="text-[10px] text-slate-400 mt-0.5 italic">Outstanding Loan (Post-Decoupling, Sole Owner)</p>
+                                        <p className="text-[10px] text-slate-400 mt-0.5 italic">Buyer&apos;s share of outstanding loan</p>
                                     )}
                                     <p className="text-[11px] text-slate-400 mt-0.5">
                                         Tenure range: {eligTenureMin} – {eligTenureMax} yrs
@@ -906,10 +904,10 @@ function TdsrRemedy({ propertyUse, equityLoanAmount, pledge }: {
     const text = isOwnStay && !hasEquity
         ? 'Client may qualify for TDSR Waiver with most banks — to double check with banker.'
         : isOwnStay && hasEquity
-        ? 'Pledge / Show funds required to pass TDSR for the equity loan component.'
-        : !isOwnStay && !hasEquity
-        ? 'Bank will require client to pay down 3% of outstanding loan and / or show some funds to prove repayment ability — to double check with banker.'
-        : 'Pledge / Show funds required to pass TDSR.'
+            ? 'Pledge / Show funds required to pass TDSR for the equity loan component.'
+            : !isOwnStay && !hasEquity
+                ? 'Bank will require client to pay down 3% of outstanding loan and / or show some funds to prove repayment ability — to double check with banker.'
+                : 'Pledge / Show funds required to pass TDSR.'
 
     return (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
@@ -931,7 +929,7 @@ function TdsrSummaryS3({ outcome, propertyUse, equityLoanAmount, refiPledge, pur
     outcome: TdsrOutcome
     propertyUse?: string
     equityLoanAmount?: number
-    refiPledge:     DecouplePledge | null
+    refiPledge: DecouplePledge | null
     purchasePledge: DecouplePledge | null
 }) {
     if (outcome === 'both_pass') {
@@ -965,20 +963,20 @@ function TdsrSummaryS3({ outcome, propertyUse, equityLoanAmount, refiPledge, pur
 // ─── Combined TDSR Summary ────────────────────────────────────────────────────
 
 function TdsrCombinedSummary({ refiPledge, purchasePledge, equityPledge }: {
-    refiPledge:     DecouplePledge | null
+    refiPledge: DecouplePledge | null
     purchasePledge: DecouplePledge | null
-    equityPledge?:  DecouplePledge | null
+    equityPledge?: DecouplePledge | null
 }) {
     const entries: { label: string; pledge: DecouplePledge }[] = [
-        refiPledge     && { label: 'Refinancing',  pledge: refiPledge },
-        purchasePledge && { label: 'New Purchase',  pledge: purchasePledge },
-        equityPledge   && { label: 'Equity Loan',   pledge: equityPledge },
+        refiPledge && { label: 'Refinancing', pledge: refiPledge },
+        purchasePledge && { label: 'New Purchase', pledge: purchasePledge },
+        equityPledge && { label: 'Equity Loan', pledge: equityPledge },
     ].filter(Boolean) as { label: string; pledge: DecouplePledge }[]
 
     if (!entries.length) return null
 
     const totalPledge = entries.reduce((s, e) => s + e.pledge.pledgeFund, 0)
-    const totalShow   = entries.reduce((s, e) => s + e.pledge.showFund,   0)
+    const totalShow = entries.reduce((s, e) => s + e.pledge.showFund, 0)
 
     return (
         <div className="card p-5 space-y-3">
@@ -1034,11 +1032,10 @@ function PillSelect({ value, onChange, options }: {
         <div className="flex flex-wrap gap-2">
             {options.map(o => (
                 <button key={o.value} type="button" onClick={() => onChange(o.value)}
-                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                        value === o.value
+                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${value === o.value
                             ? 'bg-[#052d4a] border-[#052d4a] text-white'
                             : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
-                    }`}>
+                        }`}>
                     {o.label}
                 </button>
             ))}
@@ -1051,11 +1048,10 @@ function YesNo({ value, onChange }: { value?: boolean; onChange: (v: boolean) =>
         <div className="flex gap-2">
             {([true, false] as const).map(v => (
                 <button key={String(v)} type="button" onClick={() => onChange(v)}
-                    className={`px-4 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                        value === v
+                    className={`px-4 py-1.5 rounded-lg border text-sm font-medium transition-all ${value === v
                             ? 'bg-[#052d4a] border-[#052d4a] text-white'
                             : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
-                    }`}>
+                        }`}>
                     {v ? 'Yes' : 'No'}
                 </button>
             ))}
@@ -1097,7 +1093,7 @@ function OwnershipBar({ loanPct, cpfPct, cashPct, loanAmt, cpfAmt, cashAmt }: {
 }) {
     const total = loanPct + cpfPct + cashPct
     const lW = total > 0 ? (loanPct / total) * 100 : 0
-    const cW = total > 0 ? (cpfPct  / total) * 100 : 0
+    const cW = total > 0 ? (cpfPct / total) * 100 : 0
     const hW = total > 0 ? (cashPct / total) * 100 : 0
     const fmt = (p: number) => `${(p * 100).toFixed(1)}%`
 

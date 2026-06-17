@@ -343,10 +343,10 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
         ? Math.max(MIN_TENURE, Math.min(inputs.currentTenureEquityLoan ?? equityLoanCurrentTenureMax, equityLoanCurrentTenureMax))
         : 0
     const homeLoanStressInstallment = isRefi && homeLoan > 0
-        ? calcInstallment(homeLoan, STRESS_TEST_RATE * 100, effectiveRefiTenure)
+        ? calcInstallment(homeLoan * buyerShareFrac, STRESS_TEST_RATE * 100, effectiveRefiTenure)
         : 0
     const equityLoanCurrentStressInstallment = isRefi && equityOutstanding > 0
-        ? calcInstallment(equityOutstanding, STRESS_TEST_RATE * 100, effectiveCurrentEquityLoanTenure)
+        ? calcInstallment(equityOutstanding * buyerShareFrac, STRESS_TEST_RATE * 100, effectiveCurrentEquityLoanTenure)
         : 0
     const refiStressInstallment = homeLoanStressInstallment + equityLoanCurrentStressInstallment
     const purchaseStressInstallment = isPurchase
@@ -401,7 +401,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     }
 
     const refiPledge = isRefi && !refiTdsrPass
-        ? computePledge(outstandingLoan, refiLoanEligibility, availableTdsr, effectiveRefiTenure)
+        ? computePledge(buyerLoanLiability, refiLoanEligibility, availableTdsr, effectiveRefiTenure)
         : null
     const purchasePledge = isPurchase && !purchaseTdsrPass
         ? computePledge(
@@ -413,7 +413,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
 
     // Monthly installments at reference rate (display)
     const monthlyInstallment    = isPurchase ? calcInstallment(bankLoan75, refRate, effectivePurchaseTenure) : 0
-    const refiMonthlyInstallment = isRefi    ? calcInstallment(outstandingLoan, refRate, effectiveRefiTenure) : 0
+    const refiMonthlyInstallment = isRefi    ? calcInstallment(buyerLoanLiability, refRate, effectiveRefiTenure) : 0
 
     // ── Equity loan — structural (LTV only) ──────────────────────────────────
     const equityPct        = 0.75 - loanPct - cpfPct
