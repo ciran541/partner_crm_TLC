@@ -120,6 +120,7 @@ export interface PurchaseWorkflow {
     outstanding_housing_loans?: '0' | '1' | '2plus'
     residential_properties_owned?: '1' | '2' | '3plus'
     borrowers?: PurchaseBorrower[]
+    married?: boolean          // co-owners are a married couple (affects ABSD for SC + PR/Foreigner)
     property_price?: number
     reference_rate?: number
     // Preferred rate type — feeds package suggestions (completed properties only).

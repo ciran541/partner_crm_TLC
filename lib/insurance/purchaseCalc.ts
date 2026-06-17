@@ -146,6 +146,7 @@ export interface PurchaseInputs {
     residentialPropertiesOwned?: '1' | '2' | '3plus'  // drives ABSD; separate from mortgage loans
     ipaDone?: boolean
     ipa?: { amount?: number; tenure?: number; ageCap?: 65 | 75 }
+    married?: boolean             // co-owners are a married couple (affects ABSD for SC + PR/Foreigner)
     borrowers?: BorrowerInput[]   // used only when ipaDone is false
     // Agent/client preferred tenure (within computed range). Applied as effective tenure
     // for each option: min(preferredTenure, option.maxTenure). Undefined = use each option's max.
@@ -237,8 +238,13 @@ export function calculateABSD(args: {
     residencies: (Residency | undefined)[]
     outstanding: OutstandingLoans
     residentialPropertiesOwned?: '1' | '2' | '3plus'
+    married?: boolean
 }): { amount: number; ratePct: number; residency: Residency } {
-    const residency = worstResidency(args.residencies)
+    // Married couples with at least one SC benefit from SC-rate ABSD (remission available).
+    // Unmarried joint purchasers use the worst-case (highest) rate.
+    const residency = args.married && args.residencies.includes('singaporean')
+        ? 'singaporean'
+        : worstResidency(args.residencies)
     // Residential properties owned drives ABSD; fall back to mortgage loans if not set.
     const propertyCount: 1 | 2 | 3 = args.residentialPropertiesOwned === '3plus' ? 3
         : args.residentialPropertiesOwned === '2' ? 2
@@ -454,6 +460,7 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
         residencies: borrowers.map(b => b.residency),
         outstanding,
         residentialPropertiesOwned: inputs.residentialPropertiesOwned,
+        married: inputs.married,
     })
 
     // Tenure range: needs property type + IWAA only (shown on both paths when ages are known).
@@ -507,6 +514,7 @@ export function inputsFromWorkflow(d: PurchaseWorkflow): PurchaseInputs {
         residentialPropertiesOwned: d.residential_properties_owned,
         ipaDone: d.ipa_done,
         ipa: d.ipa ? { amount: d.ipa.amount, tenure: d.ipa.tenure, ageCap: d.ipa.age_cap } : undefined,
+        married: d.married,
         preferredTenure: d.preferred_tenure,
         borrowers: (d.borrowers ?? []).map(b => ({
             employment: b.employment,

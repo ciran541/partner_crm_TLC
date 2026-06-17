@@ -22,7 +22,7 @@ import {
 } from '@/lib/insurance/purchaseCalc'
 import { buildRemarks, nextActions, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
 import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchaseProposal'
-import { monthlyInstallment } from '@/lib/insurance/loanCalc'
+import { monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import Modal from '@/components/shared/Modal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
@@ -292,6 +292,35 @@ export default function PurchaseWorkflowPanel({
                             </Question>
                         </div>
                     ))}
+
+                    {/* Marriage question — only relevant for joint purchases; affects ABSD */}
+                    {borrowers.length > 1 && (
+                        <Question label="Are the co-owners a married couple?">
+                            <YesNo value={data.married} onChange={v => update({ married: v })} />
+                            {data.married !== undefined && (() => {
+                                const hasSC = borrowers.some(b => (b.residency ?? 'singaporean') === 'singaporean')
+                                const hasPR = borrowers.some(b => b.residency === 'pr')
+                                const hasForeigner = borrowers.some(b => b.residency === 'foreigner')
+                                if (data.married && hasSC && (hasPR || hasForeigner)) {
+                                    return (
+                                        <p className="text-[11px] text-emerald-700 mt-1.5 flex items-start gap-1.5">
+                                            <Info size={12} className="shrink-0 mt-0.5 text-emerald-500" />
+                                            Married couple with SC — SC ABSD rates apply (remission available). ABSD is paid upfront and refunded after meeting conditions.
+                                        </p>
+                                    )
+                                }
+                                if (!data.married && hasSC && (hasPR || hasForeigner)) {
+                                    return (
+                                        <p className="text-[11px] text-amber-700 mt-1.5 flex items-start gap-1.5">
+                                            <AlertTriangle size={12} className="shrink-0 mt-0.5" />
+                                            Unmarried co-owners — {hasForeigner ? 'foreigner (60%)' : 'PR (5%/30%/35%)'} ABSD rate applies to the full purchase price.
+                                        </p>
+                                    )
+                                }
+                                return null
+                            })()}
+                        </Question>
+                    )}
                 </Section>
             )}
 
@@ -344,7 +373,13 @@ export default function PurchaseWorkflowPanel({
                                 const altTenure = Math.max(0, Math.min(altOpt.ageCap - impliedIwaa, isHdb ? altOpt.tenureHdb : altOpt.tenureCondoEC))
                                 const altLtvCeiling = data.property_price * altOpt.ltvPct
                                 const altLtvLabel = `${Math.round(altOpt.ltvPct * 100)}%`
-                                if (altTenure <= 0 || altLtvCeiling <= 0) return null
+                                // TDSR reverse-engineering: the IPA loan + tenure at 4% stress test tells us
+                                // exactly what monthly capacity the bank accepted. Apply that to Option 2's tenure.
+                                const stressPayment = monthlyInstallment(data.ipa.amount, STRESS_TEST_RATE * 100, data.ipa.tenure)
+                                const altMaxFromTdsr = maxLoanFromPayment(stressPayment, STRESS_TEST_RATE * 100, altTenure)
+                                const altLoan = Math.min(altMaxFromTdsr, altLtvCeiling)
+                                const ltvBinds = altMaxFromTdsr >= altLtvCeiling
+                                if (altTenure <= 0 || altLoan <= 0) return null
                                 return (
                                     <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-1.5">
                                         <p className="text-[11px] font-bold text-[#052d4a]">
@@ -352,11 +387,13 @@ export default function PurchaseWorkflowPanel({
                                         </p>
                                         <p className="text-sm text-slate-700">
                                             Est. Loan Eligibility:{' '}
-                                            <span className="font-semibold">{money(altLtvCeiling)}</span>{' '}
+                                            <span className="font-semibold">{money(altLoan)}</span>{' '}
                                             over <span className="font-semibold">{altTenure} years</span>
                                         </p>
                                         <p className="text-[11px] text-slate-500">
-                                            Capped at {altLtvLabel} of purchase price or valuation, whichever is lower.
+                                            {ltvBinds
+                                                ? `Capped at ${altLtvLabel} of purchase price or valuation, whichever is lower.`
+                                                : `Within TDSR at 4% stress test — LTV ceiling is ${money(altLtvCeiling)} (${altLtvLabel}).`}
                                         </p>
                                     </div>
                                 )
@@ -1001,11 +1038,13 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
     const balancePctLabel = fmtPct(balancePctNum)
     const effectiveBalance = price > 0 ? Math.max(0, price - effectiveLoan - opt.minCashDown) : opt.cashCpfDown
 
-    // Pledge/show for remaining shortfall from effectiveLoan up to the full LTV ceiling
+    // Shortfall = (75% of valuation) − entered loan = how far below max LTV the desired loan is.
+    // Bridge = entered loan − bank-approved base = what needs pledging to reach the desired loan.
     const remainingShortfall = opt.ltvCeiling - effectiveLoan
-    const effectivePledge: PledgeData | null = remainingShortfall > 1 && rule
-        ? computePledge(remainingShortfall, opt.tenure, rule)
-        : (isAdjusted ? null : opt.pledge)
+    const bridgeAmount = Math.max(0, effectiveLoan - opt.finalLoan)
+    const bridgePledge: PledgeData | null = bridgeAmount > 1 && rule
+        ? computePledge(bridgeAmount, opt.tenure, rule)
+        : null
 
     const borderClass = blocked
         ? 'border-slate-200'
@@ -1030,9 +1069,7 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                         ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30 shrink-0">
                             IPA{ipaBank ? ` · ${ipaBank}` : ''}
                           </span>
-                        : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
-                            Est. from TDSR/MSR
-                          </span>
+                        : null
                     }
                 </div>
                 {selectable && (
@@ -1093,45 +1130,13 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                         </span>
                         <span className="font-semibold text-[#03a9e7]">{money(opt.minCashDown)}</span>
                     </div>
-                    {/* LTV — editable loan amount */}
+                    {/* LTV — updates when agent enters an actual loan requirement below */}
                     <div className="flex items-center justify-between gap-3">
                         <span className="text-[15px] font-semibold text-slate-700">
                             Loan-To-Valuation <span className="text-[#03a9e7]">({actualLtvPctLabel})</span>
                         </span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="text-[15px] font-bold text-[#03a9e7]">$</span>
-                            <input
-                                type="text"
-                                inputMode="numeric"
-                                value={rawLoan !== '' ? rawLoan : Math.round(effectiveLoan).toLocaleString()}
-                                onFocus={e => { setRawLoan(String(Math.round(effectiveLoan))); e.currentTarget.select() }}
-                                onChange={e => setRawLoan(e.target.value.replace(/[^\d,]/g, ''))}
-                                onBlur={() => {
-                                    const parsed = parseInt(rawLoan.replace(/,/g, ''), 10)
-                                    setRawLoan('')
-                                    if (!isNaN(parsed)) {
-                                        const clamped = Math.max(Math.round(opt.finalLoan), Math.min(Math.round(opt.ltvCeiling), parsed))
-                                        onAdjustLoan?.(clamped === Math.round(opt.finalLoan) ? undefined : clamped)
-                                    }
-                                }}
-                                className="w-32 text-right text-[15px] font-bold text-[#03a9e7] bg-transparent border-b-2 border-[#03a9e7]/30 focus:border-[#03a9e7] outline-none transition-colors disabled:opacity-50"
-                                disabled={blocked}
-                                title={`Adjust loan (${money(opt.finalLoan)} – ${money(opt.ltvCeiling)})`}
-                            />
-                            {isAdjusted && (
-                                <button type="button"
-                                    onClick={() => onAdjustLoan?.(undefined)}
-                                    className="text-[10px] text-slate-400 hover:text-slate-700 underline leading-none shrink-0">
-                                    reset
-                                </button>
-                            )}
-                        </div>
+                        <span className="text-[15px] font-bold text-[#03a9e7]">{money(effectiveLoan)}</span>
                     </div>
-                    {isAdjusted && (
-                        <p className="text-[11px] text-slate-400 text-right -mt-1">
-                            Base: {money(opt.finalLoan)} · Max LTV: {money(opt.ltvCeiling)}
-                        </p>
-                    )}
                     <div className="flex items-center justify-between gap-3 text-sm">
                         <span className="text-slate-500">
                             Balance Cash / CPF <span className="text-[#03a9e7] font-semibold">({balancePctLabel})</span>
@@ -1140,27 +1145,82 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                     </div>
                 </div>
 
-                {/* Pledge shortfall — updates when loan is adjusted */}
-                {effectivePledge && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-1.5">
-                        <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
-                            <AlertTriangle size={12} className="shrink-0" /> To reach full {ltvPctLabel} ({money(opt.ltvCeiling)}): shortfall {money(effectivePledge.shortfall)}
-                        </p>
-                        <p className="text-xs text-amber-700 leading-relaxed">
-                            Either{' '}
-                            <span className="font-semibold">pledge {money(effectivePledge.pledgeFund)}</span> (locked 4 yrs){' '}
-                            or <span className="font-semibold">show {money(effectivePledge.showFund)}</span> in funds.
+                {/* Actual loan requirement — dedicated field + pledge/show info */}
+                <div className="border-t border-slate-200 pt-4 space-y-3">
+                    <div className="space-y-1.5">
+                        <p className="text-[12px] font-semibold text-slate-600">How much loan does the client actually require?</p>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-sm text-slate-500 shrink-0">$</span>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                value={rawLoan !== '' ? rawLoan : isAdjusted ? Math.round(effectiveLoan).toLocaleString() : ''}
+                                placeholder={Math.round(opt.finalLoan).toLocaleString()}
+                                onFocus={e => { setRawLoan(String(Math.round(effectiveLoan))); e.currentTarget.select() }}
+                                onChange={e => setRawLoan(e.target.value.replace(/[^\d,]/g, ''))}
+                                onBlur={() => {
+                                    const parsed = parseInt(rawLoan.replace(/,/g, ''), 10)
+                                    setRawLoan('')
+                                    if (!isNaN(parsed) && parsed >= 0) {
+                                        const clamped = Math.min(Math.round(opt.ltvCeiling), parsed)
+                                        onAdjustLoan?.(clamped === Math.round(opt.finalLoan) ? undefined : clamped)
+                                    } else if (rawLoan === '') {
+                                        onAdjustLoan?.(undefined)
+                                    }
+                                }}
+                                disabled={blocked}
+                                className="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all disabled:opacity-50"
+                            />
+                            {isAdjusted && (
+                                <button type="button"
+                                    onClick={() => { onAdjustLoan?.(undefined); setRawLoan('') }}
+                                    className="text-[11px] text-slate-400 hover:text-slate-700 shrink-0 underline">
+                                    Reset
+                                </button>
+                            )}
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                            Bank-approved base: {money(opt.finalLoan)} · Max {ltvPctLabel} LTV: {money(opt.ltvCeiling)}
                         </p>
                     </div>
-                )}
 
-                {/* Income fully qualifies */}
-                {!effectivePledge && !isIpa && opt.incomeEligibility != null && opt.incomeEligibility >= opt.ltvCeiling && (
-                    <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-start gap-2">
-                        <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-emerald-500" />
-                        Income qualifies for the full {ltvPctLabel} loan — no pledge needed.
-                    </div>
-                )}
+                    {/* Pledge/show detail:
+                        - Shortfall = (75% of valuation) − entered loan (how far below max LTV)
+                        - Pledge = for the bridge from bank-approved base to the desired loan */}
+                    {opt.pledge ? (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-1.5">
+                            <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
+                                <AlertTriangle size={12} className="shrink-0" />
+                                {remainingShortfall > 1
+                                    ? <>Shortfall from full {ltvPctLabel} ({money(opt.ltvCeiling)}): {money(remainingShortfall)}</>
+                                    : <>At full {ltvPctLabel} ({money(opt.ltvCeiling)})</>
+                                }
+                            </p>
+                            {isAdjusted && effectiveLoan <= opt.finalLoan + 1 ? (
+                                <p className="text-xs text-emerald-700">
+                                    No pledging needed — within bank-approved {money(opt.finalLoan)}.
+                                </p>
+                            ) : isAdjusted && bridgePledge ? (
+                                <p className="text-xs text-amber-700 leading-relaxed">
+                                    For {money(effectiveLoan)} ({actualLtvPctLabel}):{' '}
+                                    pledge <span className="font-semibold">{money(bridgePledge.pledgeFund)}</span> (locked 4 yrs){' '}
+                                    or show <span className="font-semibold">{money(bridgePledge.showFund)}</span> in funds.
+                                </p>
+                            ) : (
+                                <p className="text-xs text-amber-700 leading-relaxed">
+                                    Either{' '}
+                                    <span className="font-semibold">pledge {money(opt.pledge.pledgeFund)}</span> (locked 4 yrs){' '}
+                                    or <span className="font-semibold">show {money(opt.pledge.showFund)}</span> in funds.
+                                </p>
+                            )}
+                        </div>
+                    ) : !isIpa && opt.incomeEligibility != null && opt.incomeEligibility >= opt.ltvCeiling ? (
+                        <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-start gap-2">
+                            <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-emerald-500" />
+                            Income qualifies for the full {ltvPctLabel} loan — no pledge needed.
+                        </div>
+                    ) : null}
+                </div>
             </div>
         </div>
     )
