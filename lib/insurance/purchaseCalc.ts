@@ -291,6 +291,8 @@ export interface PledgeData {
 
 export interface OptionResult {
     key: '1' | '2'
+    /** Whether this option came from IPA data or income-based TDSR/MSR calculation. */
+    source: 'ipa' | 'income'
     ltvPct: number              // headline max LTV ceiling for this option (fraction) e.g. 0.75
     ageCap: number
     tenure: number              // effective tenure (preferred tenure applied if set, else maxTenure)
@@ -306,10 +308,31 @@ export interface OptionResult {
     pledge: PledgeData | null
 }
 
+/**
+ * Compute pledge / show-fund amounts for a given shortfall.
+ * Uses the same annuity formula as the internal computeOption path.
+ */
+export function computePledge(
+    shortfall: number,
+    tenure: number,
+    rule: ServicingRule,
+): PledgeData | null {
+    if (shortfall <= 1 || tenure <= 0) return null
+    const pledgeDivisor = rule === 'tdsr' ? 0.55 : 0.30
+    const r = STRESS_TEST_RATE / 12
+    const n = tenure * 12
+    const shortfallPayment = shortfall * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)
+    const pledgeFund = Math.max(0, (shortfallPayment * 48) / pledgeDivisor)
+    const showFund = Math.max(0, pledgeFund / 0.3)
+    if (pledgeFund > 1 && showFund > 1) return { shortfall, pledgeFund, showFund }
+    return null
+}
+
 function computeOption(
     option: FinancingOption,
     inputs: PurchaseInputs,
     ctx: { price: number; rule: ServicingRule; hdbClass: boolean; gross: number; debts: number; age: number | null },
+    source: 'ipa' | 'income',
 ): OptionResult {
     const referenceRate = inputs.referenceRatePct || DEFAULT_REFERENCE_RATE
     const ltvCeiling = ctx.price * option.ltvPct
@@ -374,6 +397,7 @@ function computeOption(
 
     return {
         key: option.key,
+        source,
         ltvPct: option.ltvPct,
         ageCap: option.ageCap,
         tenure,
@@ -408,12 +432,6 @@ export interface PurchaseComputation {
     // Max tenure per option (derived from property type + IWAA alone, before preferred tenure).
     // Populated whenever property type and IWAA are known, even if income is not yet entered.
     tenureRange?: { opt1: number; opt2: number }
-}
-
-/** Which option keys are visible: both, or a single option on the IPA path (65 → Option 1, 75 → Option 2). */
-export function visibleOptionKeys(inputs: PurchaseInputs): ('1' | '2')[] {
-    if (inputs.ipaDone) return inputs.ipa?.ageCap === 75 ? ['2'] : ['1']
-    return ['1', '2']
 }
 
 export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
@@ -467,9 +485,14 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
 
     const ctx = { price, rule: meta.rule, hdbClass: meta.hdbClass, gross, debts, age }
     const [opt1, opt2] = OPTION_MATRIX[outstanding]
-    const visible = visibleOptionKeys(inputs)
-    if (visible.includes('1')) result.options.push(computeOption(opt1, inputs, ctx))
-    if (visible.includes('2')) result.options.push(computeOption(opt2, inputs, ctx))
+
+    if (inputs.ipaDone) {
+        const ipaKey: '1' | '2' = inputs.ipa?.ageCap === 75 ? '2' : '1'
+        result.options.push(computeOption(ipaKey === '1' ? opt1 : opt2, inputs, ctx, 'ipa'))
+    } else {
+        result.options.push(computeOption(opt1, inputs, ctx, 'income'))
+        result.options.push(computeOption(opt2, inputs, ctx, 'income'))
+    }
 
     return result
 }

@@ -15,6 +15,10 @@ import {
     type PurchasePropertyType,
     type OptionResult,
     type OutstandingLoans,
+    type ServicingRule,
+    type PledgeData,
+    OPTION_MATRIX,
+    computePledge,
 } from '@/lib/insurance/purchaseCalc'
 import { buildRemarks, nextActions, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
 import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchaseProposal'
@@ -29,7 +33,7 @@ import PurchasePresentation from './PurchasePresentation'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save, FileText, Wallet, XCircle,
     ArrowRight, ClipboardList, Copy, Printer, Circle,
-    Presentation, MessageSquare,
+    Presentation, MessageSquare, Users,
 } from 'lucide-react'
 
 interface Props {
@@ -62,17 +66,22 @@ export default function PurchaseWorkflowPanel({
     const [liquidityOption, setLiquidityOption] = useState<'1' | '2'>('1')
     const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
     const [rawPrefTenure2, setRawPrefTenure2] = useState('')
+    const [adjustedLoans, setAdjustedLoans] = useState<Record<string, number | undefined>>({})
 
     const meta = propertyMeta(data.property_type)
     const computation = useMemo(() => computePurchase(inputsFromWorkflow(data)), [data])
 
-    // Auto-switch liquidity view away from an option whose max tenure the client can't meet
+    // Auto-switch liquidity view away from a blocked income option
     useEffect(() => {
         if (!computation.ready || computation.options.length < 2) return
         const pref = data.preferred_tenure
-        const currentBlocked = computation.options.find(o => o.key === liquidityOption && pref != null && pref > o.maxTenure)
+        const currentBlocked = computation.options.find(
+            o => o.key === liquidityOption && o.source !== 'ipa' && pref != null && pref > o.maxTenure,
+        )
         if (currentBlocked) {
-            const other = computation.options.find(o => o.key !== liquidityOption && !(pref != null && pref > o.maxTenure))
+            const other = computation.options.find(
+                o => o.key !== liquidityOption && !(o.source !== 'ipa' && pref != null && pref > o.maxTenure),
+            )
             if (other) setLiquidityOption(other.key as '1' | '2')
         }
     }, [data.preferred_tenure, computation.options, computation.ready, liquidityOption])
@@ -250,6 +259,42 @@ export default function PurchaseWorkflowPanel({
                 </Section>
             )}
 
+            {/* Buyer Profile — residency, age, count; before IPA for ABSD + IWAA */}
+            {data.property_type && (
+                <Section title="Buyer Profile" icon={<Users size={15} />}
+                    subtitle="Residency drives ABSD rate.">
+                    <Question label="Number of owners">
+                        <PillSelect
+                            value={String(borrowers.length)}
+                            onChange={v => setBorrowerCount(Number(v) as 1 | 2 | 3 | 4)}
+                            options={[
+                                { value: '1', label: 'Solo' },
+                                { value: '2', label: 'Joint (2)' },
+                                { value: '3', label: 'Joint (3)' },
+                                { value: '4', label: 'Joint (4)' },
+                            ]}
+                        />
+                    </Question>
+                    {borrowers.map((b, i) => (
+                        <div key={i} className="rounded-lg border border-slate-200 p-4">
+                            <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">
+                                {borrowers.length === 1 ? 'Owner' : `Owner ${i + 1}`}
+                            </p>
+                            <Question label="Residency">
+                                <PillSelect
+                                    value={b.residency ?? 'singaporean'}
+                                    onChange={v => updateBorrower(i, { residency: v as PurchaseBorrower['residency'] })}
+                                    options={RESIDENCY_OPTIONS.map(r => ({
+                                        value: r.value, label: r.label,
+                                        disabled: r.value === 'foreigner' && foreignerBlocked,
+                                    }))}
+                                />
+                            </Question>
+                        </div>
+                    ))}
+                </Section>
+            )}
+
             {/* IPA */}
             {data.property_type && (
                 <Section title="In-Principle Approval (IPA)" icon={<CheckCircle2 size={15} />}>
@@ -287,70 +332,35 @@ export default function PurchaseWorkflowPanel({
                                     options={[{ value: '65', label: '65 (Option 1)' }, { value: '75', label: '75 (Option 2)' }]}
                                 />
                             </Question>
-                            <p className="text-[11px] text-slate-400 flex items-start gap-1.5">
-                                <Info size={12} className="mt-0.5 shrink-0" />
-                                Income questions are skipped — results use the IPA amount and tenure, and show only the option matching the chosen age cap.
-                            </p>
-
-                            {/* Borrower profile — age + residency for IWAA and ABSD */}
-                            <div className="border-t border-slate-200 pt-4 space-y-3">
-                                <p className="text-xs font-semibold text-slate-600">Borrower Profile</p>
-                                <p className="text-[11px] text-slate-400">Residency determines ABSD rate. Ages compute income-weighted average age (IWAA) and max eligible tenure.</p>
-                                <Question label="Number of borrowers">
-                                    <PillSelect
-                                        value={String(borrowers.length)}
-                                        onChange={v => setBorrowerCount(Number(v) as 1 | 2 | 3 | 4)}
-                                        options={[
-                                            { value: '1', label: 'Solo' },
-                                            { value: '2', label: 'Joint (2)' },
-                                            { value: '3', label: 'Joint (3)' },
-                                            { value: '4', label: 'Joint (4)' },
-                                        ]}
-                                    />
-                                </Question>
-                                {borrowers.map((b, i) => (
-                                    <div key={i} className="rounded-lg border border-slate-200 p-3 grid grid-cols-2 gap-3">
-                                        <p className="col-span-2 text-xs font-bold text-slate-600 uppercase tracking-wide">
-                                            {borrowers.length === 1 ? 'Borrower' : `Borrower ${i + 1}`}
+                            {/* Reverse-engineered alternative option — derived from IPA data alone, no income entry needed */}
+                            {data.property_price && data.ipa?.amount && data.ipa?.tenure && data.ipa?.age_cap && (() => {
+                                const outstanding = (outstandingLocked ? '0' : (data.outstanding_housing_loans ?? '0')) as OutstandingLoans
+                                const [opt1, opt2] = OPTION_MATRIX[outstanding]
+                                const ipaKey = data.ipa.age_cap === 65 ? '1' : '2'
+                                const altOpt = ipaKey === '1' ? opt2 : opt1
+                                // Reverse-engineer IWAA from the bank's IPA: ageCap − tenure = implied IWAA
+                                const impliedIwaa = data.ipa.age_cap - data.ipa.tenure
+                                const isHdb = meta?.hdbClass ?? false
+                                const altTenure = Math.max(0, Math.min(altOpt.ageCap - impliedIwaa, isHdb ? altOpt.tenureHdb : altOpt.tenureCondoEC))
+                                const altLtvCeiling = data.property_price * altOpt.ltvPct
+                                const altLtvLabel = `${Math.round(altOpt.ltvPct * 100)}%`
+                                if (altTenure <= 0 || altLtvCeiling <= 0) return null
+                                return (
+                                    <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-1.5">
+                                        <p className="text-[11px] font-bold text-[#052d4a]">
+                                            Client may also opt for Option {altOpt.key} ({altLtvLabel} LTV, age cap {altOpt.ageCap})
                                         </p>
-                                        <Question label="Residency">
-                                            <PillSelect
-                                                value={b.residency ?? 'singaporean'}
-                                                onChange={v => updateBorrower(i, { residency: v as PurchaseBorrower['residency'] })}
-                                                options={RESIDENCY_OPTIONS.map(r => ({
-                                                    value: r.value, label: r.label,
-                                                    disabled: r.value === 'foreigner' && foreignerBlocked,
-                                                }))}
-                                            />
-                                        </Question>
-                                        <Question label="Age">
-                                            <FieldInput type="number" value={b.age ?? ''}
-                                                onChange={v => updateBorrower(i, { age: num(v) })} />
-                                        </Question>
+                                        <p className="text-sm text-slate-700">
+                                            Est. Loan Eligibility:{' '}
+                                            <span className="font-semibold">{money(altLtvCeiling)}</span>{' '}
+                                            over <span className="font-semibold">{altTenure} years</span>
+                                        </p>
+                                        <p className="text-[11px] text-slate-500">
+                                            Capped at {altLtvLabel} of purchase price or valuation, whichever is lower.
+                                        </p>
                                     </div>
-                                ))}
-
-                                {/* IWAA + tenure range — shown once ages are entered */}
-                                {computation.weightedAge != null && computation.tenureRange && (
-                                    <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/30 p-4 grid grid-cols-3 gap-4">
-                                        <div>
-                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">IWAA</p>
-                                            <p className="text-base font-bold text-[#052d4a]">{computation.weightedAge} yrs</p>
-                                            <p className="text-[10px] text-slate-400">Income-weighted avg age</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Option 1 Tenure</p>
-                                            <p className="text-base font-bold text-[#052d4a]">{computation.tenureRange.opt1} yrs</p>
-                                            <p className="text-[10px] text-slate-400">Max (age cap 65)</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Option 2 Tenure</p>
-                                            <p className="text-base font-bold text-[#052d4a]">{computation.tenureRange.opt2} yrs</p>
-                                            <p className="text-[10px] text-slate-400">Max (age cap 75)</p>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                                )
+                            })()}
                         </>
                     )}
                 </Section>
@@ -438,36 +448,14 @@ export default function PurchaseWorkflowPanel({
                 </Section>
             )}
 
-            {/* Income (only when no IPA) */}
+            {/* Income — only when IPA not done; residency + count come from Buyer Profile above */}
             {data.property_type && data.ipa_done === false && (
                 <Section title="Borrower Income" icon={<Wallet size={15} />}>
-                    <Question label="Number of borrowers">
-                        <PillSelect
-                            value={String(borrowers.length)}
-                            onChange={v => setBorrowerCount(Number(v) as 1 | 2 | 3 | 4)}
-                            options={[
-                                { value: '1', label: 'Solo' },
-                                { value: '2', label: 'Joint (2)' },
-                                { value: '3', label: 'Joint (3)' },
-                                { value: '4', label: 'Joint (4)' },
-                            ]}
-                        />
-                    </Question>
                     {borrowers.map((b, i) => (
                         <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-4">
                             <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
                                 {borrowers.length === 1 ? 'Borrower' : `Borrower ${i + 1}`}
                             </p>
-                            <Question label="Residency">
-                                <PillSelect
-                                    value={b.residency ?? 'singaporean'}
-                                    onChange={v => updateBorrower(i, { residency: v as PurchaseBorrower['residency'] })}
-                                    options={RESIDENCY_OPTIONS.map(r => ({
-                                        value: r.value, label: r.label,
-                                        disabled: r.value === 'foreigner' && foreignerBlocked,
-                                    }))}
-                                />
-                            </Question>
                             <Question label="Employment">
                                 <PillSelect
                                     value={b.employment ?? 'employed'}
@@ -476,6 +464,10 @@ export default function PurchaseWorkflowPanel({
                                 />
                             </Question>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <Question label="Age">
+                                    <FieldInput type="number" value={b.age ?? ''}
+                                        onChange={v => updateBorrower(i, { age: num(v) })} />
+                                </Question>
                                 {b.employment !== 'self_employed' && (
                                     <Question label="Monthly Basic Salary">
                                         <FieldInput commas prefix="$" value={b.basic_salary ?? ''}
@@ -486,10 +478,6 @@ export default function PurchaseWorkflowPanel({
                                     <FieldInput commas prefix="$" value={b.annual_variable ?? ''}
                                         onChange={v => updateBorrower(i, { annual_variable: num(v) })} />
                                 </Question>
-                                <Question label="Age">
-                                    <FieldInput type="number" value={b.age ?? ''}
-                                        onChange={v => updateBorrower(i, { age: num(v) })} />
-                                </Question>
                                 <Question label="Monthly Commitments">
                                     <FieldInput commas prefix="$" value={b.commitments ?? ''}
                                         onChange={v => updateBorrower(i, { commitments: num(v) })} />
@@ -498,7 +486,7 @@ export default function PurchaseWorkflowPanel({
                         </div>
                     ))}
 
-                    {/* IWAA + Tenure Range + Preferred Tenure — shown once IWAA is computable */}
+                    {/* IWAA + Tenure Range + Preferred Tenure — shown once ages are entered */}
                     {computation.weightedAge != null && computation.tenureRange && (
                         <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/30 p-4 space-y-4">
                             <div className="grid grid-cols-3 gap-4">
@@ -518,7 +506,6 @@ export default function PurchaseWorkflowPanel({
                                     <p className="text-[10px] text-slate-400">Max (age cap 75)</p>
                                 </div>
                             </div>
-
                             {(() => {
                                 const maxT = Math.max(computation.tenureRange.opt1, computation.tenureRange.opt2)
                                 return (
@@ -563,19 +550,23 @@ export default function PurchaseWorkflowPanel({
                 <>
                     <div className={`grid gap-4 ${computation.options.length > 1 ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
                         {computation.options.map(opt => {
-                            // Never block on the IPA path — the bank already validated the tenure.
-                            const blocked = !data.ipa_done && data.preferred_tenure != null && data.preferred_tenure > opt.maxTenure
+                            // IPA options are never blocked — the bank already validated the tenure.
+                            // Income-computed options are blocked when preferred tenure exceeds their max.
+                            const blocked = opt.source !== 'ipa' && data.preferred_tenure != null && data.preferred_tenure > opt.maxTenure
                             return (
                                 <OptionCard
                                     key={opt.key}
                                     opt={opt}
-                                    ipa={!!data.ipa_done}
+                                    ipaBank={opt.source === 'ipa' ? (data.ipa?.bank ?? undefined) : undefined}
                                     price={data.property_price ?? 0}
                                     selectable={computation.options.length > 1}
                                     selected={liquidityOption === opt.key}
                                     onSelect={() => setLiquidityOption(opt.key as '1' | '2')}
                                     blocked={blocked}
                                     preferredTenure={data.preferred_tenure}
+                                    adjustedLoan={adjustedLoans[opt.key]}
+                                    onAdjustLoan={v => setAdjustedLoans(prev => ({ ...prev, [opt.key]: v }))}
+                                    rule={meta?.rule ?? 'tdsr'}
                                 />
                             )
                         })}
@@ -600,6 +591,8 @@ export default function PurchaseWorkflowPanel({
                         options={computation.options.length > 1 ? computation.options.filter(o => o.key === liquidityOption) : computation.options}
                         miscFees={computation.bsd + computation.absd + computation.legalFee + computation.valuationFee}
                         price={data.property_price ?? 0}
+                        adjustedLoans={adjustedLoans}
+                        rule={meta?.rule ?? 'tdsr'}
                     />
 
                     {/* Rate preference — just above the package list */}
@@ -832,12 +825,15 @@ function otpFieldsFor(type?: PurchasePropertyType): { key: OtpFieldKey; label: s
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-function Section({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
+function Section({ title, icon, subtitle, children }: { title: string; icon?: ReactNode; subtitle?: string; children: ReactNode }) {
     return (
         <div className="card p-5 space-y-4">
-            <p className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                {icon && <span className="text-[#03a9e7]">{icon}</span>}{title}
-            </p>
+            <div>
+                <p className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                    {icon && <span className="text-[#03a9e7]">{icon}</span>}{title}
+                </p>
+                {subtitle && <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>}
+            </div>
             {children}
         </div>
     )
@@ -881,9 +877,14 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
     )
 }
 
-function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; miscFees: number; price: number }) {
+function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
+    options: OptionResult[]
+    miscFees: number
+    price: number
+    adjustedLoans?: Record<string, number | undefined>
+    rule?: ServicingRule
+}) {
     if (!options.length || price <= 0) return null
-    // 1-decimal percentage helper for liquidity card (avoids 59.64% → shows 59.6%)
     const fmtFrac = (frac: number) => {
         const v = frac * 100
         return `${Number.isInteger(v) ? v : v.toFixed(1)}%`
@@ -895,19 +896,28 @@ function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; 
             </p>
             <div className={`grid gap-4 ${options.length > 1 ? 'md:grid-cols-2' : ''}`}>
                 {options.map(opt => {
-                    // matrix-derived fraction for full-LTV scenarios (S2 / S3)
-                    const matrixCashCpfPct = 1 - opt.ltvPct - opt.minCashPct
-                    const matrixCashCpfDown = price * matrixCashCpfPct
-                    // S1: use the actual loan (income-eligible or IPA amount, not necessarily full LTV)
+                    // S2/S3 target: if user adjusted loan to a higher amount, bridge from base to target;
+                    // otherwise default to the full LTV ceiling (original behaviour).
+                    const adjLoan = adjustedLoans?.[opt.key]
+                    const hasAdjustment = adjLoan != null && adjLoan > opt.finalLoan
+                    const s2s3Target = hasAdjustment ? adjLoan! : opt.ltvCeiling
+                    const s2s3Balance = Math.max(0, price - s2s3Target - opt.minCashDown)
+                    const s2s3BalancePct = price > 0 ? s2s3Balance / price : 0
+                    const s2s3LtvPct = price > 0 ? s2s3Target / price : opt.ltvPct
+                    const s2s3Pledge: PledgeData | null = hasAdjustment && rule
+                        ? computePledge(adjLoan! - opt.finalLoan, opt.tenure, rule)
+                        : opt.pledge
+
+                    // S1: always the original bank-approved / income-computed loan (fixed)
                     const s1Total = opt.minCashDown + opt.cashCpfDown + miscFees
-                    // S2 / S3: get to the full LTV ceiling via pledge or show
-                    const s2Total = opt.pledge ? opt.pledge.pledgeFund + opt.minCashDown + matrixCashCpfDown + miscFees : null
-                    const s3Total = opt.pledge ? opt.pledge.showFund + opt.minCashDown + matrixCashCpfDown + miscFees : null
+                    const s2Total = s2s3Pledge ? s2s3Pledge.pledgeFund + opt.minCashDown + s2s3Balance + miscFees : null
+                    const s3Total = s2s3Pledge ? s2s3Pledge.showFund + opt.minCashDown + s2s3Balance + miscFees : null
+
                     return (
                         <div key={opt.key} className={`rounded-lg border p-4 space-y-3 ${opt.key === '1' ? 'border-sky-200 bg-sky-50/30' : 'border-slate-200 bg-slate-50/50'}`}>
                             <p className="text-xs font-bold text-[#052d4a]">Option {opt.key} — {pct(opt.ltvPct)} LTV</p>
 
-                            {/* S1 — income / IPA eligible loan (no pledge required) */}
+                            {/* S1 — fixed: the base loan from IPA / income (no pledging) */}
                             <div className="space-y-1.5">
                                 <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S1 — Without pledging / showing</p>
                                 <p className="text-[11px] text-slate-500 pb-0.5">
@@ -921,34 +931,34 @@ function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; 
                                 </div>
                             </div>
 
-                            {opt.pledge && s2Total !== null && s3Total !== null && (
+                            {s2s3Pledge && s2Total !== null && s3Total !== null && (
                                 <>
-                                    {/* S2 — pledge funds to reach full LTV */}
+                                    {/* S2 — pledge to reach target (adjusted or full LTV) */}
                                     <div className="border-t border-slate-200 pt-3 space-y-1.5">
                                         <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S2 — With pledging</p>
                                         <Row
-                                            label={<>Pledging of Funds to get {money(opt.ltvCeiling)} Loan ({pct(opt.ltvPct)})</>}
-                                            value={money(opt.pledge.pledgeFund)}
+                                            label={<>Pledging of Funds to get {money(s2s3Target)} Loan ({fmtFrac(s2s3LtvPct)})</>}
+                                            value={money(s2s3Pledge.pledgeFund)}
                                             highlight
                                         />
                                         <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
+                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(s2s3BalancePct)})</span></>} value={money(s2s3Balance)} />
                                         <Row label="Misc Fees" value={money(miscFees)} muted />
                                         <div className="border-t border-dashed border-slate-200 pt-1.5">
                                             <Row label="Total Required" value={money(s2Total)} strong />
                                         </div>
                                     </div>
 
-                                    {/* S3 — show funds to reach full LTV */}
+                                    {/* S3 — show funds to reach target */}
                                     <div className="border-t border-slate-200 pt-3 space-y-1.5">
                                         <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S3 — With show funds</p>
                                         <Row
-                                            label={<>Showing of Funds to get {money(opt.ltvCeiling)} Loan ({pct(opt.ltvPct)})</>}
-                                            value={money(opt.pledge.showFund)}
+                                            label={<>Showing of Funds to get {money(s2s3Target)} Loan ({fmtFrac(s2s3LtvPct)})</>}
+                                            value={money(s2s3Pledge.showFund)}
                                             highlight
                                         />
                                         <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(matrixCashCpfPct)})</span></>} value={money(matrixCashCpfDown)} />
+                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(s2s3BalancePct)})</span></>} value={money(s2s3Balance)} />
                                         <Row label="Misc Fees" value={money(miscFees)} muted />
                                         <div className="border-t border-dashed border-slate-200 pt-1.5">
                                             <Row label="Total Required" value={money(s3Total)} strong />
@@ -964,23 +974,38 @@ function LiquidityCard({ options, miscFees, price }: { options: OptionResult[]; 
     )
 }
 
-function OptionCard({ opt, ipa, price, selectable, selected, onSelect, blocked, preferredTenure }: {
-    opt: OptionResult; ipa: boolean; price: number
+function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, blocked, preferredTenure, adjustedLoan, onAdjustLoan, rule }: {
+    opt: OptionResult; ipaBank?: string; price: number
     selectable?: boolean; selected?: boolean; onSelect?: () => void
     blocked?: boolean; preferredTenure?: number
+    adjustedLoan?: number
+    onAdjustLoan?: (v: number | undefined) => void
+    rule?: ServicingRule
 }) {
+    const [rawLoan, setRawLoan] = useState('')
+    const isIpa = opt.source === 'ipa'
     const isOpt1 = opt.key === '1'
     const ltvPctLabel = `${Math.round(opt.ltvPct * 100)}%`
-    const minCashPctNum = Math.round(opt.minCashPct * 100)   // always a clean matrix value (5, 10, 25…)
-    const actualLtvPctNum = price > 0
-        ? Math.round(opt.finalLoan / price * 1000) / 10       // 1 decimal precision
-        : Math.round(opt.ltvPct * 100)
-    // Derived so the three percentages always sum to exactly 100% — no rounding drift.
-    const balancePctNum = Math.round((100 - minCashPctNum - actualLtvPctNum) * 10) / 10
+    const minCashPctNum = Math.round(opt.minCashPct * 100)
     const fmtPct = (n: number) => `${n % 1 === 0 ? n : n.toFixed(1)}%`
     const minCashPctLabel = fmtPct(minCashPctNum)
+
+    // Effective loan: use the user's adjustment (clamped to [finalLoan, ltvCeiling]) or fall back to computed
+    const effectiveLoan = adjustedLoan ?? opt.finalLoan
+    const isAdjusted = adjustedLoan != null && Math.round(adjustedLoan) !== Math.round(opt.finalLoan)
+    const actualLtvPctNum = price > 0
+        ? Math.round(effectiveLoan / price * 1000) / 10
+        : Math.round(opt.ltvPct * 100)
+    const balancePctNum = Math.round((100 - minCashPctNum - actualLtvPctNum) * 10) / 10
     const actualLtvPctLabel = fmtPct(actualLtvPctNum)
     const balancePctLabel = fmtPct(balancePctNum)
+    const effectiveBalance = price > 0 ? Math.max(0, price - effectiveLoan - opt.minCashDown) : opt.cashCpfDown
+
+    // Pledge/show for remaining shortfall from effectiveLoan up to the full LTV ceiling
+    const remainingShortfall = opt.ltvCeiling - effectiveLoan
+    const effectivePledge: PledgeData | null = remainingShortfall > 1 && rule
+        ? computePledge(remainingShortfall, opt.tenure, rule)
+        : (isAdjusted ? null : opt.pledge)
 
     const borderClass = blocked
         ? 'border-slate-200'
@@ -994,18 +1019,28 @@ function OptionCard({ opt, ipa, price, selectable, selected, onSelect, blocked, 
             onClick={selectable && !blocked ? onSelect : undefined}
         >
             {/* Header */}
-            <div className={`px-5 py-4 border-b flex items-center justify-between ${blocked ? 'bg-slate-100 border-slate-200'
+            <div className={`px-5 py-4 border-b flex items-center justify-between gap-2 ${blocked ? 'bg-slate-100 border-slate-200'
                 : isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'
                 }`}>
-                <p className={`text-sm font-bold ${blocked ? 'text-slate-400' : 'text-[#052d4a]'}`}>
-                    Option {opt.key} (Loan-To-Valuation {ltvPctLabel})
-                </p>
+                <div className="flex items-center gap-2 min-w-0">
+                    <p className={`text-sm font-bold shrink-0 ${blocked ? 'text-slate-400' : 'text-[#052d4a]'}`}>
+                        Option {opt.key} (Loan-To-Valuation {ltvPctLabel})
+                    </p>
+                    {isIpa
+                        ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30 shrink-0">
+                            IPA{ipaBank ? ` · ${ipaBank}` : ''}
+                          </span>
+                        : <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
+                            Est. from TDSR/MSR
+                          </span>
+                    }
+                </div>
                 {selectable && (
                     blocked
-                        ? <span className="text-[11px] font-semibold text-amber-600 flex items-center gap-1.5"><XCircle size={13} /> Preferred {preferredTenure} yrs exceeds {opt.maxTenure} yr max</span>
+                        ? <span className="text-[11px] font-semibold text-amber-600 flex items-center gap-1.5 shrink-0"><XCircle size={13} /> Preferred {preferredTenure} yrs exceeds {opt.maxTenure} yr max</span>
                         : selected
-                            ? <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1"><CheckCircle2 size={13} /> Selected for liquidity</span>
-                            : <span className="text-[11px] text-slate-400">Click to view liquidity</span>
+                            ? <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 shrink-0"><CheckCircle2 size={13} /> Selected for liquidity</span>
+                            : <span className="text-[11px] text-slate-400 shrink-0">Click to view liquidity</span>
                 )}
             </div>
 
@@ -1036,7 +1071,7 @@ function OptionCard({ opt, ipa, price, selectable, selected, onSelect, blocked, 
                         <span className="text-slate-500">Tenure</span>
                         <span className="font-semibold text-slate-700">{opt.tenure} yrs</span>
                     </div>
-                    {!ipa && opt.incomeEligibility != null && (
+                    {!isIpa && opt.incomeEligibility != null && (
                         <div className="flex items-center justify-between gap-3 text-sm">
                             <span className="text-slate-500">Estimated Loan Eligibility</span>
                             <span className="font-semibold text-slate-700">{money(opt.incomeEligibility)}</span>
@@ -1058,37 +1093,69 @@ function OptionCard({ opt, ipa, price, selectable, selected, onSelect, blocked, 
                         </span>
                         <span className="font-semibold text-[#03a9e7]">{money(opt.minCashDown)}</span>
                     </div>
-                    {/* LTV — slightly bigger, no box */}
+                    {/* LTV — editable loan amount */}
                     <div className="flex items-center justify-between gap-3">
                         <span className="text-[15px] font-semibold text-slate-700">
                             Loan-To-Valuation <span className="text-[#03a9e7]">({actualLtvPctLabel})</span>
                         </span>
-                        <span className="text-[15px] font-bold text-[#03a9e7]">{money(opt.finalLoan)}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[15px] font-bold text-[#03a9e7]">$</span>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                value={rawLoan !== '' ? rawLoan : Math.round(effectiveLoan).toLocaleString()}
+                                onFocus={e => { setRawLoan(String(Math.round(effectiveLoan))); e.currentTarget.select() }}
+                                onChange={e => setRawLoan(e.target.value.replace(/[^\d,]/g, ''))}
+                                onBlur={() => {
+                                    const parsed = parseInt(rawLoan.replace(/,/g, ''), 10)
+                                    setRawLoan('')
+                                    if (!isNaN(parsed)) {
+                                        const clamped = Math.max(Math.round(opt.finalLoan), Math.min(Math.round(opt.ltvCeiling), parsed))
+                                        onAdjustLoan?.(clamped === Math.round(opt.finalLoan) ? undefined : clamped)
+                                    }
+                                }}
+                                className="w-32 text-right text-[15px] font-bold text-[#03a9e7] bg-transparent border-b-2 border-[#03a9e7]/30 focus:border-[#03a9e7] outline-none transition-colors disabled:opacity-50"
+                                disabled={blocked}
+                                title={`Adjust loan (${money(opt.finalLoan)} – ${money(opt.ltvCeiling)})`}
+                            />
+                            {isAdjusted && (
+                                <button type="button"
+                                    onClick={() => onAdjustLoan?.(undefined)}
+                                    className="text-[10px] text-slate-400 hover:text-slate-700 underline leading-none shrink-0">
+                                    reset
+                                </button>
+                            )}
+                        </div>
                     </div>
+                    {isAdjusted && (
+                        <p className="text-[11px] text-slate-400 text-right -mt-1">
+                            Base: {money(opt.finalLoan)} · Max LTV: {money(opt.ltvCeiling)}
+                        </p>
+                    )}
                     <div className="flex items-center justify-between gap-3 text-sm">
                         <span className="text-slate-500">
                             Balance Cash / CPF <span className="text-[#03a9e7] font-semibold">({balancePctLabel})</span>
                         </span>
-                        <span className="font-semibold text-[#03a9e7]">{money(opt.cashCpfDown)}</span>
+                        <span className="font-semibold text-[#03a9e7]">{money(effectiveBalance)}</span>
                     </div>
                 </div>
 
-                {/* Pledge shortfall */}
-                {opt.pledge && (
+                {/* Pledge shortfall — updates when loan is adjusted */}
+                {effectivePledge && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-1.5">
                         <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
-                            <AlertTriangle size={12} className="shrink-0" /> Loan shortfall: {money(opt.pledge.shortfall)}
+                            <AlertTriangle size={12} className="shrink-0" /> To reach full {ltvPctLabel} ({money(opt.ltvCeiling)}): shortfall {money(effectivePledge.shortfall)}
                         </p>
                         <p className="text-xs text-amber-700 leading-relaxed">
-                            To reach the full {ltvPctLabel}, either{' '}
-                            <span className="font-semibold">pledge {money(opt.pledge.pledgeFund)}</span> (locked 4 yrs){' '}
-                            or <span className="font-semibold">show {money(opt.pledge.showFund)}</span> in funds.
+                            Either{' '}
+                            <span className="font-semibold">pledge {money(effectivePledge.pledgeFund)}</span> (locked 4 yrs){' '}
+                            or <span className="font-semibold">show {money(effectivePledge.showFund)}</span> in funds.
                         </p>
                     </div>
                 )}
 
                 {/* Income fully qualifies */}
-                {!opt.pledge && !ipa && opt.incomeEligibility != null && opt.incomeEligibility >= opt.ltvCeiling && (
+                {!effectivePledge && !isIpa && opt.incomeEligibility != null && opt.incomeEligibility >= opt.ltvCeiling && (
                     <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-start gap-2">
                         <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-emerald-500" />
                         Income qualifies for the full {ltvPctLabel} loan — no pledge needed.
