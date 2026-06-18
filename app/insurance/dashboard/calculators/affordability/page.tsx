@@ -177,7 +177,8 @@ export default function AffordabilityPage() {
 
     const loan    = parseFloat(loanAmount.replace(/,/g, '')) || 0
     const stress  = parseFloat(stressRate) || 4
-    const ten     = Math.min(Math.max(parseInt(tenure) || 0, 0), 35)
+    const tenRaw  = parseInt(tenure)
+    const ten     = isNaN(tenRaw) ? 0 : Math.min(Math.max(tenRaw, 5), 35)
     const liab    = parseFloat(liability.replace(/,/g, '')) || 0
     const hasLiab = liab > 0
 
@@ -206,11 +207,11 @@ export default function AffordabilityPage() {
                 <p className="page-subtitle mt-1">Find the minimum income needed to qualify for a given loan.</p>
             </div>
 
-            {/* ── Top: inputs + key output ── */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+            {/* ── Top: inputs ── */}
+            <div>
 
                 {/* Inputs */}
-                <div className="lg:col-span-2 card overflow-hidden">
+                <div className="card overflow-hidden">
                     <div className="px-6 py-4 border-b border-slate-100">
                         <h3 className="section-label mb-0">Loan Details</h3>
                     </div>
@@ -260,9 +261,14 @@ export default function AffordabilityPage() {
                                     type="number"
                                     value={tenure}
                                     onChange={e => setTenure(e.target.value)}
+                                    onBlur={e => {
+                                        const v = parseInt(e.target.value)
+                                        if (isNaN(v) || v < 5) setTenure('5')
+                                        else if (v > 35) setTenure('35')
+                                    }}
                                     className={inp}
                                     placeholder="30"
-                                    min={1}
+                                    min={5}
                                     max={35}
                                 />
                             </div>
@@ -288,56 +294,6 @@ export default function AffordabilityPage() {
                     </div>
                 </div>
 
-                {/* Key output */}
-                <div className="flex flex-col gap-3">
-                    {/* Stress-test installment */}
-                    <div
-                        className="card overflow-hidden"
-                        style={{ background: 'linear-gradient(135deg, #052d4a 0%, #0a4a7a 100%)', border: 'none' }}
-                    >
-                        <div className="p-5">
-                            <p className="text-[11px] font-semibold text-sky-300 uppercase tracking-wider">
-                                Monthly Instalment
-                            </p>
-                            <p className="text-3xl font-black text-white mt-1.5 tracking-tight">
-                                {result ? `$${fmt(result.M, 2)}` : '—'}
-                            </p>
-                            <p className="text-xs text-sky-200/70 mt-2">
-                                At {stress}% stress-test rate · {ten} yrs
-                            </p>
-                        </div>
-                    </div>
-
-                    {/* Min income quick-view — private employed */}
-                    {result && (
-                        <div className="card p-4">
-                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                                Min. Income (Private, Employed)
-                            </p>
-                            <p className="text-xl font-bold text-[#052d4a] mt-0.5">
-                                ${fmt(result.private.employed.monthly)}<span className="text-sm font-medium text-slate-400">/mth</span>
-                            </p>
-                            <p className="text-xs text-slate-400 mt-1">
-                                ${fmt(result.private.employed.annual)}/yr
-                            </p>
-                        </div>
-                    )}
-
-                    {/* Min income — HDB employed */}
-                    {result && (
-                        <div className="card p-4">
-                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                                Min. Income (HDB/EC, Employed)
-                            </p>
-                            <p className="text-xl font-bold text-emerald-600 mt-0.5">
-                                ${fmt(result.hdb.employed.monthly)}<span className="text-sm font-medium text-slate-400">/mth</span>
-                            </p>
-                            <p className="text-xs text-slate-400 mt-1">
-                                ${fmt(result.hdb.employed.annual)}/yr
-                            </p>
-                        </div>
-                    )}
-                </div>
             </div>
 
             {/* ── Output tables ── */}
@@ -345,20 +301,27 @@ export default function AffordabilityPage() {
                 <>
                     <IncomeTable
                         title="Private Property (55% TDSR)"
-                        subtitle="TDSR is the only constraint — total debt ≤ 55% of gross income"
+                        subtitle="Borrower will only need to pass TDSR."
                         accentColor="#03a9e7"
                         accentBg="#f0f9ff"
                         data={result.private}
                         hasLiability={hasLiab}
                     />
-                    <IncomeTable
-                        title="HDB / EC Property (30% MSR)"
-                        subtitle="Both MSR and TDSR apply — binding constraint is the stricter one"
-                        accentColor="#059669"
-                        accentBg="#f0fdf4"
-                        data={result.hdb}
-                        hasLiability={hasLiab}
-                    />
+                    <div className={`transition-opacity ${ten > 30 ? 'opacity-40 pointer-events-none' : ''}`}>
+                        {ten > 30 && (
+                            <p className="text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-3">
+                                HDB / EC loans cannot exceed 30 years — results below are not applicable at this tenure.
+                            </p>
+                        )}
+                        <IncomeTable
+                            title="HDB / EC Property (30% MSR)"
+                            subtitle="Borrower will need to pass both TDSR and MSR."
+                            accentColor="#059669"
+                            accentBg="#f0fdf4"
+                            data={result.hdb}
+                            hasLiability={hasLiab}
+                        />
+                    </div>
                 </>
             )}
         </div>

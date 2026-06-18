@@ -5,10 +5,21 @@ import Link from 'next/link'
 import { ArrowLeft, Plus, Trash2, Calculator, Lock } from 'lucide-react'
 import { monthlyInstallment } from '@/lib/insurance/loanCalc'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
-import { RATE_REFERENCES, type RateScheduleEntry } from '@/lib/types/rates'
+import { type RateScheduleEntry } from '@/lib/types/rates'
+
+// FD Rate replaced with Custom: agent enters the bank's own base rate + spread
+const AMORT_RATE_REFS = ['3M SORA', '1M SORA', 'Custom'] as const
 import type { SoraRates } from '@/lib/insurance/sora'
 
 // ── Amortization engine ───────────────────────────────────────────────────────
+
+function resolveEntry(entry: RateScheduleEntry, sora: SoraRates | null): number | null {
+    if (entry.type === 'floating' && (entry.reference ?? '').toLowerCase() === 'custom') {
+        if (entry.rate == null) return null
+        return entry.rate + (entry.spread ?? 0)
+    }
+    return effectiveRate(entry, sora).rate ?? null
+}
 
 function getEffectiveRate(
     year: number,
@@ -16,9 +27,9 @@ function getEffectiveRate(
     sora: SoraRates | null
 ): number | null {
     const yearEntry = schedule.find(e => e.year === year)
-    if (yearEntry) return effectiveRate(yearEntry, sora).rate ?? null
+    if (yearEntry) return resolveEntry(yearEntry, sora)
     const thereafter = schedule.find(e => e.thereafter)
-    if (thereafter) return effectiveRate(thereafter, sora).rate ?? null
+    if (thereafter) return resolveEntry(thereafter, sora)
     return null
 }
 
@@ -118,8 +129,10 @@ export default function AmortizationPage() {
     }, [])
 
     const loan = parseFloat(loanAmount.replace(/,/g, '')) || 0
-    const ten = Math.min(Math.max(parseInt(tenure) || 0, 0), 35)
-    const compareTen = Math.min(Math.max(parseInt(compareTenure) || 0, 0), 35)
+    const tenRaw = parseInt(tenure)
+    const ten = isNaN(tenRaw) ? 0 : Math.min(Math.max(tenRaw, 5), 35)
+    const compareTenRaw = parseInt(compareTenure)
+    const compareTen = isNaN(compareTenRaw) ? 0 : Math.min(Math.max(compareTenRaw, 5), 35)
 
     const rows = useMemo(
         () => computeAmortization(loan, ten, schedule, sora),
@@ -243,9 +256,14 @@ export default function AmortizationPage() {
                                         type="number"
                                         value={tenure}
                                         onChange={e => setTenure(e.target.value)}
+                                        onBlur={e => {
+                                            const v = parseInt(e.target.value)
+                                            if (isNaN(v) || v < 5) setTenure('5')
+                                            else if (v > 35) setTenure('35')
+                                        }}
                                         className={`${inp} w-full`}
                                         placeholder="25"
-                                        min={1}
+                                        min={5}
                                         max={35}
                                     />
                                 </div>
@@ -257,9 +275,16 @@ export default function AmortizationPage() {
                                         type="number"
                                         value={compareTenure}
                                         onChange={e => setCompareTenure(e.target.value)}
+                                        onBlur={e => {
+                                            const v = parseInt(e.target.value)
+                                            if (!isNaN(v)) {
+                                                if (v < 5) setCompareTenure('5')
+                                                else if (v > 35) setCompareTenure('35')
+                                            }
+                                        }}
                                         className={`${inp} w-full border-dashed`}
                                         placeholder="15"
-                                        min={1}
+                                        min={5}
                                         max={35}
                                     />
                                 </div>
@@ -290,7 +315,7 @@ export default function AmortizationPage() {
                                         onChange={patch => updateRow(schedule.indexOf(entry), patch)}
                                         onRemove={() => removeRow(schedule.indexOf(entry))}
                                         canRemove={schedule.length > 1}
-                                        soraRefs={RATE_REFERENCES}
+                                        soraRefs={AMORT_RATE_REFS}
                                         refId={`refs-${idx}`}
                                         inp={inp}
                                     />
@@ -315,7 +340,7 @@ export default function AmortizationPage() {
                                         onChange={patch => updateRow(schedule.indexOf(entry), patch)}
                                         onRemove={() => removeRow(schedule.indexOf(entry))}
                                         canRemove={schedule.length > 1}
-                                        soraRefs={RATE_REFERENCES}
+                                        soraRefs={AMORT_RATE_REFS}
                                         refId={`refs-thereafter-${idx}`}
                                         inp={inp}
                                     />
@@ -541,6 +566,7 @@ export default function AmortizationPage() {
                                 {rows.map((row, i) => {
                                     const hasData = row.instalment != null
                                     const isLockinRow = row.year <= lockInYears
+                                    const isLastLockin = row.year === lockInYears && lockInYears > 0
                                     const isFirstOol = row.year === lockInYears + 1 && lockInYears > 0
 
                                     return [
@@ -603,8 +629,16 @@ export default function AmortizationPage() {
                                             <td className="px-4 py-3 text-right text-slate-600">
                                                 {hasData ? `$${fmt(row.yearInterest)}` : <span className="text-slate-200 text-xs">—</span>}
                                             </td>
-                                            <td className="px-4 py-3 text-right font-semibold text-slate-700">
-                                                {hasData ? `$${fmt(row.balance)}` : <span className="text-slate-200 text-xs">—</span>}
+                                            <td className="px-4 py-3 text-right">
+                                                {hasData ? (
+                                                    isLastLockin ? (
+                                                        <span className="inline-block font-black text-[#052d4a] bg-sky-100 border border-sky-200 px-2.5 py-0.5 rounded-full text-sm">
+                                                            ${fmt(row.balance)}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="font-semibold text-slate-700">${fmt(row.balance)}</span>
+                                                    )
+                                                ) : <span className="text-slate-200 text-xs">—</span>}
                                             </td>
                                         </tr>,
                                     ]
@@ -698,10 +732,29 @@ function RateRow({
                     <input
                         list={refId}
                         value={entry.reference ?? ''}
-                        onChange={e => onChange({ reference: e.target.value })}
+                        onChange={e => {
+                            const ref = e.target.value
+                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
+                        }}
                         placeholder="3M SORA"
                         className={`${inp} w-28`}
                     />
+                    <datalist id={refId}>
+                        {soraRefs.map(r => <option key={r} value={r} />)}
+                    </datalist>
+                    {entry.reference === 'Custom' && (
+                        <>
+                            <input
+                                type="number"
+                                step="0.01"
+                                value={entry.rate ?? ''}
+                                onChange={e => onChange({ rate: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                                placeholder="0.50"
+                                className={`${inp} w-20`}
+                            />
+                            <span className="text-xs font-medium text-slate-400">%</span>
+                        </>
+                    )}
                     <span className="text-xs font-medium text-slate-400">+</span>
                     <input
                         type="number"
@@ -712,9 +765,6 @@ function RateRow({
                         className={`${inp} w-20`}
                     />
                     <span className="text-xs font-medium text-slate-400">%</span>
-                    <datalist id={refId}>
-                        {soraRefs.map(r => <option key={r} value={r} />)}
-                    </datalist>
                 </div>
             )}
 

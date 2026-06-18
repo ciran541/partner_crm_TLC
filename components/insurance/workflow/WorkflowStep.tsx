@@ -238,8 +238,8 @@ export function CheckItem({ checked, onChange, label, hint }: CheckItemProps) {
     )
 }
 
-interface FieldInputProps { value?: string | number; onChange: (v: string) => void; placeholder?: string; type?: string; prefix?: string; suffix?: string; commas?: boolean }
-export function FieldInput({ value, onChange, placeholder, type = 'text', prefix, suffix, commas }: FieldInputProps) {
+interface FieldInputProps { value?: string | number; onChange: (v: string) => void; onBlur?: () => void; placeholder?: string; type?: string; prefix?: string; suffix?: string; commas?: boolean }
+export function FieldInput({ value, onChange, onBlur, placeholder, type = 'text', prefix, suffix, commas }: FieldInputProps) {
     const inputRef = useRef<HTMLInputElement>(null)
 
     let displayValue: string
@@ -276,6 +276,7 @@ export function FieldInput({ value, onChange, placeholder, type = 'text', prefix
                 inputMode={commas ? 'numeric' : undefined}
                 value={displayValue}
                 onChange={handleChange}
+                onBlur={onBlur}
                 placeholder={placeholder}
                 className={`w-full py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all ${prefix ? 'pl-7 pr-3' : suffix ? 'pl-3 pr-8' : 'px-3'}`}
             />

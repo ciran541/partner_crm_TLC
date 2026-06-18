@@ -342,7 +342,11 @@ function computeOption(
 ): OptionResult {
     const referenceRate = inputs.referenceRatePct || DEFAULT_REFERENCE_RATE
     const ltvCeiling = ctx.price * option.ltvPct
-    const maxTenure = optionTenure(option, ctx.hdbClass, ctx.age)
+    const ageTenure = optionTenure(option, ctx.hdbClass, ctx.age)
+    // IPA path: bank-approved tenure is the ceiling, not the age-cap-derived max.
+    const maxTenure = inputs.ipaDone && inputs.ipa?.tenure
+        ? Math.min(ageTenure, inputs.ipa.tenure)
+        : ageTenure
 
     let tenure: number
     let incomeEligibility: number | null

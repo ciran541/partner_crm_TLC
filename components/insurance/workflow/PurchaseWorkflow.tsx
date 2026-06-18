@@ -351,7 +351,12 @@ export default function PurchaseWorkflowPanel({
                                 </Question>
                                 <Question label="Tenure (years)">
                                     <FieldInput type="number" value={data.ipa?.tenure ?? ''}
-                                        onChange={v => update({ ipa: { ...data.ipa, tenure: num(v) } })} />
+                                        placeholder="5–35"
+                                        onChange={v => update({ ipa: { ...data.ipa, tenure: num(v) } })}
+                                        onBlur={() => {
+                                            const n = data.ipa?.tenure
+                                            if (n != null) update({ ipa: { ...data.ipa, tenure: Math.min(35, Math.max(5, n)) } })
+                                        }} />
                                 </Question>
                             </div>
                             <Question label="Tenure capped at age">
@@ -371,15 +376,11 @@ export default function PurchaseWorkflowPanel({
                                 const impliedIwaa = data.ipa.age_cap - data.ipa.tenure
                                 const isHdb = meta?.hdbClass ?? false
                                 const altTenure = Math.max(0, Math.min(altOpt.ageCap - impliedIwaa, isHdb ? altOpt.tenureHdb : altOpt.tenureCondoEC))
-                                const altLtvCeiling = data.property_price * altOpt.ltvPct
                                 const altLtvLabel = `${Math.round(altOpt.ltvPct * 100)}%`
                                 // TDSR reverse-engineering: the IPA loan + tenure at 4% stress test tells us
                                 // exactly what monthly capacity the bank accepted. Apply that to Option 2's tenure.
                                 const stressPayment = monthlyInstallment(data.ipa.amount, STRESS_TEST_RATE * 100, data.ipa.tenure)
                                 const altMaxFromTdsr = maxLoanFromPayment(stressPayment, STRESS_TEST_RATE * 100, altTenure)
-                                // Show income eligibility (TDSR-derived), not capped by LTV.
-                                // LTV ceiling is shown as a note — it's a property constraint, not an income constraint.
-                                const ltvBinds = altMaxFromTdsr > altLtvCeiling
                                 if (altTenure <= 0 || altMaxFromTdsr <= 0) return null
                                 return (
                                     <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-1.5">
@@ -390,11 +391,6 @@ export default function PurchaseWorkflowPanel({
                                             Est. Loan Eligibility:{' '}
                                             <span className="font-semibold">{money(altMaxFromTdsr)}</span>{' '}
                                             over <span className="font-semibold">{altTenure} years</span>
-                                        </p>
-                                        <p className="text-[11px] text-slate-500">
-                                            {ltvBinds
-                                                ? `${altLtvLabel} LTV ceiling at this property: ${money(altLtvCeiling)} — the lower applies at time of application.`
-                                                : `Within TDSR at 4% stress test — LTV ceiling is ${money(altLtvCeiling)} (${altLtvLabel}).`}
                                         </p>
                                     </div>
                                 )
@@ -677,11 +673,18 @@ export default function PurchaseWorkflowPanel({
                         const rate = (pkg?.avg_rate_lockin_pct as number | undefined) ?? data.reference_rate ?? DEFAULT_REFERENCE_RATE
                         const t1 = data.preferred_tenure ?? selectedOpt.maxTenure
                         const t2 = preferredTenure2 ?? selectedOpt.maxTenure
-                        const loan = selectedOpt.finalLoan
+                        const adjLoan = adjustedLoans[selectedOpt.key]
+                        const fieldPlaceholder = selectedOpt.source === 'ipa' ? selectedOpt.ltvCeiling : selectedOpt.finalLoan
+                        const loan = adjLoan ?? fieldPlaceholder
+                        const lockinYears = pkg?.lockin_years as number | undefined
                         const m1 = monthlyInstallment(loan, rate, t1)
                         const m2 = monthlyInstallment(loan, rate, t2)
-                        const i1 = Math.max(0, m1 * t1 * 12 - loan)
-                        const i2 = Math.max(0, m2 * t2 * 12 - loan)
+                        const i1 = lockinYears != null
+                            ? interestOverPeriod(loan, rate, t1, lockinYears)
+                            : Math.max(0, m1 * t1 * 12 - loan)
+                        const i2 = lockinYears != null
+                            ? interestOverPeriod(loan, rate, t2, lockinYears)
+                            : Math.max(0, m2 * t2 * 12 - loan)
                         const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
                         return (
                             <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
@@ -767,7 +770,9 @@ export default function PurchaseWorkflowPanel({
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-3">
-                                        <div className="px-3 py-2.5 text-slate-500">Total Interest</div>
+                                        <div className="px-3 py-2.5 text-slate-500">
+                                            {lockinYears != null ? `Interest (${lockinYears}-yr lock-in)` : 'Total Interest'}
+                                        </div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">{money(i1)}</div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
                                             {money(i2)}
@@ -835,6 +840,17 @@ export default function PurchaseWorkflowPanel({
 }
 
 // ─── OTP date fields per property type ────────────────────────────────────────
+/** Interest paid over the first `periodYears` of a loan (for lock-in cost display). */
+function interestOverPeriod(loan: number, annualRatePct: number, tenureYears: number, periodYears: number): number {
+    if (loan <= 0 || tenureYears <= 0 || annualRatePct <= 0) return 0
+    const m = monthlyInstallment(loan, annualRatePct, tenureYears)
+    const k = Math.min(Math.round(periodYears), Math.round(tenureYears)) * 12
+    const n = Math.round(tenureYears) * 12
+    const r = annualRatePct / 100 / 12
+    const principalPaid = loan * (Math.pow(1 + r, k) - 1) / (Math.pow(1 + r, n) - 1)
+    return Math.max(0, m * k - principalPaid)
+}
+
 const RESALE_TYPES: PurchasePropertyType[] = ['resale_condo', 'resale_landed', 'resale_hdb']
 function isResale(type?: PurchasePropertyType | string): boolean {
     return RESALE_TYPES.includes(type as PurchasePropertyType)
@@ -958,8 +974,8 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
                             {/* S1 — fixed: the base loan from IPA / income (no pledging) */}
                             <div className="space-y-1.5">
                                 <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S1 — Without pledging / showing</p>
-                                <p className="text-[11px] text-slate-500 pb-0.5">
-                                    No Pledging/Showing to get {money(opt.finalLoan)} loan ({fmtFrac(price > 0 ? opt.finalLoan / price : opt.ltvPct)})
+                                <p className="text-sm font-semibold text-[#052d4a] pb-0.5">
+                                    No Pledging/Showing to get {money(opt.finalLoan)} loan (<span className="text-[#03a9e7]">{fmtFrac(price > 0 ? opt.finalLoan / price : opt.ltvPct)}</span>)
                                 </p>
                                 <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
                                 <Row label={<>Balance Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(opt.cashCpfPct)})</span></>} value={money(opt.cashCpfDown)} />
@@ -975,7 +991,7 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
                                     <div className="border-t border-slate-200 pt-3 space-y-1.5">
                                         <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S2 — With pledging</p>
                                         <Row
-                                            label={<>Pledging of Funds to get {money(s2s3Target)} Loan ({fmtFrac(s2s3LtvPct)})</>}
+                                            label={<>Pledging of Funds to get {money(s2s3Target)} Loan (<span className="text-[#03a9e7]">{fmtFrac(s2s3LtvPct)}</span>)</>}
                                             value={money(s2s3Pledge.pledgeFund)}
                                             highlight
                                         />
@@ -991,7 +1007,7 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
                                     <div className="border-t border-slate-200 pt-3 space-y-1.5">
                                         <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S3 — With show funds</p>
                                         <Row
-                                            label={<>Showing of Funds to get {money(s2s3Target)} Loan ({fmtFrac(s2s3LtvPct)})</>}
+                                            label={<>Showing of Funds to get {money(s2s3Target)} Loan (<span className="text-[#03a9e7]">{fmtFrac(s2s3LtvPct)}</span>)</>}
                                             value={money(s2s3Pledge.showFund)}
                                             highlight
                                         />
