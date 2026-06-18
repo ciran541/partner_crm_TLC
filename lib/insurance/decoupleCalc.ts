@@ -204,6 +204,7 @@ export interface DecoupleComputation {
     refiTenureMin:                    number
     refiTenureMax:                    number
     effectiveRefiTenure:              number
+    equityLoanCurrentTenureMax:       number   // max allowed tenure for existing equity loan (75 − age)
     effectiveCurrentEquityLoanTenure: number   // tenure used for existing equity loan TDSR stress
     homeLoanStressInstallment:        number   // home loan stress at 4%
     equityLoanCurrentStressInstallment: number // existing equity loan stress at 4%
@@ -227,6 +228,13 @@ export interface DecoupleComputation {
     purchaseTdsrPass: boolean
     refiPledge:       DecouplePledge | null
     purchasePledge:   DecouplePledge | null
+
+    // Per-loan separate pass/fail (home loan vs full TDSR; equity loan vs balance after HL)
+    homeLoanTdsrPass:          boolean
+    balanceTdsrAfterHomeLoan:  number
+    equityLoanCurrentTdsrPass: boolean
+    homeLoanPledge:            DecouplePledge | null
+    equityLoanCurrentPledge:   DecouplePledge | null
 
     // Equity loan TDSR check (only active when equityLoanAmount > 0 and scenario ≠ S4)
     equityTenureMin:         number
@@ -319,7 +327,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
 
     // ── Tenure — refi path (S1, S3) ──────────────────────────────────────────
     const refiMaxByAge  = wa != null ? Math.max(0, AGE_CAP_REFI - wa) : cap
-    const refiMaxByProp = Math.max(0, cap - yearsOwned)
+    const refiMaxByProp = Math.max(0, cap - yearsOwned - 1)
     const refiTenureMax = Math.max(MIN_TENURE, Math.min(refiMaxByAge, refiMaxByProp))
     const refiTenureMin = MIN_TENURE
     const effectiveRefiTenure = Math.max(MIN_TENURE, Math.min(
@@ -328,8 +336,8 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     ))
 
     // ── Tenure — purchase path (S2, S3) ──────────────────────────────────────
-    const purchaseMaxByAge = wa != null ? Math.max(0, AGE_CAP_PURCHASE - wa) : MAX_PURCHASE_TENURE
-    const purchaseTenureMax = Math.max(MIN_TENURE, Math.min(purchaseMaxByAge, MAX_PURCHASE_TENURE))
+    const purchaseMaxByAge = wa != null ? Math.max(0, AGE_CAP_PURCHASE - wa) : cap
+    const purchaseTenureMax = Math.max(MIN_TENURE, purchaseMaxByAge)
     const purchaseTenureMin = MIN_TENURE
     const effectivePurchaseTenure = Math.max(MIN_TENURE, Math.min(
         inputs.preferredTenurePurchase ?? purchaseTenureMax,
@@ -338,7 +346,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
 
     // ── TDSR calculations (scenario-aware) ───────────────────────────────────
     // Existing equity loan has its own remaining tenure — stress computed separately.
-    const equityLoanCurrentTenureMax = refiTenureMax
+    const equityLoanCurrentTenureMax = Math.max(MIN_TENURE, refiMaxByAge)
     const effectiveCurrentEquityLoanTenure = equityOutstanding > 0
         ? Math.max(MIN_TENURE, Math.min(inputs.currentTenureEquityLoan ?? equityLoanCurrentTenureMax, equityLoanCurrentTenureMax))
         : 0
@@ -411,6 +419,21 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
           )
         : null
 
+    // Separate pass/fail: HL vs full TDSR; existing EL vs balance after HL
+    const homeLoanTdsrPass = !isRefi || homeLoanStressInstallment <= availableTdsr
+    const balanceTdsrAfterHomeLoan = Math.max(0, availableTdsr - homeLoanStressInstallment)
+    const equityLoanCurrentTdsrPass = !isRefi || equityOutstanding <= 0
+        || equityLoanCurrentStressInstallment <= balanceTdsrAfterHomeLoan
+    const equityLoanCurrentEligibility = isRefi && equityOutstanding > 0 && balanceTdsrAfterHomeLoan > 0
+        ? maxLoanFromPayment(balanceTdsrAfterHomeLoan, STRESS_TEST_RATE * 100, effectiveCurrentEquityLoanTenure)
+        : 0
+    const homeLoanPledge = isRefi && !homeLoanTdsrPass
+        ? computePledge(homeLoan * buyerShareFrac, refiLoanEligibility, availableTdsr, effectiveRefiTenure)
+        : null
+    const equityLoanCurrentPledge = isRefi && equityOutstanding > 0 && !equityLoanCurrentTdsrPass
+        ? computePledge(equityOutstanding * buyerShareFrac, equityLoanCurrentEligibility, balanceTdsrAfterHomeLoan, effectiveCurrentEquityLoanTenure)
+        : null
+
     // Monthly installments at reference rate (display)
     const monthlyInstallment    = isPurchase ? calcInstallment(bankLoan75, refRate, effectivePurchaseTenure) : 0
     const refiMonthlyInstallment = isRefi    ? calcInstallment(buyerLoanLiability, refRate, effectiveRefiTenure) : 0
@@ -474,7 +497,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
         ssd, ssdRatePct, ssdRateTable, sellerLegalFee, cashProceeds,
         weightedAge: wa, grossMonthlyIncome, existingMonthlyDebts, availableTdsr,
         refiTenureMin, refiTenureMax, effectiveRefiTenure,
-        effectiveCurrentEquityLoanTenure,
+        equityLoanCurrentTenureMax, effectiveCurrentEquityLoanTenure,
         homeLoanStressInstallment, equityLoanCurrentStressInstallment,
         refiStressInstallment, refiMonthlyInstallment, refiLoanEligibility,
         purchaseTenureMin, purchaseTenureMax, effectivePurchaseTenure,
@@ -482,6 +505,8 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
         balanceTdsrForPurchase, tdsrOutcome,
         refiTdsrPass, purchaseTdsrPass,
         refiPledge, purchasePledge,
+        homeLoanTdsrPass, balanceTdsrAfterHomeLoan, equityLoanCurrentTdsrPass,
+        homeLoanPledge, equityLoanCurrentPledge,
         equityTenureMin, equityTenureMax, effectiveEquityTenure,
         remainingTdsrAfterLoans,
         equityStressInstallment, equityLoanEligibility,

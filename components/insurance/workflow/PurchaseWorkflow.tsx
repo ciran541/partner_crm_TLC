@@ -392,6 +392,16 @@ export default function PurchaseWorkflowPanel({
                                             <span className="font-semibold">{money(altMaxFromTdsr)}</span>{' '}
                                             over <span className="font-semibold">{altTenure} years</span>
                                         </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setAdjustedLoans({})
+                                                update({ ipa: { ...data.ipa, age_cap: altOpt.ageCap as 65 | 75, tenure: altTenure, amount: Math.round(altMaxFromTdsr) } })
+                                            }}
+                                            className="mt-0.5 text-[11px] font-semibold text-[#03a9e7] hover:text-[#0290c5] underline underline-offset-2"
+                                        >
+                                            Use this instead →
+                                        </button>
                                     </div>
                                 )
                             })()}
@@ -532,12 +542,12 @@ export default function PurchaseWorkflowPanel({
                                 <div>
                                     <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Option 1 Tenure</p>
                                     <p className="text-base font-bold text-[#052d4a]">{computation.tenureRange.opt1} yrs</p>
-                                    <p className="text-[10px] text-slate-400">Max (age cap 65)</p>
+                                    <p className="text-[10px] text-slate-400">Max (age cap 65) · 75% LTV</p>
                                 </div>
                                 <div>
                                     <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Option 2 Tenure</p>
                                     <p className="text-base font-bold text-[#052d4a]">{computation.tenureRange.opt2} yrs</p>
-                                    <p className="text-[10px] text-slate-400">Max (age cap 75)</p>
+                                    <p className="text-[10px] text-slate-400">Max (age cap 75) · 55% LTV</p>
                                 </div>
                             </div>
                             {(() => {
@@ -567,9 +577,7 @@ export default function PurchaseWorkflowPanel({
                                                 }}
                                                 className="w-24 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
                                             />
-                                            <span className="text-xs text-slate-500">
-                                                yrs — default is longest ({maxT} yrs), results update live
-                                            </span>
+                                            <span className="text-xs text-slate-500">yrs</span>
                                         </div>
                                     </div>
                                 )
@@ -780,6 +788,7 @@ export default function PurchaseWorkflowPanel({
                                         </div>
                                     </div>
                                 </div>
+                                <Tip>A shorter tenure will result in a higher income requirement to pass TDSR.</Tip>
                             </Section>
                         )
                     })()}
@@ -1044,11 +1053,11 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
     const fmtPct = (n: number) => `${n % 1 === 0 ? n : n.toFixed(1)}%`
     const minCashPctLabel = fmtPct(minCashPctNum)
 
-    // Breakdown always reflects the actual approved/eligible loan, or whatever the agent typed.
-    // For IPA path the field placeholder shows the full LTV ceiling as the reachable target.
-    const effectiveLoan = adjustedLoan ?? opt.finalLoan
-    const isAdjusted = adjustedLoan != null && Math.round(adjustedLoan) !== Math.round(opt.finalLoan)
+    // Default breakdown to full LTV ceiling so client sees the best-case upfront.
+    // For IPA path the ceiling is the max loan (75%/55%); for income path it's the income-eligible loan.
     const fieldPlaceholder = opt.source === 'ipa' ? opt.ltvCeiling : opt.finalLoan
+    const effectiveLoan = adjustedLoan ?? fieldPlaceholder
+    const isAdjusted = adjustedLoan != null && Math.round(adjustedLoan) !== Math.round(fieldPlaceholder)
     const actualLtvPctNum = price > 0
         ? Math.round(effectiveLoan / price * 1000) / 10
         : Math.round(opt.ltvPct * 100)
@@ -1057,10 +1066,8 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
     const balancePctLabel = fmtPct(balancePctNum)
     const effectiveBalance = price > 0 ? Math.max(0, price - effectiveLoan - opt.minCashDown) : opt.cashCpfDown
 
-    // Pledge reference: whatever is in the "How much loan does the client require?" field,
-    // or its placeholder (LTV ceiling for IPA path, finalLoan for income path) when empty.
-    const pledgeRefLoan = adjustedLoan != null ? effectiveLoan : fieldPlaceholder
-    const bridgeAmount = Math.max(0, pledgeRefLoan - opt.finalLoan)
+    // Bridge from IPA-approved base to whatever is shown (field value or LTV ceiling default).
+    const bridgeAmount = Math.max(0, effectiveLoan - opt.finalLoan)
     const bridgePledge: PledgeData | null = bridgeAmount > 1 && rule
         ? computePledge(bridgeAmount, opt.tenure, rule)
         : null
@@ -1077,11 +1084,11 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
             onClick={selectable && !blocked ? onSelect : undefined}
         >
             {/* Header */}
-            <div className={`px-5 py-4 border-b flex items-center justify-between gap-2 ${blocked ? 'bg-slate-100 border-slate-200'
+            <div className={`px-5 py-4 border-b ${blocked ? 'flex flex-col items-start gap-1.5' : 'flex items-center justify-between gap-2'} ${blocked ? 'bg-slate-100 border-slate-200'
                 : isOpt1 ? 'bg-sky-50/70 border-[#03a9e7]/15' : 'bg-slate-50 border-slate-100'
                 }`}>
                 <div className="flex items-center gap-2 min-w-0">
-                    <p className={`text-sm font-bold shrink-0 ${blocked ? 'text-slate-400' : 'text-[#052d4a]'}`}>
+                    <p className={`text-sm font-bold ${blocked ? 'text-slate-400' : 'text-[#052d4a]'}`}>
                         Option {opt.key} (Loan-To-Valuation {ltvPctLabel})
                     </p>
                     {isIpa
@@ -1093,7 +1100,7 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                 </div>
                 {selectable && (
                     blocked
-                        ? <span className="text-[11px] font-semibold text-amber-600 flex items-center gap-1.5 shrink-0"><XCircle size={13} /> Preferred {preferredTenure} yrs exceeds {opt.maxTenure} yr max</span>
+                        ? <span className="text-[11px] font-semibold text-amber-600 flex items-center gap-1.5"><XCircle size={13} className="shrink-0" /> Preferred {preferredTenure} yrs exceeds {opt.maxTenure} yr max</span>
                         : selected
                             ? <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1 shrink-0"><CheckCircle2 size={13} /> Selected for liquidity</span>
                             : <span className="text-[11px] text-slate-400 shrink-0">Click to view liquidity</span>
@@ -1109,11 +1116,7 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                             Min <Blue>{minCashPctLabel}</Blue> cash downpayment
                         </PayStructureLine>
                         <PayStructureLine>
-                            Tenor is capped at age <Blue>{opt.ageCap}</Blue> and cannot exceed{' '}
-                            {opt.tenure < opt.maxTenure
-                                ? <><Blue>{opt.tenure} yrs</Blue> (preferred · max {opt.maxTenure} yrs)</>
-                                : <Blue>{opt.maxTenure} years</Blue>
-                            }
+                            Tenor is capped at age <Blue>{opt.ageCap}</Blue> and cannot exceed <Blue>{opt.maxTenure} years</Blue>
                         </PayStructureLine>
                         <PayStructureLine>
                             Loan is capped at <Blue>{ltvPctLabel}</Blue> of purchase price or valuation, whichever is <Blue>lower</Blue>
@@ -1175,14 +1178,19 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                                 inputMode="numeric"
                                 value={rawLoan !== '' ? rawLoan : isAdjusted ? Math.round(effectiveLoan).toLocaleString() : ''}
                                 placeholder={Math.round(fieldPlaceholder).toLocaleString()}
-                                onFocus={e => { setRawLoan(String(Math.round(effectiveLoan))); e.currentTarget.select() }}
+                                onFocus={e => {
+                                    const val = String(Math.round(effectiveLoan))
+                                    setRawLoan(val)
+                                    const el = e.currentTarget
+                                    requestAnimationFrame(() => el.select())
+                                }}
                                 onChange={e => setRawLoan(e.target.value.replace(/[^\d,]/g, ''))}
                                 onBlur={() => {
                                     const parsed = parseInt(rawLoan.replace(/,/g, ''), 10)
                                     setRawLoan('')
                                     if (!isNaN(parsed) && parsed >= 0) {
                                         const clamped = Math.min(Math.round(opt.ltvCeiling), parsed)
-                                        onAdjustLoan?.(clamped === Math.round(opt.finalLoan) ? undefined : clamped)
+                                        onAdjustLoan?.(clamped === Math.round(fieldPlaceholder) ? undefined : clamped)
                                     } else if (rawLoan === '') {
                                         onAdjustLoan?.(undefined)
                                     }
@@ -1203,14 +1211,14 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                         </p>
                     </div>
 
-                    {/* Pledge/show — always references pledgeRefLoan (the field value, or its placeholder when empty). */}
+                    {/* Pledge/show — always references effectiveLoan (field value or LTV ceiling default). */}
                     {bridgePledge ? (
                         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-1.5">
                             <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
                                 <AlertTriangle size={12} className="shrink-0" />
                                 {isAdjusted
                                     ? <>Shortfall from bank-approved {money(opt.finalLoan)}: {money(bridgeAmount)}</>
-                                    : <>At {ltvPctLabel} ({money(pledgeRefLoan)})</>
+                                    : <>At {ltvPctLabel} ({money(effectiveLoan)})</>
                                 }
                             </p>
                             {isAdjusted && effectiveLoan <= opt.finalLoan + 1 ? (
