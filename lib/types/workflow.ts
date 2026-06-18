@@ -123,6 +123,8 @@ export interface PurchaseWorkflow {
     married?: boolean          // co-owners are a married couple (affects ABSD for SC + PR/Foreigner)
     property_price?: number
     reference_rate?: number
+    reference_lockin_years?: number      // explicit lock-in years (overrides package value; used for interest calc)
+    manual_rate_schedule?: import('@/lib/types/rates').RateScheduleEntry[]  // agent-entered schedule when no package
     // Preferred rate type — feeds package suggestions (completed properties only).
     rate_preference?: 'fixed' | 'floating' | 'either'
     // Personalization signals for the Remarks engine.

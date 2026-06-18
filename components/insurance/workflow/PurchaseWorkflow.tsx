@@ -23,6 +23,8 @@ import {
 import { buildRemarks, nextActions, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
 import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchaseProposal'
 import { monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
+import { computeAmortization } from '@/lib/insurance/amortCalc'
+import { type RateScheduleEntry } from '@/lib/types/rates'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import Modal from '@/components/shared/Modal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
@@ -32,9 +34,12 @@ import PurchasePackages from './PurchasePackages'
 import PurchasePresentation from './PurchasePresentation'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save, FileText, Wallet, XCircle,
-    ArrowRight, ClipboardList, Copy, Printer, Circle,
+    ArrowRight, ClipboardList, Copy, Printer, Circle, Lock, Plus, Trash2,
     Presentation, MessageSquare, Users,
 } from 'lucide-react'
+
+const DEFAULT_RATE_SCHEDULE: RateScheduleEntry[] = [{ year: 1, type: 'fixed' }]
+const AMORT_RATE_REFS = ['3M SORA', '1M SORA', 'Custom'] as const
 
 interface Props {
     data: PurchaseWorkflow
@@ -67,6 +72,14 @@ export default function PurchaseWorkflowPanel({
     const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
     const [rawPrefTenure2, setRawPrefTenure2] = useState('')
     const [adjustedLoans, setAdjustedLoans] = useState<Record<string, number | undefined>>({})
+    const [soraForAmort, setSoraForAmort] = useState<SoraRates | null>(null)
+
+    useEffect(() => {
+        fetch('/api/insurance/rates')
+            .then(r => r.json())
+            .then(d => { if (d.sora) setSoraForAmort(d.sora) })
+            .catch(() => {})
+    }, [])
 
     const meta = propertyMeta(data.property_type)
     const computation = useMemo(() => computePurchase(inputsFromWorkflow(data)), [data])
@@ -157,6 +170,30 @@ export default function PurchaseWorkflowPanel({
         const set = new Set(actionsDone)
         if (set.has(a)) set.delete(a); else set.add(a)
         update({ next_actions_done: [...set] })
+    }
+
+    const updateScheduleRow = (idx: number, patch: Partial<RateScheduleEntry>) => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        update({ manual_rate_schedule: s.map((e, i) => i === idx ? { ...e, ...patch } : e) })
+    }
+    const addScheduleYear = () => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        const maxYear = Math.max(0, ...s.filter(e => e.year != null).map(e => e.year!))
+        const thereafterIdx = s.findIndex(e => e.thereafter)
+        const newEntry: RateScheduleEntry = { year: maxYear + 1, type: 'fixed' }
+        const next = thereafterIdx >= 0
+            ? [...s.slice(0, thereafterIdx), newEntry, ...s.slice(thereafterIdx)]
+            : [...s, newEntry]
+        update({ manual_rate_schedule: next })
+    }
+    const addScheduleThereafter = () => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        if (s.some(e => e.thereafter)) return
+        update({ manual_rate_schedule: [...s, { thereafter: true, type: 'fixed' }] })
+    }
+    const removeScheduleRow = (idx: number) => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        if (s.length > 1) update({ manual_rate_schedule: s.filter((_, i) => i !== idx) })
     }
 
     return (
@@ -293,8 +330,8 @@ export default function PurchaseWorkflowPanel({
                         </div>
                     ))}
 
-                    {/* Marriage question — only relevant for joint purchases; affects ABSD */}
-                    {borrowers.length > 1 && (
+                    {/* Marriage question — only relevant for joint (2); 3+ owners can't all be a married couple */}
+                    {borrowers.length === 2 && (
                         <Question label="Are the co-owners a married couple?">
                             <YesNo value={data.married} onChange={v => update({ married: v })} />
                             {data.married !== undefined && (() => {
@@ -674,41 +711,171 @@ export default function PurchaseWorkflowPanel({
                         />
                     )}
 
-                    {/* Monthly Instalment — tenure comparison tool */}
+                    {/* Monthly Instalment — embedded amortisation calculator */}
                     {(() => {
                         const selectedOpt = computation.options.find(o => o.key === liquidityOption) ?? computation.options[0]
                         if (!selectedOpt) return null
-                        const rate = (pkg?.avg_rate_lockin_pct as number | undefined) ?? data.reference_rate ?? DEFAULT_REFERENCE_RATE
+                        const hasPkg = pkg != null
+                        const pkgSchedule = pkg?.rate_schedule as RateScheduleEntry[] | undefined
+                        const activeSchedule: RateScheduleEntry[] = (hasPkg && pkgSchedule?.length)
+                            ? pkgSchedule
+                            : (data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE)
+                        const lockinYears = (pkg?.lockin_years as number | undefined) ?? data.reference_lockin_years
                         const t1 = data.preferred_tenure ?? selectedOpt.maxTenure
                         const t2 = preferredTenure2 ?? selectedOpt.maxTenure
                         const adjLoan = adjustedLoans[selectedOpt.key]
                         const fieldPlaceholder = selectedOpt.source === 'ipa' ? selectedOpt.ltvCeiling : selectedOpt.finalLoan
                         const loan = adjLoan ?? fieldPlaceholder
-                        const lockinYears = pkg?.lockin_years as number | undefined
-                        const m1 = monthlyInstallment(loan, rate, t1)
-                        const m2 = monthlyInstallment(loan, rate, t2)
-                        const i1 = lockinYears != null
-                            ? interestOverPeriod(loan, rate, t1, lockinYears)
-                            : Math.max(0, m1 * t1 * 12 - loan)
-                        const i2 = lockinYears != null
-                            ? interestOverPeriod(loan, rate, t2, lockinYears)
-                            : Math.max(0, m2 * t2 * 12 - loan)
+                        const hasThereafter = activeSchedule.some(e => e.thereafter)
+
+                        const amortRows1 = computeAmortization(loan, t1, activeSchedule, soraForAmort)
+                        const amortRows2 = computeAmortization(loan, t2, activeSchedule, soraForAmort)
+
+                        const m1 = amortRows1[0]?.instalment ?? null
+                        const m2 = amortRows2[0]?.instalment ?? null
+                        const i1 = lockinYears != null ? (amortRows1.find(r => r.year === lockinYears)?.cumulativeInterest ?? null) : null
+                        const i2 = lockinYears != null ? (amortRows2.find(r => r.year === lockinYears)?.cumulativeInterest ?? null) : null
+
+                        const lockInCards = lockinYears != null
+                            ? Array.from({ length: lockinYears }, (_, i) => ({
+                                year: i + 1,
+                                value: amortRows1.find(r => r.year === i + 1)?.cumulativeInterest ?? null,
+                                instalment: amortRows1.find(r => r.year === i + 1)?.instalment ?? null,
+                              }))
+                            : []
+
                         const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
                         return (
                             <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
-                                {/* Rate source */}
-                                {pkg?.avg_rate_lockin_pct != null ? (
-                                    <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                                        <Info size={12} className="text-[#03a9e7]" />
-                                        Based on <span className="font-semibold">{String(pkg.bank)}</span> @ {Number(pkg.avg_rate_lockin_pct).toFixed(2)}% avg lock-in rate
-                                    </p>
-                                ) : (
-                                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                                        <span>No package selected — estimating at</span>
-                                        <input type="number" step="0.05" value={data.reference_rate ?? ''} placeholder={`${DEFAULT_REFERENCE_RATE}`}
-                                            onChange={e => update({ reference_rate: num(e.target.value) })}
-                                            className="w-16 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
-                                        <span>% p.a.</span>
+
+                                {/* Rate schedule */}
+                                <div>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Interest Rates p.a.</span>
+                                        {lockinYears != null && (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#03a9e7] bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full">
+                                                <Lock size={9} /> {lockinYears}-yr lock-in
+                                            </span>
+                                        )}
+                                        {hasPkg && (
+                                            <button type="button"
+                                                onClick={() => update({ selected_package_snapshot: undefined })}
+                                                className="ml-auto text-[11px] text-slate-400 hover:text-slate-600 underline underline-offset-2">
+                                                Clear package
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    <div className="rounded-xl border border-slate-100 overflow-hidden">
+                                        {activeSchedule.filter(e => !e.thereafter).map((entry, idx) => {
+                                            const schedIdx = activeSchedule.indexOf(entry)
+                                            return hasPkg ? (
+                                                <div key={idx} className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 last:border-b-0 bg-white">
+                                                    <div className="w-1 h-7 rounded-full shrink-0 bg-[#03a9e7]" />
+                                                    <span className="w-20 shrink-0 text-xs font-bold text-[#052d4a]">Year {entry.year}</span>
+                                                    <span className="text-xs font-semibold text-slate-600">
+                                                        {entry.type === 'fixed'
+                                                            ? `${entry.rate?.toFixed(2) ?? '—'}% fixed`
+                                                            : `${entry.reference ?? ''} + ${entry.spread?.toFixed(2) ?? '—'}%`}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <RateRow key={idx}
+                                                    entry={entry} label={`Year ${entry.year}`} isLockin
+                                                    onChange={patch => updateScheduleRow(schedIdx, patch)}
+                                                    onRemove={() => removeScheduleRow(schedIdx)}
+                                                    canRemove={(data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE).length > 1}
+                                                    refId={`amort-refs-${idx}`}
+                                                />
+                                            )
+                                        })}
+
+                                        {hasThereafter && (
+                                            <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border-t border-b border-slate-100">
+                                                <div className="flex-1 h-px bg-slate-200" />
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Out of lock-in</span>
+                                                <div className="flex-1 h-px bg-slate-200" />
+                                            </div>
+                                        )}
+
+                                        {activeSchedule.filter(e => e.thereafter).map((entry, idx) => {
+                                            const schedIdx = activeSchedule.indexOf(entry)
+                                            return hasPkg ? (
+                                                <div key={`thereafter-${idx}`} className="flex items-center gap-2 px-3 py-2.5 bg-slate-50/60">
+                                                    <div className="w-1 h-7 rounded-full shrink-0 bg-slate-200" />
+                                                    <span className="w-20 shrink-0 text-xs font-bold text-slate-400">Thereafter</span>
+                                                    <span className="text-xs font-semibold text-slate-600">
+                                                        {entry.type === 'fixed'
+                                                            ? `${entry.rate?.toFixed(2) ?? '—'}% fixed`
+                                                            : `${entry.reference ?? ''} + ${entry.spread?.toFixed(2) ?? '—'}%`}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <RateRow key={`thereafter-${idx}`}
+                                                    entry={entry} label="Thereafter" isLockin={false}
+                                                    onChange={patch => updateScheduleRow(schedIdx, patch)}
+                                                    onRemove={() => removeScheduleRow(schedIdx)}
+                                                    canRemove={(data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE).length > 1}
+                                                    refId={`amort-refs-thereafter-${idx}`}
+                                                />
+                                            )
+                                        })}
+                                    </div>
+
+                                    {!hasPkg && (
+                                        <div className="flex gap-2 mt-2">
+                                            <button type="button" onClick={addScheduleYear}
+                                                className="flex items-center gap-1 text-xs font-semibold text-[#03a9e7] hover:bg-sky-50 px-2.5 py-1.5 rounded-lg transition-colors">
+                                                <Plus size={12} /> Add Year
+                                            </button>
+                                            {!hasThereafter && (
+                                                <button type="button" onClick={addScheduleThereafter}
+                                                    className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-50 px-2.5 py-1.5 rounded-lg transition-colors">
+                                                    <Plus size={12} /> Add Thereafter
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Lock-in years — always editable */}
+                                <div className="flex items-center gap-2 text-xs text-slate-500">
+                                    <Lock size={11} className="text-[#03a9e7] shrink-0" />
+                                    <span className="shrink-0">Lock-in period:</span>
+                                    <input type="number" min={1} max={10}
+                                        value={data.reference_lockin_years ?? ''}
+                                        placeholder={pkg?.lockin_years != null ? String(pkg.lockin_years) : 'yrs'}
+                                        onChange={e => update({ reference_lockin_years: num(e.target.value) })}
+                                        className="w-14 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
+                                    <span>yrs</span>
+                                    {hasPkg && pkg.lockin_years != null && data.reference_lockin_years == null && (
+                                        <span className="text-[11px] text-slate-400">(from package)</span>
+                                    )}
+                                </div>
+
+                                {/* Per-year interest cards */}
+                                {lockInCards.length > 0 && (
+                                    <div className="flex gap-2 flex-wrap">
+                                        {lockInCards.map(({ year, value, instalment }, i) => {
+                                            const isLast = i === lockInCards.length - 1
+                                            if (isLast) {
+                                                return (
+                                                    <div key={year} className="flex-1 min-w-[120px] rounded-xl p-3.5 text-white"
+                                                        style={{ background: 'linear-gradient(135deg, #052d4a 0%, #0a4a7a 100%)' }}>
+                                                        <p className="text-[10px] font-bold text-sky-300 uppercase tracking-wide">Total Int · Yr {year}</p>
+                                                        <p className="text-lg font-black mt-1">{value != null ? money(value) : '—'}</p>
+                                                        {instalment != null && <p className="text-[10px] text-sky-200/80 mt-0.5">{money(instalment)}/mo</p>}
+                                                    </div>
+                                                )
+                                            }
+                                            return (
+                                                <div key={year} className="flex-1 min-w-[100px] card p-3">
+                                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Int · Yr {year}</p>
+                                                    <p className="text-base font-bold text-[#052d4a] mt-0.5">{value != null ? money(value) : '—'}</p>
+                                                    {instalment != null && <p className="text-[10px] text-slate-400 mt-0.5">{money(instalment)}/mo</p>}
+                                                </div>
+                                            )
+                                        })}
                                     </div>
                                 )}
 
@@ -771,23 +938,94 @@ export default function PurchaseWorkflowPanel({
                                     </div>
                                     <div className="grid grid-cols-3 border-b border-slate-100">
                                         <div className="px-3 py-2.5 text-slate-500">Monthly Instalment</div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">{money(m1)}<span className="text-slate-400 font-normal">/mo</span></div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
-                                            {money(m2)}<span className="text-slate-400 font-normal">/mo</span>
-                                            {t1 !== t2 && <span className={`ml-1.5 text-[11px] font-semibold ${m2 < m1 ? 'text-emerald-600' : 'text-red-500'}`}>{m2 < m1 ? '↓' : '↑'}{money(Math.abs(m2 - m1))}</span>}
+                                            {m1 != null ? <>{money(m1)}<span className="text-slate-400 font-normal">/mo</span></> : <span className="text-slate-300">—</span>}
+                                        </div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
+                                            {m2 != null ? (
+                                                <>
+                                                    {money(m2)}<span className="text-slate-400 font-normal">/mo</span>
+                                                    {t1 !== t2 && m1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${m2 < m1 ? 'text-emerald-600' : 'text-red-500'}`}>{m2 < m1 ? '↓' : '↑'}{money(Math.abs(m2 - m1))}</span>}
+                                                </>
+                                            ) : <span className="text-slate-300">—</span>}
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-3">
                                         <div className="px-3 py-2.5 text-slate-500">
-                                            {lockinYears != null ? `Interest (${lockinYears}-yr lock-in)` : 'Total Interest'}
+                                            {lockinYears != null ? `Interest (${lockinYears}-yr lock-in)` : 'Lock-in Interest'}
                                         </div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">{money(i1)}</div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
-                                            {money(i2)}
-                                            {t1 !== t2 && <span className={`ml-1.5 text-[11px] font-semibold ${i2 < i1 ? 'text-emerald-600' : 'text-red-500'}`}>{i2 < i1 ? '↓' : '↑'}{money(Math.abs(i2 - i1))}</span>}
+                                            {i1 != null ? money(i1) : <span className="text-slate-300">—</span>}
+                                        </div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
+                                            {i2 != null ? (
+                                                <>
+                                                    {money(i2)}
+                                                    {t1 !== t2 && i1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${i2 < i1 ? 'text-emerald-600' : 'text-red-500'}`}>{i2 < i1 ? '↓' : '↑'}{money(Math.abs(i2 - i1))}</span>}
+                                                </>
+                                            ) : <span className="text-slate-300">—</span>}
                                         </div>
                                     </div>
                                 </div>
+
+                                {/* Year-by-Year Breakdown — lock-in period only (Tenure 1) */}
+                                {amortRows1.length > 0 && lockinYears != null && (
+                                    <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                        <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Year-by-Year Breakdown</span>
+                                            <span className="text-[11px] text-slate-400">Lock-in · Tenure 1 ({t1} yrs)</span>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="border-b border-slate-100 bg-slate-50/60">
+                                                        <th className="px-3 py-2 text-left font-semibold text-slate-400 uppercase tracking-wide w-10">Yr</th>
+                                                        <th className="px-3 py-2 text-left font-semibold text-slate-400 uppercase tracking-wide">Rate</th>
+                                                        <th className="px-3 py-2 text-right font-semibold text-slate-400 uppercase tracking-wide">Monthly</th>
+                                                        <th className="px-3 py-2 text-right font-semibold text-slate-400 uppercase tracking-wide">Prin /mo</th>
+                                                        <th className="px-3 py-2 text-right font-semibold text-slate-400 uppercase tracking-wide">Int /mo</th>
+                                                        <th className="px-3 py-2 text-right font-semibold text-slate-400 uppercase tracking-wide">Int (yr)</th>
+                                                        <th className="px-3 py-2 text-right font-semibold text-slate-400 uppercase tracking-wide">Balance</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {amortRows1.filter(r => r.year <= lockinYears).map(row => {
+                                                        const hasData = row.instalment != null
+                                                        const isLastLockin = row.year === lockinYears
+                                                        const fmt2 = (n: number | null) => n != null ? `$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
+                                                        return (
+                                                            <tr key={row.year} className={`border-b border-slate-50 last:border-b-0 ${isLastLockin ? 'bg-sky-50/50' : 'bg-white'}`}>
+                                                                <td className="py-2.5 pl-0 pr-3">
+                                                                    <div className="flex items-center gap-0 h-full">
+                                                                        <div className="w-1 self-stretch rounded-r mr-2.5 bg-[#03a9e7]" />
+                                                                        <span className="font-bold text-[#03a9e7]">{row.year}</span>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-3 py-2.5">
+                                                                    {hasData
+                                                                        ? <span className="inline-block font-bold px-2 py-0.5 rounded-full bg-sky-100 text-[#03a9e7]">{row.rate!.toFixed(2)}%</span>
+                                                                        : <span className="text-slate-200">—</span>}
+                                                                </td>
+                                                                <td className="px-3 py-2.5 text-right font-semibold text-slate-700">{fmt2(row.instalment)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-500">{fmt2(row.monthPrincipal)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-500">{fmt2(row.monthInterest)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-500">{fmt2(row.yearInterest)}</td>
+                                                                <td className="px-3 py-2.5 text-right">
+                                                                    {hasData ? (
+                                                                        isLastLockin
+                                                                            ? <span className="font-black text-[#052d4a] bg-sky-100 border border-sky-200 px-2 py-0.5 rounded-full">{fmt2(row.balance)}</span>
+                                                                            : <span className="font-semibold text-slate-700">{fmt2(row.balance)}</span>
+                                                                    ) : <span className="text-slate-200">—</span>}
+                                                                </td>
+                                                            </tr>
+                                                        )
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <Tip>A shorter tenure will result in a higher income requirement to pass TDSR.</Tip>
                             </Section>
                         )
@@ -1241,6 +1479,79 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                     ) : null}
                 </div>
             </div>
+        </div>
+    )
+}
+
+// ── Rate row for the embedded amortisation schedule ──────────────────────────
+
+const rateRowInp = 'px-2.5 py-1.5 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/10 bg-white transition-colors'
+
+function RateRow({
+    entry, label, isLockin, onChange, onRemove, canRemove, refId,
+}: {
+    entry: RateScheduleEntry
+    label: string
+    isLockin: boolean
+    onChange: (patch: Partial<RateScheduleEntry>) => void
+    onRemove: () => void
+    canRemove: boolean
+    refId: string
+}) {
+    return (
+        <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 last:border-b-0 ${isLockin ? 'bg-white' : 'bg-slate-50/60'}`}>
+            <div className={`w-1 h-7 rounded-full shrink-0 ${isLockin ? 'bg-[#03a9e7]' : 'bg-slate-200'}`} />
+            <span className={`w-20 shrink-0 text-xs font-bold ${isLockin ? 'text-[#052d4a]' : 'text-slate-400'}`}>{label}</span>
+
+            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                {(['fixed', 'floating'] as const).map(t => (
+                    <button key={t} type="button" onClick={() => onChange({ type: t })}
+                        className={`px-2.5 py-1 font-semibold capitalize transition-colors ${entry.type === t ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                        {t}
+                    </button>
+                ))}
+            </div>
+
+            {entry.type === 'fixed' ? (
+                <div className="flex items-center gap-1.5 flex-1">
+                    <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="1.60"
+                        onChange={e => onChange({ rate: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                        className={`${rateRowInp} w-20`} />
+                    <span className="text-xs text-slate-400">%</span>
+                </div>
+            ) : (
+                <div className="flex items-center gap-1.5 flex-1 flex-wrap">
+                    <input list={refId} value={entry.reference ?? ''} placeholder="3M SORA"
+                        onChange={e => {
+                            const ref = e.target.value
+                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
+                        }}
+                        className={`${rateRowInp} w-24`} />
+                    <datalist id={refId}>
+                        {AMORT_RATE_REFS.map(r => <option key={r} value={r} />)}
+                    </datalist>
+                    {entry.reference === 'Custom' && (
+                        <>
+                            <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="0.50"
+                                onChange={e => onChange({ rate: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                                className={`${rateRowInp} w-16`} />
+                            <span className="text-xs text-slate-400">%</span>
+                        </>
+                    )}
+                    <span className="text-xs text-slate-400">+</span>
+                    <input type="number" step="0.01" value={entry.spread ?? ''} placeholder="0.35"
+                        onChange={e => onChange({ spread: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                        className={`${rateRowInp} w-16`} />
+                    <span className="text-xs text-slate-400">%</span>
+                </div>
+            )}
+
+            {canRemove && (
+                <button type="button" onClick={onRemove}
+                    className="ml-auto p-1 text-slate-300 hover:text-red-400 hover:bg-red-50 rounded-lg transition-colors shrink-0">
+                    <Trash2 size={12} />
+                </button>
+            )}
         </div>
     )
 }
