@@ -14,13 +14,16 @@ import {
 } from '@/lib/insurance/decoupleCalc'
 import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
 import type { DecouplePledge } from '@/lib/insurance/decoupleCalc'
-import { maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
+import { maxLoanFromPayment, monthlyInstallment, tdsrAvailable, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
+import { type RecommendedPackage } from '@/lib/insurance/rateRecommend'
+import { type SoraRates } from '@/lib/insurance/sora'
+import RefiPackages from './RefiPackages'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save,
     ArrowRight, ExternalLink, Users, Building2, Percent,
-    Wallet,
+    Wallet, CalendarRange,
 } from 'lucide-react'
 
 interface Props {
@@ -82,6 +85,39 @@ export default function DecouplingWorkflowPanel({
     const estEligLoan = computation.availableTdsr > 0 && effectiveEstEligTenure > 0
         ? maxLoanFromPayment(computation.availableTdsr, STRESS_TEST_RATE * 100, effectiveEstEligTenure)
         : 0
+
+    // Rate Preference + Packages + Tenure Comparison
+    const selectedPkgId = (data.selected_package_snapshot?.id as string) ?? undefined
+    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null) => {
+        update({
+            selected_package_snapshot: {
+                id: rec.pkg.id,
+                bank: rec.pkg.bank,
+                category: rec.pkg.category,
+                package_name: rec.pkg.package_name,
+                lockin_years: rec.pkg.lockin_years,
+                rate_schedule: rec.pkg.rate_schedule,
+                projected_monthly: rec.projection.newMonthly,
+                year1_rate: rec.projection.perYear[0]?.ratePct ?? null,
+                avg_rate_lockin_pct: rec.projection.avgRateLockinPct,
+                frozen_at: new Date().toISOString(),
+                sora_as_of: sora?.published_date ?? sora?.value_date ?? null,
+            },
+        })
+    }
+    // Loan + tenure to price packages against (scenario-dependent)
+    const pkgLoan = scenario === 'S1' ? computation.buyerLoanLiability : computation.bankLoan75
+    const pkgTenureMin = scenario === 'S1' ? computation.refiTenureMin : computation.purchaseTenureMin
+    const pkgTenure = scenario === 'S1' ? computation.refiTenureMax : computation.purchaseTenureMax
+    const pkgPropertyType: 'landed' | 'private_condo' = data.property_type === 'landed' ? 'landed' : 'private_condo'
+    const pkgIncludeBuc = data.property_type === 'incompleted_condo'
+    // Rate source for tenure comparison (mirrors refi pattern)
+    const snapshotRate = data.selected_package_snapshot?.avg_rate_lockin_pct as number | undefined
+    const compRate: number | null = snapshotRate ?? data.current_rate ?? null
+    const compRateLabel: string | null = snapshotRate != null
+        ? `${(data.selected_package_snapshot?.bank as string | undefined) ?? 'selected package'} @ ${snapshotRate.toFixed(2)}% avg lock-in`
+        : data.current_rate != null ? `current rate ${data.current_rate}% p.a.` : null
+    const compLockinYears: number = ((data.selected_package_snapshot?.lockin_years as number | undefined) ?? 2) || 1
 
     return (
         <div className="space-y-5">
@@ -741,7 +777,62 @@ export default function DecouplingWorkflowPanel({
                 />
             )}
 
-            {/* ── 10. SELLER'S PERSPECTIVE ── */}
+            {/* ── 9. RATE PREFERENCE ── */}
+            {computation.ready && scenario !== null && scenario !== 'S4' && (
+                <Section title="Rate Preference" icon={<Percent size={15} />}>
+                    <Question label="Any preference for fixed or floating rates?">
+                        <PillSelect
+                            value={data.rate_preference ?? 'both'}
+                            onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'both' })}
+                            options={[
+                                { value: 'both', label: 'Both' },
+                                { value: 'fixed', label: 'Fixed' },
+                                { value: 'floating', label: 'Floating' },
+                            ]}
+                        />
+                    </Question>
+                </Section>
+            )}
+
+            {/* ── 10. RECOMMENDED PACKAGES ── */}
+            {computation.ready && scenario !== null && scenario !== 'S4' && pkgLoan > 0 && (
+                <RefiPackages
+                    loan={pkgLoan}
+                    tenureYears={pkgTenure}
+                    propertyType={pkgPropertyType}
+                    includeBuc={pkgIncludeBuc}
+                    currentRatePct={data.current_rate}
+                    preference={data.rate_preference ?? 'both'}
+                    selectedId={selectedPkgId}
+                    onSelect={onSelectPackage}
+                />
+            )}
+
+            {/* ── 11. TENURE COMPARISON ── */}
+            {computation.ready && scenario !== null && scenario !== 'S4' && pkgLoan > 0 && (() => {
+                const clamp = (v: number) => Math.min(Math.max(v, pkgTenureMin), pkgTenure)
+                const t1 = clamp(data.preferred_tenure_1 ?? pkgTenure)
+                const t2 = clamp(data.preferred_tenure_2 ?? pkgTenure)
+                return (
+                    <TenureComparison
+                        loan={pkgLoan}
+                        ratePct={compRate}
+                        rateLabel={compRateLabel}
+                        lockinYears={compLockinYears}
+                        tenureMin={pkgTenureMin}
+                        tenureMax={pkgTenure}
+                        tenure1={t1}
+                        tenure2={t2}
+                        onT1Change={(v: number) => update({ preferred_tenure_1: v || undefined })}
+                        onT2Change={(v: number) => update({ preferred_tenure_2: v || undefined })}
+                        grossIncome={computation.grossMonthlyIncome > 0 ? computation.grossMonthlyIncome : null}
+                        existingDebts={computation.existingMonthlyDebts}
+                        propertyUse={data.property_use}
+                    />
+                )
+            })()}
+
+            {/* ── 12. SELLER'S PERSPECTIVE ── */}
             {computation.ready && scenario !== null && (
                 <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                     <div className="px-5 py-4 bg-slate-50 border-b border-slate-100">
@@ -1069,6 +1160,183 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
             </div>
             {children}
         </div>
+    )
+}
+
+// ─── Interest over lock-in period ────────────────────────────────────────────
+
+function interestOverPeriod(loan: number, ratePct: number, tenureYrs: number, periodYrs: number): number {
+    const r = ratePct / 100 / 12
+    const nT = tenureYrs * 12
+    const nP = Math.min(Math.round(periodYrs * 12), nT)
+    if (r === 0 || nT === 0 || nP === 0) return 0
+    const p = loan * r * Math.pow(1 + r, nT) / (Math.pow(1 + r, nT) - 1)
+    const balance = Math.max(loan * Math.pow(1 + r, nP) - p * (Math.pow(1 + r, nP) - 1) / r, 0)
+    return Math.max(p * nP - (loan - balance), 0)
+}
+
+// ─── Tenure Comparison ────────────────────────────────────────────────────────
+
+function TenureComparison({
+    loan, ratePct, rateLabel, lockinYears, tenureMin, tenureMax, tenure1, tenure2,
+    onT1Change, onT2Change, grossIncome, existingDebts, propertyUse,
+}: {
+    loan: number
+    ratePct: number | null
+    rateLabel: string | null
+    lockinYears: number
+    tenureMin: number
+    tenureMax: number
+    tenure1: number
+    tenure2: number
+    onT1Change: (v: number) => void
+    onT2Change: (v: number) => void
+    grossIncome: number | null
+    existingDebts: number
+    propertyUse?: string
+}) {
+    const canPrice = ratePct != null && loan > 0 && tenure1 > 0 && tenure2 > 0
+
+    const m1 = canPrice ? monthlyInstallment(loan, ratePct!, tenure1) : null
+    const m2 = canPrice ? monthlyInstallment(loan, ratePct!, tenure2) : null
+    const i1 = canPrice ? interestOverPeriod(loan, ratePct!, tenure1, lockinYears) : null
+    const i2 = canPrice ? interestOverPeriod(loan, ratePct!, tenure2, lockinYears) : null
+
+    const tdsrAvail = grossIncome != null ? tdsrAvailable(grossIncome, existingDebts) : null
+    const tdsr1 = tdsrAvail != null && tenure1 > 0 ? maxLoanFromPayment(tdsrAvail, STRESS_TEST_RATE * 100, tenure1) : null
+    const tdsr2 = tdsrAvail != null && tenure2 > 0 ? maxLoanFromPayment(tdsrAvail, STRESS_TEST_RATE * 100, tenure2) : null
+
+    const better = (a: number | null, b: number | null, lowerIsBetter: boolean): 'a' | 'b' | null => {
+        if (a == null || b == null || a === b) return null
+        return lowerIsBetter ? (a < b ? 'a' : 'b') : (a > b ? 'a' : 'b')
+    }
+
+    const mBetter = better(m1, m2, true)
+    const iBetter = better(i1, i2, true)
+    const tBetter = better(tdsr1, tdsr2, false)
+
+    const cell = (val: number | null, side: 'a' | 'b', winner: 'a' | 'b' | null) => (
+        <td className={`px-4 py-2.5 text-right font-semibold tabular-nums ${winner === side ? 'text-emerald-700' : 'text-[#052d4a]'}`}>
+            {val != null ? money(val) : '—'}
+        </td>
+    )
+
+    const diffCell = (v1: number | null, v2: number | null, lowerIsBetter: boolean) => {
+        if (!canPrice || v1 == null || v2 == null) return <td className="px-4 py-2.5 text-right text-slate-300 text-xs">—</td>
+        const diff = v2 - v1
+        if (diff === 0) return <td className="px-4 py-2.5 text-right text-slate-400 text-xs">—</td>
+        const good = lowerIsBetter ? diff < 0 : diff > 0
+        return (
+            <td className={`px-4 py-2.5 text-right text-[11px] font-semibold tabular-nums ${good ? 'text-emerald-600' : 'text-red-500'}`}>
+                {diff < 0 ? '↓' : '↑'} {money(Math.abs(diff))}
+            </td>
+        )
+    }
+
+    return (
+        <Section title="Tenure Comparison" icon={<CalendarRange size={15} />}>
+            {rateLabel
+                ? <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><Info size={12} className="text-[#03a9e7]" /> Rate used: {rateLabel}</p>
+                : <p className="text-[11px] text-amber-600 flex items-center gap-1.5"><AlertTriangle size={12} /> Select a package above to price the comparison.</p>
+            }
+
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="text-left px-4 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide w-2/5" />
+                            <th className="px-4 py-2 text-right">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 1</p>
+                                <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
+                                    <input type="number" value={tenure1 || ''} min={tenureMin} max={tenureMax}
+                                        onChange={e => { const v = parseFloat(e.target.value) || 0; onT1Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0) }}
+                                        className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
+                                    <span className="text-[11px] text-slate-400">yrs</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5">{tenureMin}–{tenureMax} yrs</p>
+                            </th>
+                            <th className="px-4 py-2 text-right">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 2</p>
+                                <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
+                                    <input type="number" value={tenure2 || ''} min={tenureMin} max={tenureMax}
+                                        onChange={e => { const v = parseFloat(e.target.value) || 0; onT2Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0) }}
+                                        className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
+                                    <span className="text-[11px] text-slate-400">yrs</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5">{tenureMin}–{tenureMax} yrs</p>
+                            </th>
+                            <th className="text-right px-4 py-2 text-[11px] font-semibold text-slate-400">Diff</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr className="border-b border-slate-100">
+                            <td className="px-4 py-2.5 text-slate-600">Monthly Instalment</td>
+                            {cell(m1, 'a', mBetter)}
+                            {cell(m2, 'b', mBetter)}
+                            {diffCell(m1, m2, true)}
+                        </tr>
+                        <tr className={grossIncome != null && grossIncome > 0 ? 'border-b border-slate-100' : ''}>
+                            <td className="px-4 py-2.5 text-slate-600">
+                                Total Interest
+                                <span className="block text-[11px] text-slate-400">over {lockinYears}-yr lock-in period</span>
+                            </td>
+                            {cell(i1, 'a', iBetter)}
+                            {cell(i2, 'b', iBetter)}
+                            {diffCell(i1, i2, true)}
+                        </tr>
+                        {grossIncome != null && grossIncome > 0 && (() => {
+                            const pass1 = tdsr1 != null ? loan <= tdsr1 : null
+                            const pass2 = tdsr2 != null ? loan <= tdsr2 : null
+                            const passCell = (pass: boolean | null) => (
+                                <td className="px-4 py-2.5 text-right font-semibold">
+                                    {pass === null ? <span className="text-slate-300">—</span>
+                                        : pass ? <span className="text-emerald-600">Pass</span>
+                                        : <span className="text-red-500">Fail</span>}
+                                </td>
+                            )
+                            return (
+                                <>
+                                    <tr className="border-b border-slate-100">
+                                        <td className="px-4 py-2.5 text-slate-600">Max Eligible Loan</td>
+                                        {cell(tdsr1, 'a', tBetter)}
+                                        {cell(tdsr2, 'b', tBetter)}
+                                        {diffCell(tdsr1, tdsr2, false)}
+                                    </tr>
+                                    <tr>
+                                        <td className="px-4 py-2.5 text-slate-600">TDSR Result</td>
+                                        {passCell(pass1)}
+                                        {passCell(pass2)}
+                                        <td />
+                                    </tr>
+                                </>
+                            )
+                        })()}
+                    </tbody>
+                </table>
+            </div>
+
+            {grossIncome != null && grossIncome > 0 && (() => {
+                const pass1 = tdsr1 != null ? loan <= tdsr1 : null
+                const pass2 = tdsr2 != null ? loan <= tdsr2 : null
+                const anyFail = pass1 === false || pass2 === false
+                if (!anyFail) return null
+                const remedy = propertyUse === 'investment'
+                    ? 'Bank will require client to pay down 3% of outstanding loan and/or show some funds to prove repayment ability.'
+                    : 'Client may qualify for TDSR Waiver — to double check with banker.'
+                return (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-1">
+                        <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
+                        <p className="text-[12px] text-amber-700 leading-relaxed">{remedy}</p>
+                    </div>
+                )
+            })()}
+
+            {(grossIncome == null || grossIncome === 0) && (
+                <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <Info size={12} /> Provide income details above to also see TDSR loan eligibility.
+                </p>
+            )}
+        </Section>
     )
 }
 

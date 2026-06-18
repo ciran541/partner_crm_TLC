@@ -746,15 +746,18 @@ export default function RefinancingWorkflowPanel({
 
                     {/* Tenure comparison — below tenure range */}
                     {computation.totalOutstanding > 0 && (() => {
-                        const defaultT = data.current_tenure ?? t.max
-                        const prefT1 = data.preferred_tenure_1 ?? defaultT
-                        const prefT2 = data.preferred_tenure_2 ?? defaultT
+                        const clamp = (v: number) => Math.min(Math.max(v, t.min), t.max)
+                        const defaultT = clamp(data.current_tenure ?? t.max)
+                        const prefT1 = clamp(data.preferred_tenure_1 ?? defaultT)
+                        const prefT2 = clamp(data.preferred_tenure_2 ?? defaultT)
                         return (
                             <TenureComparison
                                 loan={computation.totalOutstanding}
                                 ratePct={compRate}
                                 rateLabel={compRateLabel}
                                 lockinYears={compLockinYears}
+                                tenureMin={t.min}
+                                tenureMax={t.max}
                                 tenure1={prefT1}
                                 tenure2={prefT2}
                                 onT1Change={v => update({ preferred_tenure_1: v || undefined })}
@@ -1028,6 +1031,8 @@ interface TenureComparisonProps {
     ratePct: number | null
     rateLabel: string | null
     lockinYears: number
+    tenureMin: number
+    tenureMax: number
     tenure1: number
     tenure2: number
     onT1Change: (v: number) => void
@@ -1037,7 +1042,7 @@ interface TenureComparisonProps {
     propertyUse?: 'own_stay' | 'investment'
 }
 
-function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenure1, tenure2, onT1Change, onT2Change, grossIncome, existingDebts, propertyUse }: TenureComparisonProps) {
+function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenureMin, tenureMax, tenure1, tenure2, onT1Change, onT2Change, grossIncome, existingDebts, propertyUse }: TenureComparisonProps) {
     const canPrice = ratePct != null && loan > 0 && tenure1 > 0 && tenure2 > 0
 
     const m1 = canPrice ? monthlyInstallment(loan, ratePct!, tenure1) : null
@@ -1093,18 +1098,22 @@ function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenure1, tenu
                             <th className="px-4 py-2 text-right">
                                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 1</p>
                                 <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
-                                    <input type="number" value={tenure1 || ''} onChange={e => onT1Change(parseFloat(e.target.value) || 0)}
+                                    <input type="number" value={tenure1 || ''} min={tenureMin} max={tenureMax}
+                                        onChange={e => { const v = parseFloat(e.target.value) || 0; onT1Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0) }}
                                         className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
                                     <span className="text-[11px] text-slate-400">yrs</span>
                                 </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5">{tenureMin}–{tenureMax} yrs</p>
                             </th>
                             <th className="px-4 py-2 text-right">
                                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 2</p>
                                 <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
-                                    <input type="number" value={tenure2 || ''} onChange={e => onT2Change(parseFloat(e.target.value) || 0)}
+                                    <input type="number" value={tenure2 || ''} min={tenureMin} max={tenureMax}
+                                        onChange={e => { const v = parseFloat(e.target.value) || 0; onT2Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0) }}
                                         className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
                                     <span className="text-[11px] text-slate-400">yrs</span>
                                 </div>
+                                <p className="text-[10px] text-slate-400 mt-0.5">{tenureMin}–{tenureMax} yrs</p>
                             </th>
                             <th className="text-right px-4 py-2 text-[11px] font-semibold text-slate-400">Diff</th>
                         </tr>

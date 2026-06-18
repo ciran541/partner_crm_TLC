@@ -204,6 +204,12 @@ export interface DecoupleWorkflow {
     preferred_tenure_purchase?: number  // S2: purchase tenure; S3: purchase portion
     preferred_tenure_equity?: number    // equity loan tenure (if taken)
 
+    // Rate preference + Tenure Planner (mirrors RefinancingWorkflow)
+    rate_preference?: 'fixed' | 'floating' | 'both'
+    preferred_tenure_1?: number         // Tenure Planner comparison slot 1
+    preferred_tenure_2?: number         // Tenure Planner comparison slot 2
+    selected_package_snapshot?: Record<string, unknown>
+
     completed_steps?: string[]
     flags?: WorkflowFlags
 }
