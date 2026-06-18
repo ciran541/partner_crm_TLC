@@ -90,7 +90,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                     </p>
                     <p className="text-[11px] text-slate-400">
                         Priced for {fmt(loan)} over {tenureYears} yrs · {sora?.value_date
-                            ? <>floating from SORA as of <span className="font-medium">{sora.published_date ?? sora.value_date}</span> (1M {sora.comp_sora_1m}% · 3M {sora.comp_sora_3m}%)</>
+                            ? <>floating from SORA as of <span className="font-medium">{sora.published_date ?? sora.value_date}</span></>
                             : 'live SORA unavailable'}
                     </p>
                 </div>

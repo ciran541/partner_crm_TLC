@@ -55,6 +55,7 @@ export default function DecouplingWorkflowPanel({
     const [customSubsidy, setCustomSubsidy] = useState(
         data.subsidy_return_amount != null && !SUBSIDY_PRESETS.includes(String(data.subsidy_return_amount)),
     )
+    const [loanDraft, setLoanDraft] = useState<string | null>(null)
 
     const computation = useMemo(() => computeDecouple(inputsFromDecoupleWorkflow(data)), [data])
     const { scenario } = computation
@@ -291,6 +292,12 @@ export default function DecouplingWorkflowPanel({
                                     <Info size={11} className="mt-0.5 shrink-0" />
                                     Only applicable for Incompleted Condo that has not obtained CSC.
                                 </p>
+                                {(data.outstanding_undisbursed ?? 0) > 0 && (
+                                    <p className="text-[11px] text-amber-600 mt-1 flex items-center gap-1.5">
+                                        <AlertTriangle size={11} className="shrink-0" />
+                                        Cancellation fee: {money((data.outstanding_undisbursed ?? 0) * 0.0075)} ({money(data.outstanding_undisbursed ?? 0)} × 0.75%)
+                                    </p>
+                                )}
                             </Question>
                         )}
 
@@ -352,7 +359,58 @@ export default function DecouplingWorkflowPanel({
                 )}
             </Section>
 
-            {/* ── 5. BREAKDOWN (Buyer's Perspective) ── */}
+            {/* ── 5. SELLER'S PERSPECTIVE ── */}
+            {computation.ready && scenario !== null && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="px-5 py-4 bg-slate-50 border-b border-slate-100">
+                        <p className="text-sm font-bold text-[#052d4a]">Seller's Perspective</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Disposing {sellerPctStr} share</p>
+                    </div>
+                    <div className="px-5 py-5 space-y-5">
+                        <div className="grid grid-cols-2 gap-3">
+                            <Stat label={`Property Share (${sellerPctStr})`} value={money(computation.sellingPrice)} />
+                            <Stat label={`Loan Liability Released (${sellerPctStr})`} value={money(computation.sellerLoanLiability)} />
+                        </div>
+
+                        <div className="border-t border-slate-100 pt-4 space-y-2">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Breakdown</p>
+                            <Row label={`Sale of Part Share (${sellerPctStr})`} value={money(computation.sellingPrice)} highlight />
+                            <Row label="Less: Loan Liability" value={`−${money(computation.sellerLoanLiability)}`} />
+                            <Row label="Less: CPF Usage (Refund to OA)" value={`−${money(data.seller_cpf_usage ?? 0)}`} />
+                            <div className="border-t border-slate-200 pt-2 mt-1">
+                                <Row label="Cash Proceeds" value={money(computation.cashProceeds)}
+                                    valueClass={computation.cashProceeds < 0 ? 'text-red-600' : 'text-emerald-700 font-bold'} />
+                            </div>
+                        </div>
+
+                        <div className="border-t border-slate-100 pt-4 space-y-2">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Est. Misc Fees</p>
+                            {computation.ssd > 0 ? (
+                                <Row label={`Seller's Stamp Duty — ${computation.ssdRatePct}% (${computation.ssdRateTable === 'new' ? 'new' : 'old'} rates)`}
+                                    value={money(computation.ssd)} />
+                            ) : (
+                                <Row label="Seller's Stamp Duty" value="$0"
+                                    hint={computation.ssdRateTable === 'none' ? 'Past holding period' : 'No SSD at current holding period'} />
+                            )}
+                            <Row label="Legal Fee (Cash / CPF)" value={`${money(computation.sellerLegalFee)} +/-`} />
+                            {computation.cancellationFee > 0 && (
+                                <Row label="Cancellation Fee (0.75% of undisbursed)" value={money(computation.cancellationFee)} />
+                            )}
+                        </div>
+
+                        {computation.cashProceeds < 0 && (
+                            <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                                <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                                <p className="text-[13px] text-red-800 leading-relaxed">
+                                    Cash proceeds are negative — seller may need to top up cash to complete the sale.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* ── 6. BREAKDOWN (Buyer's Perspective) ── */}
             {computation.ready && scenario !== null && (
                 <div className="rounded-xl border border-[#03a9e7]/30 overflow-hidden shadow-sm">
                     <div className="px-5 py-4 bg-sky-50/70 border-b border-[#03a9e7]/15">
@@ -393,20 +451,48 @@ export default function DecouplingWorkflowPanel({
                             )}
 
                             {/* S2, S3 — new financing */}
-                            {(scenario === 'S2' || scenario === 'S3') && (
-                                <>
-                                    <Row label="5% Cash (Minimum Cash)" value={money(computation.cash5)} />
-                                    <Row label="20% CPF / Cash" value={money(computation.cpfCash20)} />
-                                    <Row label="75% Bank Loan (New)" value={money(computation.bankLoan75)} />
-                                    <div className="border-t border-dashed border-slate-200 my-1" />
-                                    <Row label={`New Total Loan (${pct(computation.loanPct)} of Valuation)`} value={money(computation.loanForStructure)} />
-                                    {computation.buyerLoanLiability > 0 && (
-                                        <SubNote>Includes current loan liability of {money(computation.buyerLoanLiability)}</SubNote>
-                                    )}
-                                    <Row label={`Total CPF Used (${pct(computation.cpfPct)} of Valuation)`} value={money(computation.totalCpfUsed)} />
-                                    <SubNote>Includes current CPF usage + CPF in OA balance</SubNote>
-                                </>
-                            )}
+                            {(scenario === 'S2' || scenario === 'S3') && (() => {
+                                const maxLoan = computation.purchasePrice * 0.75
+                                const loanFrac = computation.purchasePrice > 0 ? computation.bankLoan75 / computation.purchasePrice : 0.75
+                                const cpfFrac  = computation.purchasePrice > 0 ? computation.cpfCash20 / computation.purchasePrice : 0.20
+                                const loanPctLabel = `${Math.round(loanFrac * 100)}%`
+                                const cpfPctLabel  = `${Math.round(cpfFrac * 100)}%`
+                                const displayLoan = loanDraft !== null
+                                    ? loanDraft
+                                    : (data.preferred_purchase_loan ?? Math.round(maxLoan)).toLocaleString()
+                                return (
+                                    <>
+                                        <Row label="5% Cash (Minimum Cash)" value={money(computation.cash5)} />
+                                        <Row label={`${cpfPctLabel} CPF / Cash`} value={money(computation.cpfCash20)} />
+                                        <div className="flex items-center justify-between gap-4 py-1">
+                                            <span className="text-sm text-slate-700">{loanPctLabel} Bank Loan (New)</span>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <span className="text-xs text-slate-400">$</span>
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    value={displayLoan}
+                                                    onFocus={() => setLoanDraft((data.preferred_purchase_loan ?? Math.round(maxLoan)).toString())}
+                                                    onChange={e => setLoanDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                                                    onBlur={() => {
+                                                        const n = loanDraft !== null ? parseInt(loanDraft, 10) : NaN
+                                                        setLoanDraft(null)
+                                                        update({ preferred_purchase_loan: isNaN(n) ? undefined : Math.max(100_000, Math.min(maxLoan, n)) })
+                                                    }}
+                                                    className="w-28 text-right text-sm font-semibold text-[#03a9e7] border border-[#03a9e7]/40 rounded-lg px-2 py-0.5 bg-sky-50/50 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="border-t border-dashed border-slate-200 my-1" />
+                                        <Row label={`New Total Loan (${pct(computation.loanPct)} of Valuation)`} value={money(computation.loanForStructure)} />
+                                        {computation.buyerLoanLiability > 0 && (
+                                            <SubNote>Includes current loan liability of {money(computation.buyerLoanLiability)}</SubNote>
+                                        )}
+                                        <Row label={`Total CPF Used (${pct(computation.cpfPct)} of Valuation)`} value={money(computation.totalCpfUsed)} />
+                                        <SubNote>Includes current CPF usage + CPF in OA balance</SubNote>
+                                    </>
+                                )
+                            })()}
                         </div>
 
                         {/* Fees */}
@@ -570,8 +656,8 @@ export default function DecouplingWorkflowPanel({
                         <>
                             <LoanBreakdownCard
                                 title="Refinancing Outstanding Home Loan Liability"
-                                subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of outstanding loan`}
-                                amount={computation.buyerLoanLiability}
+                                subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of home loan`}
+                                amount={(data.outstanding_home_loan ?? 0) * computation.buyerShareFrac}
                                 tenureMin={computation.refiTenureMin}
                                 tenureMax={computation.refiTenureMax}
                                 effectiveTenure={computation.effectiveRefiTenure}
@@ -589,7 +675,8 @@ export default function DecouplingWorkflowPanel({
                                 <>
                                     <LoanBreakdownCard
                                         title="Outstanding Equity Loan"
-                                        amount={data.outstanding_equity_loan ?? 0}
+                                        subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of equity loan`}
+                                        amount={(data.outstanding_equity_loan ?? 0) * computation.buyerShareFrac}
                                         tenureMin={MIN_TENURE}
                                         tenureMax={computation.equityLoanCurrentTenureMax}
                                         effectiveTenure={computation.effectiveCurrentEquityLoanTenure}
@@ -597,8 +684,8 @@ export default function DecouplingWorkflowPanel({
                                         stressInstallment={computation.equityLoanCurrentStressInstallment}
                                         pass={computation.equityLoanCurrentTdsrPass}
                                         tdsrShortfall={Math.max(0, computation.equityLoanCurrentStressInstallment - computation.balanceTdsrAfterHomeLoan)}
-                                        onTenureChange={v => update({ current_tenure_equity_loan: v })}
-                                        preferredTenure={data.current_tenure_equity_loan}
+                                        onTenureChange={v => update({ preferred_tenure_equity_current: v })}
+                                        preferredTenure={data.preferred_tenure_equity_current}
                                     />
                                     {!computation.equityLoanCurrentTdsrPass && (
                                         <TdsrRemedy propertyUse={data.property_use} equityLoanAmount={data.equity_loan_amount} pledge={computation.equityLoanCurrentPledge} />
@@ -635,8 +722,8 @@ export default function DecouplingWorkflowPanel({
                         <div className="space-y-3">
                             <LoanBreakdownCard
                                 title="Refinancing Outstanding Home Loan Liability"
-                                subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of outstanding loan`}
-                                amount={computation.buyerLoanLiability}
+                                subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of home loan`}
+                                amount={(data.outstanding_home_loan ?? 0) * computation.buyerShareFrac}
                                 tenureMin={computation.refiTenureMin}
                                 tenureMax={computation.refiTenureMax}
                                 effectiveTenure={computation.effectiveRefiTenure}
@@ -654,7 +741,8 @@ export default function DecouplingWorkflowPanel({
                                 <>
                                     <LoanBreakdownCard
                                         title="Outstanding Equity Loan"
-                                        amount={data.outstanding_equity_loan ?? 0}
+                                        subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of equity loan`}
+                                        amount={(data.outstanding_equity_loan ?? 0) * computation.buyerShareFrac}
                                         tenureMin={MIN_TENURE}
                                         tenureMax={computation.equityLoanCurrentTenureMax}
                                         effectiveTenure={computation.effectiveCurrentEquityLoanTenure}
@@ -662,8 +750,8 @@ export default function DecouplingWorkflowPanel({
                                         stressInstallment={computation.equityLoanCurrentStressInstallment}
                                         pass={computation.equityLoanCurrentTdsrPass}
                                         tdsrShortfall={Math.max(0, computation.equityLoanCurrentStressInstallment - computation.balanceTdsrAfterHomeLoan)}
-                                        onTenureChange={v => update({ current_tenure_equity_loan: v })}
-                                        preferredTenure={data.current_tenure_equity_loan}
+                                        onTenureChange={v => update({ preferred_tenure_equity_current: v })}
+                                        preferredTenure={data.preferred_tenure_equity_current}
                                     />
                                     {!computation.equityLoanCurrentTdsrPass && (
                                         <TdsrRemedy propertyUse={data.property_use} equityLoanAmount={data.equity_loan_amount} pledge={computation.equityLoanCurrentPledge} />
@@ -790,54 +878,6 @@ export default function DecouplingWorkflowPanel({
                     />
                 )
             })()}
-
-            {/* ── 12. SELLER'S PERSPECTIVE ── */}
-            {computation.ready && scenario !== null && (
-                <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                    <div className="px-5 py-4 bg-slate-50 border-b border-slate-100">
-                        <p className="text-sm font-bold text-[#052d4a]">Seller's Perspective</p>
-                        <p className="text-xs text-slate-500 mt-0.5">Disposing {sellerPctStr} share</p>
-                    </div>
-                    <div className="px-5 py-5 space-y-5">
-                        <div className="grid grid-cols-2 gap-3">
-                            <Stat label={`Property Share (${sellerPctStr})`} value={money(computation.sellingPrice)} />
-                            <Stat label={`Loan Liability Released (${sellerPctStr})`} value={money(computation.sellerLoanLiability)} />
-                        </div>
-
-                        <div className="border-t border-slate-100 pt-4 space-y-2">
-                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Breakdown</p>
-                            <Row label={`Sale of Part Share (${sellerPctStr})`} value={money(computation.sellingPrice)} highlight />
-                            <Row label="Less: Loan Liability" value={`−${money(computation.sellerLoanLiability)}`} />
-                            <Row label="Less: CPF Usage (Refund to OA)" value={`−${money(data.seller_cpf_usage ?? 0)}`} />
-                            <div className="border-t border-slate-200 pt-2 mt-1">
-                                <Row label="Cash Proceeds" value={money(computation.cashProceeds)}
-                                    valueClass={computation.cashProceeds < 0 ? 'text-red-600' : 'text-emerald-700 font-bold'} />
-                            </div>
-                        </div>
-
-                        <div className="border-t border-slate-100 pt-4 space-y-2">
-                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Est. Misc Fees</p>
-                            {computation.ssd > 0 ? (
-                                <Row label={`Seller's Stamp Duty — ${computation.ssdRatePct}% (${computation.ssdRateTable === 'new' ? 'new' : 'old'} rates)`}
-                                    value={money(computation.ssd)} />
-                            ) : (
-                                <Row label="Seller's Stamp Duty" value="$0"
-                                    hint={computation.ssdRateTable === 'none' ? 'Past holding period' : 'No SSD at current holding period'} />
-                            )}
-                            <Row label="Legal Fee (Cash / CPF)" value={`${money(computation.sellerLegalFee)} +/-`} />
-                        </div>
-
-                        {computation.cashProceeds < 0 && (
-                            <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-                                <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
-                                <p className="text-[13px] text-red-800 leading-relaxed">
-                                    Cash proceeds are negative — seller may need to top up cash to complete the sale.
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
 
             {/* Placeholder when not ready */}
             {!computation.ready && (

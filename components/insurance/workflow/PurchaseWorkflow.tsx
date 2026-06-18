@@ -224,7 +224,12 @@ export default function PurchaseWorkflowPanel({
                     <PillSelect
                         value={data.property_type}
                         onChange={v => setPropertyType(v as PurchasePropertyType)}
-                        options={PURCHASE_PROPERTY_TYPES.map(p => ({ value: p.value, label: p.label }))}
+                        options={PURCHASE_PROPERTY_TYPES.map(p => ({
+                                value: p.value,
+                                label: (p.value === 'new_launch_condo' || p.value === 'ec_new_launch')
+                                    ? `${p.label} (No TOP yet)`
+                                    : p.label,
+                            }))}
                     />
                     {meta && (
                         <p className="text-[11px] text-slate-400 mt-1.5">
@@ -247,6 +252,21 @@ export default function PurchaseWorkflowPanel({
                             <Tip>Double-check with the seller(s) whether the landed property has obtained its Certificate of Statutory Completion (CSC) or only Temporary Occupation Permit (TOP) — some ID contractors don't obtain CSC after works are done. Without CSC, most banks will not finance; DBS/SCB are open to it for now.</Tip>
                         )}
                     </TipGroup>
+                )}
+                {(data.property_type === 'new_launch_condo' || data.property_type === 'ec_new_launch') && (
+                    <Question label="Expected TOP Year">
+                        <FieldInput type="text" value={data.otp_dates?.top_year ?? ''} placeholder="e.g. 2030"
+                            onChange={v => update({ otp_dates: { ...data.otp_dates, top_year: v } })} />
+                        {(() => {
+                            const yr = data.otp_dates?.top_year ? parseInt(data.otp_dates.top_year) : NaN
+                            const yrs = !isNaN(yr) ? Math.max(1, yr - new Date().getFullYear()) : null
+                            return yrs != null && (
+                                <p className="text-[11px] text-[#03a9e7] mt-1 flex items-center gap-1">
+                                    <Info size={11} /> {yrs} year{yrs !== 1 ? 's' : ''} to TOP — used as interest period in the amortisation below.
+                                </p>
+                            )
+                        })()}
+                    </Question>
                 )}
             </Section>
 
@@ -388,21 +408,41 @@ export default function PurchaseWorkflowPanel({
                                 </Question>
                                 <Question label="Tenure (years)">
                                     <FieldInput type="number" value={data.ipa?.tenure ?? ''}
-                                        placeholder="5–35"
+                                        placeholder={meta?.hdbClass ? '5–30' : '5–35'}
                                         onChange={v => update({ ipa: { ...data.ipa, tenure: num(v) } })}
                                         onBlur={() => {
                                             const n = data.ipa?.tenure
-                                            if (n != null) update({ ipa: { ...data.ipa, tenure: Math.min(35, Math.max(5, n)) } })
+                                            if (n != null) {
+                                                const maxTenure = meta?.hdbClass ? 30 : 35
+                                                const opt1Max   = meta?.hdbClass ? 25 : 30
+                                                const clamped   = Math.min(maxTenure, Math.max(5, n))
+                                                const ageCap    = clamped > opt1Max ? 75 : (data.ipa?.age_cap ?? undefined)
+                                                update({ ipa: { ...data.ipa, tenure: clamped, ...(ageCap != null ? { age_cap: ageCap as 65 | 75 } : {}) } })
+                                            }
                                         }} />
                                 </Question>
                             </div>
-                            <Question label="Tenure capped at age">
-                                <PillSelect
-                                    value={data.ipa?.age_cap ? String(data.ipa.age_cap) : undefined}
-                                    onChange={v => update({ ipa: { ...data.ipa, age_cap: Number(v) as 65 | 75 } })}
-                                    options={[{ value: '65', label: '65 (Option 1)' }, { value: '75', label: '75 (Option 2)' }]}
-                                />
-                            </Question>
+                            {(() => {
+                                const opt1Max = meta?.hdbClass ? 25 : 30
+                                const forceOpt2 = (data.ipa?.tenure ?? 0) > opt1Max
+                                return (
+                                    <Question label="Tenure capped at age">
+                                        <PillSelect
+                                            value={data.ipa?.age_cap ? String(data.ipa.age_cap) : undefined}
+                                            onChange={v => update({ ipa: { ...data.ipa, age_cap: Number(v) as 65 | 75 } })}
+                                            options={[
+                                                { value: '65', label: '65 (Option 1)', disabled: forceOpt2 },
+                                                { value: '75', label: '75 (Option 2)' },
+                                            ]}
+                                        />
+                                        {forceOpt2 && (
+                                            <p className="text-[11px] text-amber-600 mt-1">
+                                                Tenure {data.ipa?.tenure} yrs — Option 1 (age cap 65) not available. Only Option 2 applies.
+                                            </p>
+                                        )}
+                                    </Question>
+                                )
+                            })()}
                             {/* Reverse-engineered alternative option — derived from IPA data alone, no income entry needed */}
                             {data.property_price && data.ipa?.amount && data.ipa?.tenure && data.ipa?.age_cap && (() => {
                                 const outstanding = (outstandingLocked ? '0' : (data.outstanding_housing_loans ?? '0')) as OutstandingLoans
@@ -720,7 +760,10 @@ export default function PurchaseWorkflowPanel({
                         const activeSchedule: RateScheduleEntry[] = (hasPkg && pkgSchedule?.length)
                             ? pkgSchedule
                             : (data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE)
-                        const lockinYears = (pkg?.lockin_years as number | undefined) ?? data.reference_lockin_years
+                        const isBuc = data.property_type === 'new_launch_condo' || data.property_type === 'ec_new_launch'
+                        const topYearRaw = data.otp_dates?.top_year ? parseInt(data.otp_dates.top_year) : NaN
+                        const bucYears = isBuc && !isNaN(topYearRaw) ? Math.max(1, topYearRaw - new Date().getFullYear()) : null
+                        const lockinYears = bucYears ?? (pkg?.lockin_years as number | undefined) ?? data.reference_lockin_years
                         const t1 = data.preferred_tenure ?? selectedOpt.maxTenure
                         const t2 = preferredTenure2 ?? selectedOpt.maxTenure
                         const adjLoan = adjustedLoans[selectedOpt.key]
@@ -748,13 +791,37 @@ export default function PurchaseWorkflowPanel({
                         return (
                             <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
 
+                                {/* Live SORA rates */}
+                                {soraForAmort && (soraForAmort.comp_sora_1m != null || soraForAmort.comp_sora_3m != null) && (
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                        {soraForAmort.comp_sora_1m != null && (
+                                            <div className="flex items-baseline gap-1.5">
+                                                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">1M SORA</span>
+                                                <span className="text-base font-black text-[#052d4a]">{soraForAmort.comp_sora_1m.toFixed(4)}%</span>
+                                            </div>
+                                        )}
+                                        {soraForAmort.comp_sora_1m != null && soraForAmort.comp_sora_3m != null && (
+                                            <span className="w-px h-5 bg-slate-200 shrink-0" />
+                                        )}
+                                        {soraForAmort.comp_sora_3m != null && (
+                                            <div className="flex items-baseline gap-1.5">
+                                                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">3M SORA</span>
+                                                <span className="text-base font-black text-[#052d4a]">{soraForAmort.comp_sora_3m.toFixed(4)}%</span>
+                                            </div>
+                                        )}
+                                        {(soraForAmort.published_date ?? soraForAmort.value_date) && (
+                                            <span className="text-[11px] text-slate-400 ml-auto">as of {soraForAmort.published_date ?? soraForAmort.value_date}</span>
+                                        )}
+                                    </div>
+                                )}
+
                                 {/* Rate schedule */}
                                 <div>
                                     <div className="flex items-center gap-2 mb-2">
                                         <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Interest Rates p.a.</span>
                                         {lockinYears != null && (
                                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#03a9e7] bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full">
-                                                <Lock size={9} /> {lockinYears}-yr lock-in
+                                                <Lock size={9} /> {isBuc ? `${lockinYears} yrs to TOP` : `${lockinYears}-yr lock-in`}
                                             </span>
                                         )}
                                         {hasPkg && (
@@ -828,30 +895,33 @@ export default function PurchaseWorkflowPanel({
                                                 className="flex items-center gap-1 text-xs font-semibold text-[#03a9e7] hover:bg-sky-50 px-2.5 py-1.5 rounded-lg transition-colors">
                                                 <Plus size={12} /> Add Year
                                             </button>
-                                            {!hasThereafter && (
-                                                <button type="button" onClick={addScheduleThereafter}
-                                                    className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-50 px-2.5 py-1.5 rounded-lg transition-colors">
-                                                    <Plus size={12} /> Add Thereafter
-                                                </button>
-                                            )}
                                         </div>
                                     )}
                                 </div>
 
-                                {/* Lock-in years — always editable */}
-                                <div className="flex items-center gap-2 text-xs text-slate-500">
-                                    <Lock size={11} className="text-[#03a9e7] shrink-0" />
-                                    <span className="shrink-0">Lock-in period:</span>
-                                    <input type="number" min={1} max={10}
-                                        value={data.reference_lockin_years ?? ''}
-                                        placeholder={pkg?.lockin_years != null ? String(pkg.lockin_years) : 'yrs'}
-                                        onChange={e => update({ reference_lockin_years: num(e.target.value) })}
-                                        className="w-14 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
-                                    <span>yrs</span>
-                                    {hasPkg && pkg.lockin_years != null && data.reference_lockin_years == null && (
-                                        <span className="text-[11px] text-slate-400">(from package)</span>
-                                    )}
-                                </div>
+                                {/* Lock-in years — editable for non-BUC; BUC derives it from TOP year */}
+                                {isBuc ? (
+                                    lockinYears != null && (
+                                        <p className="text-[11px] text-[#03a9e7] flex items-center gap-1">
+                                            <Info size={11} className="shrink-0" />
+                                            Interest calculated over {lockinYears} year{lockinYears !== 1 ? 's' : ''} to TOP — update Expected TOP Year above to change.
+                                        </p>
+                                    )
+                                ) : (
+                                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                                        <Lock size={11} className="text-[#03a9e7] shrink-0" />
+                                        <span className="shrink-0">Lock-in period:</span>
+                                        <input type="number" min={1} max={10}
+                                            value={data.reference_lockin_years ?? ''}
+                                            placeholder={pkg?.lockin_years != null ? String(pkg.lockin_years) : 'yrs'}
+                                            onChange={e => update({ reference_lockin_years: num(e.target.value) })}
+                                            className="w-14 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
+                                        <span>yrs</span>
+                                        {hasPkg && pkg.lockin_years != null && data.reference_lockin_years == null && (
+                                            <span className="text-[11px] text-slate-400">(from package)</span>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* Per-year interest cards */}
                                 {lockInCards.length > 0 && (
@@ -952,7 +1022,9 @@ export default function PurchaseWorkflowPanel({
                                     </div>
                                     <div className="grid grid-cols-3">
                                         <div className="px-3 py-2.5 text-slate-500">
-                                            {lockinYears != null ? `Interest (${lockinYears}-yr lock-in)` : 'Lock-in Interest'}
+                                            {lockinYears != null
+                                                ? isBuc ? `Interest (${lockinYears} yrs to TOP)` : `Interest (${lockinYears}-yr lock-in)`
+                                                : 'Lock-in Interest'}
                                         </div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
                                             {i1 != null ? money(i1) : <span className="text-slate-300">—</span>}
@@ -968,12 +1040,15 @@ export default function PurchaseWorkflowPanel({
                                     </div>
                                 </div>
 
-                                {/* Year-by-Year Breakdown — lock-in period only (Tenure 1) */}
-                                {amortRows1.length > 0 && lockinYears != null && (
-                                    <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                {/* Year-by-Year Breakdown — lock-in period, both tenures */}
+                                {lockinYears != null && [
+                                    { rows: amortRows1, t: t1, label: 'Tenure 1' },
+                                    { rows: amortRows2, t: t2, label: 'Tenure 2' },
+                                ].map(({ rows, t, label }) => rows.length > 0 && (
+                                    <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
                                         <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                                             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Year-by-Year Breakdown</span>
-                                            <span className="text-[11px] text-slate-400">Lock-in · Tenure 1 ({t1} yrs)</span>
+                                            <span className="text-[11px] text-slate-400">{isBuc ? 'Pre-TOP' : 'Lock-in'} · {label} ({t} yrs)</span>
                                         </div>
                                         <div className="overflow-x-auto">
                                             <table className="w-full text-xs">
@@ -989,7 +1064,7 @@ export default function PurchaseWorkflowPanel({
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {amortRows1.filter(r => r.year <= lockinYears).map(row => {
+                                                    {rows.filter(r => r.year <= lockinYears).map(row => {
                                                         const hasData = row.instalment != null
                                                         const isLastLockin = row.year === lockinYears
                                                         const fmt2 = (n: number | null) => n != null ? `$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
@@ -1024,7 +1099,7 @@ export default function PurchaseWorkflowPanel({
                                             </table>
                                         </div>
                                     </div>
-                                )}
+                                ))}
 
                                 <Tip>A shorter tenure will result in a higher income requirement to pass TDSR.</Tip>
                             </Section>

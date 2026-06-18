@@ -135,9 +135,11 @@ export interface DecoupleInputs {
     borrowers?:               DecoupleBorrower[]
     equityLoanAmount?:        number   // amount the client wants to take (from UI input)
     referenceRatePct?:        number
-    preferredTenureRefi?:     number
-    preferredTenurePurchase?: number
-    preferredTenureEquity?:   number
+    preferredTenureRefi?:             number
+    preferredTenurePurchase?:         number
+    preferredTenureEquity?:           number
+    preferredTenureEquityLoanCurrent?: number  // TDSR exploration tenure for existing equity loan
+    preferredPurchaseLoan?:            number  // preferred bank loan for S2/S3 (min $100k, max 75% × purchasePrice)
 }
 
 export interface DecoupleComputation {
@@ -297,8 +299,11 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
 
     // ── Yes-financing breakdown (S2, S3) ─────────────────────────────────────
     const cash5              = purchasePrice * 0.05
-    const cpfCash20          = purchasePrice * 0.20
-    const bankLoan75         = purchasePrice * 0.75
+    const maxPurchaseLoan    = purchasePrice * 0.75
+    const bankLoan75         = inputs.preferredPurchaseLoan != null
+        ? Math.max(100_000, Math.min(maxPurchaseLoan, inputs.preferredPurchaseLoan))
+        : maxPurchaseLoan
+    const cpfCash20          = Math.max(0, purchasePrice - cash5 - bankLoan75)
     const cpfUsedForDownpay  = Math.min(buyerCpfOa, cpfCash20)
 
     // ── Ownership structure ───────────────────────────────────────────────────
@@ -348,7 +353,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     // Existing equity loan has its own remaining tenure — stress computed separately.
     const equityLoanCurrentTenureMax = Math.max(MIN_TENURE, refiMaxByAge)
     const effectiveCurrentEquityLoanTenure = equityOutstanding > 0
-        ? Math.max(MIN_TENURE, Math.min(inputs.currentTenureEquityLoan ?? equityLoanCurrentTenureMax, equityLoanCurrentTenureMax))
+        ? Math.max(MIN_TENURE, Math.min(inputs.preferredTenureEquityLoanCurrent ?? equityLoanCurrentTenureMax, equityLoanCurrentTenureMax))
         : 0
     const homeLoanStressInstallment = isRefi && homeLoan > 0
         ? calcInstallment(homeLoan * buyerShareFrac, STRESS_TEST_RATE * 100, effectiveRefiTenure)
@@ -538,8 +543,10 @@ export function inputsFromDecoupleWorkflow(d: DecoupleWorkflow): DecoupleInputs 
         borrowers:             d.borrowers,
         equityLoanAmount:      d.equity_loan_amount,
         referenceRatePct:      d.reference_rate,
-        preferredTenureRefi:     d.preferred_tenure_refi,
-        preferredTenurePurchase: d.preferred_tenure_purchase,
-        preferredTenureEquity:   d.preferred_tenure_equity,
+        preferredTenureRefi:             d.preferred_tenure_refi,
+        preferredTenurePurchase:         d.preferred_tenure_purchase,
+        preferredTenureEquity:           d.preferred_tenure_equity,
+        preferredTenureEquityLoanCurrent: d.preferred_tenure_equity_current,
+        preferredPurchaseLoan:            d.preferred_purchase_loan,
     }
 }

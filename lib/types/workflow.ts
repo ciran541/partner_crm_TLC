@@ -202,9 +202,11 @@ export interface DecoupleWorkflow {
     reference_rate?: number
 
     // Preferred tenures (scenario-dependent)
-    preferred_tenure_refi?: number      // S1: refi tenure; S3: refi portion
-    preferred_tenure_purchase?: number  // S2: purchase tenure; S3: purchase portion
-    preferred_tenure_equity?: number    // equity loan tenure (if taken)
+    preferred_tenure_refi?: number              // S1: refi tenure; S3: refi portion
+    preferred_tenure_purchase?: number          // S2: purchase tenure; S3: purchase portion
+    preferred_tenure_equity?: number            // equity loan tenure (if taken)
+    preferred_tenure_equity_current?: number    // TDSR exploration tenure for existing equity loan
+    preferred_purchase_loan?: number            // preferred bank loan amount for S2/S3 (min $100k, max 75% × purchasePrice)
 
     // Rate preference + Tenure Planner (mirrors RefinancingWorkflow)
     rate_preference?: 'fixed' | 'floating' | 'both'
