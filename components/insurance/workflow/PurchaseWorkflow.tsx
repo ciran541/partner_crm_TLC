@@ -377,9 +377,10 @@ export default function PurchaseWorkflowPanel({
                                 // exactly what monthly capacity the bank accepted. Apply that to Option 2's tenure.
                                 const stressPayment = monthlyInstallment(data.ipa.amount, STRESS_TEST_RATE * 100, data.ipa.tenure)
                                 const altMaxFromTdsr = maxLoanFromPayment(stressPayment, STRESS_TEST_RATE * 100, altTenure)
-                                const altLoan = Math.min(altMaxFromTdsr, altLtvCeiling)
-                                const ltvBinds = altMaxFromTdsr >= altLtvCeiling
-                                if (altTenure <= 0 || altLoan <= 0) return null
+                                // Show income eligibility (TDSR-derived), not capped by LTV.
+                                // LTV ceiling is shown as a note — it's a property constraint, not an income constraint.
+                                const ltvBinds = altMaxFromTdsr > altLtvCeiling
+                                if (altTenure <= 0 || altMaxFromTdsr <= 0) return null
                                 return (
                                     <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 space-y-1.5">
                                         <p className="text-[11px] font-bold text-[#052d4a]">
@@ -387,12 +388,12 @@ export default function PurchaseWorkflowPanel({
                                         </p>
                                         <p className="text-sm text-slate-700">
                                             Est. Loan Eligibility:{' '}
-                                            <span className="font-semibold">{money(altLoan)}</span>{' '}
+                                            <span className="font-semibold">{money(altMaxFromTdsr)}</span>{' '}
                                             over <span className="font-semibold">{altTenure} years</span>
                                         </p>
                                         <p className="text-[11px] text-slate-500">
                                             {ltvBinds
-                                                ? `Capped at ${altLtvLabel} of purchase price or valuation, whichever is lower.`
+                                                ? `${altLtvLabel} LTV ceiling at this property: ${money(altLtvCeiling)} — the lower applies at time of application.`
                                                 : `Within TDSR at 4% stress test — LTV ceiling is ${money(altLtvCeiling)} (${altLtvLabel}).`}
                                         </p>
                                     </div>
@@ -1027,9 +1028,11 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
     const fmtPct = (n: number) => `${n % 1 === 0 ? n : n.toFixed(1)}%`
     const minCashPctLabel = fmtPct(minCashPctNum)
 
-    // Effective loan: use the user's adjustment (clamped to [finalLoan, ltvCeiling]) or fall back to computed
+    // Breakdown always reflects the actual approved/eligible loan, or whatever the agent typed.
+    // For IPA path the field placeholder shows the full LTV ceiling as the reachable target.
     const effectiveLoan = adjustedLoan ?? opt.finalLoan
     const isAdjusted = adjustedLoan != null && Math.round(adjustedLoan) !== Math.round(opt.finalLoan)
+    const fieldPlaceholder = opt.source === 'ipa' ? opt.ltvCeiling : opt.finalLoan
     const actualLtvPctNum = price > 0
         ? Math.round(effectiveLoan / price * 1000) / 10
         : Math.round(opt.ltvPct * 100)
@@ -1038,10 +1041,10 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
     const balancePctLabel = fmtPct(balancePctNum)
     const effectiveBalance = price > 0 ? Math.max(0, price - effectiveLoan - opt.minCashDown) : opt.cashCpfDown
 
-    // Shortfall = (75% of valuation) − entered loan = how far below max LTV the desired loan is.
-    // Bridge = entered loan − bank-approved base = what needs pledging to reach the desired loan.
-    const remainingShortfall = opt.ltvCeiling - effectiveLoan
-    const bridgeAmount = Math.max(0, effectiveLoan - opt.finalLoan)
+    // Pledge reference: whatever is in the "How much loan does the client require?" field,
+    // or its placeholder (LTV ceiling for IPA path, finalLoan for income path) when empty.
+    const pledgeRefLoan = adjustedLoan != null ? effectiveLoan : fieldPlaceholder
+    const bridgeAmount = Math.max(0, pledgeRefLoan - opt.finalLoan)
     const bridgePledge: PledgeData | null = bridgeAmount > 1 && rule
         ? computePledge(bridgeAmount, opt.tenure, rule)
         : null
@@ -1155,7 +1158,7 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                                 type="text"
                                 inputMode="numeric"
                                 value={rawLoan !== '' ? rawLoan : isAdjusted ? Math.round(effectiveLoan).toLocaleString() : ''}
-                                placeholder={Math.round(opt.finalLoan).toLocaleString()}
+                                placeholder={Math.round(fieldPlaceholder).toLocaleString()}
                                 onFocus={e => { setRawLoan(String(Math.round(effectiveLoan))); e.currentTarget.select() }}
                                 onChange={e => setRawLoan(e.target.value.replace(/[^\d,]/g, ''))}
                                 onBlur={() => {
@@ -1184,33 +1187,25 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                         </p>
                     </div>
 
-                    {/* Pledge/show detail:
-                        - Shortfall = (75% of valuation) − entered loan (how far below max LTV)
-                        - Pledge = for the bridge from bank-approved base to the desired loan */}
-                    {opt.pledge ? (
+                    {/* Pledge/show — always references pledgeRefLoan (the field value, or its placeholder when empty). */}
+                    {bridgePledge ? (
                         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-1.5">
                             <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
                                 <AlertTriangle size={12} className="shrink-0" />
-                                {remainingShortfall > 1
-                                    ? <>Shortfall from full {ltvPctLabel} ({money(opt.ltvCeiling)}): {money(remainingShortfall)}</>
-                                    : <>At full {ltvPctLabel} ({money(opt.ltvCeiling)})</>
+                                {isAdjusted
+                                    ? <>Shortfall from bank-approved {money(opt.finalLoan)}: {money(bridgeAmount)}</>
+                                    : <>At {ltvPctLabel} ({money(pledgeRefLoan)})</>
                                 }
                             </p>
                             {isAdjusted && effectiveLoan <= opt.finalLoan + 1 ? (
                                 <p className="text-xs text-emerald-700">
                                     No pledging needed — within bank-approved {money(opt.finalLoan)}.
                                 </p>
-                            ) : isAdjusted && bridgePledge ? (
-                                <p className="text-xs text-amber-700 leading-relaxed">
-                                    For {money(effectiveLoan)} ({actualLtvPctLabel}):{' '}
-                                    pledge <span className="font-semibold">{money(bridgePledge.pledgeFund)}</span> (locked 4 yrs){' '}
-                                    or show <span className="font-semibold">{money(bridgePledge.showFund)}</span> in funds.
-                                </p>
                             ) : (
                                 <p className="text-xs text-amber-700 leading-relaxed">
-                                    Either{' '}
-                                    <span className="font-semibold">pledge {money(opt.pledge.pledgeFund)}</span> (locked 4 yrs){' '}
-                                    or <span className="font-semibold">show {money(opt.pledge.showFund)}</span> in funds.
+                                    {isAdjusted ? <>For {money(effectiveLoan)} ({actualLtvPctLabel}): </> : <>Either </>}
+                                    pledge <span className="font-semibold">{money(bridgePledge.pledgeFund)}</span> (locked 4 yrs){' '}
+                                    or show <span className="font-semibold">{money(bridgePledge.showFund)}</span> in funds.
                                 </p>
                             )}
                         </div>
