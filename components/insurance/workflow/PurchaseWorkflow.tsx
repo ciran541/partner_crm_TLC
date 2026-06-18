@@ -1133,7 +1133,7 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                     {!isIpa && opt.incomeEligibility != null && (
                         <div className="flex items-center justify-between gap-3 text-sm">
                             <span className="text-slate-500">Estimated Loan Eligibility</span>
-                            <span className="font-semibold text-slate-700">{money(opt.incomeEligibility)}</span>
+                            <span className="font-semibold text-emerald-600">{money(opt.incomeEligibility)}</span>
                         </div>
                     )}
                 </div>
@@ -1217,7 +1217,7 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                             <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
                                 <AlertTriangle size={12} className="shrink-0" />
                                 {isAdjusted
-                                    ? <>Shortfall from bank-approved {money(opt.finalLoan)}: {money(bridgeAmount)}</>
+                                    ? <>Shortfall Loan Amount: {money(bridgeAmount)}</>
                                     : <>At {ltvPctLabel} ({money(effectiveLoan)})</>
                                 }
                             </p>
