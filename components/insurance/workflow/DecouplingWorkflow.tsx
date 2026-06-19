@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
     computeDecouple,
     inputsFromDecoupleWorkflow,
@@ -14,15 +14,17 @@ import {
 import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
 import type { DecouplePledge } from '@/lib/insurance/decoupleCalc'
 import { maxLoanFromPayment, monthlyInstallment, tdsrAvailable, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
+import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RecommendedPackage } from '@/lib/insurance/rateRecommend'
 import { type SoraRates } from '@/lib/insurance/sora'
+import { type RateScheduleEntry } from '@/lib/types/rates'
 import RefiPackages from './RefiPackages'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save,
     ArrowRight, ExternalLink, Users, Building2, Percent,
-    Wallet, CalendarRange,
+    Wallet, CalendarRange, Lock, Plus, Trash2,
 } from 'lucide-react'
 
 interface Props {
@@ -56,6 +58,17 @@ export default function DecouplingWorkflowPanel({
         data.subsidy_return_amount != null && !SUBSIDY_PRESETS.includes(String(data.subsidy_return_amount)),
     )
     const [loanDraft, setLoanDraft] = useState<string | null>(null)
+    const [soraForAmort, setSoraForAmort] = useState<SoraRates | null>(null)
+    const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
+    const [rawPrefTenure1, setRawPrefTenure1] = useState('')
+    const [rawPrefTenure2, setRawPrefTenure2] = useState('')
+
+    useEffect(() => {
+        fetch('/api/insurance/rates')
+            .then(r => r.json())
+            .then(d => { if (d.sora) setSoraForAmort(d.sora) })
+            .catch(() => {})
+    }, [])
 
     const computation = useMemo(() => computeDecouple(inputsFromDecoupleWorkflow(data)), [data])
     const { scenario } = computation
@@ -115,6 +128,28 @@ export default function DecouplingWorkflowPanel({
         ? `${(data.selected_package_snapshot?.bank as string | undefined) ?? 'selected package'} @ ${snapshotRate.toFixed(2)}% avg lock-in`
         : data.current_rate != null ? `current rate ${data.current_rate}% p.a.` : null
     const compLockinYears: number = ((data.selected_package_snapshot?.lockin_years as number | undefined) ?? 2) || 1
+
+    // Rate schedule for amortisation (package wins over manual)
+    const DEFAULT_RATE_SCHEDULE: RateScheduleEntry[] = [{ year: 1, type: 'fixed' }]
+    const pkgSchedule = data.selected_package_snapshot?.rate_schedule as RateScheduleEntry[] | undefined
+    const hasPkg = pkgSchedule != null && pkgSchedule.length > 0
+    const activeSchedule: RateScheduleEntry[] = hasPkg
+        ? pkgSchedule
+        : (data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE)
+    const lockinYears = (data.selected_package_snapshot?.lockin_years as number | undefined) ?? data.reference_lockin_years
+    const updateScheduleRow = (idx: number, patch: Partial<RateScheduleEntry>) => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        update({ manual_rate_schedule: s.map((e, i) => i === idx ? { ...e, ...patch } : e) })
+    }
+    const addScheduleYear = () => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        const maxYear = Math.max(0, ...s.filter(e => e.year != null).map(e => e.year!))
+        update({ manual_rate_schedule: [...s, { year: maxYear + 1, type: 'fixed' }] })
+    }
+    const removeScheduleRow = (idx: number) => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        if (s.length > 1) update({ manual_rate_schedule: s.filter((_, i) => i !== idx) })
+    }
 
     return (
         <div className="space-y-5">
@@ -824,7 +859,79 @@ export default function DecouplingWorkflowPanel({
                 ]} />
             )}
 
-            {/* ── 9. RATE PREFERENCE ── */}
+            {/* ── 9. TOTAL LIQUIDITY REQUIRED — S2/S3 only ── */}
+            {computation.ready && (scenario === 'S2' || scenario === 'S3') && (() => {
+                const miscFees = computation.bsd + computation.absd + computation.buyerLegalFee
+                const fmtPct = (f: number) => `${Math.round(f * 100)}%`
+                const s1Total = computation.cash5 + computation.cpfCash20 + miscFees
+                // Combined pledge = sum of ALL failing loans (same as TdsrFinalSummary)
+                const allPledges = [
+                    computation.homeLoanPledge,
+                    computation.equityLoanCurrentPledge,
+                    computation.purchasePledge,
+                    computation.equityPledge,
+                ].filter((p): p is DecouplePledge => p != null)
+                const combinedPledge = allPledges.length > 0
+                    ? { pledgeFund: allPledges.reduce((s, p) => s + p.pledgeFund, 0), showFund: allPledges.reduce((s, p) => s + p.showFund, 0) }
+                    : null
+                const s2Total = combinedPledge ? combinedPledge.pledgeFund + computation.cash5 + computation.cpfCash20 + miscFees : null
+                const s3Total = combinedPledge ? combinedPledge.showFund + computation.cash5 + computation.cpfCash20 + miscFees : null
+                const loanFrac = computation.purchasePrice > 0 ? computation.bankLoan75 / computation.purchasePrice : 0.75
+                const cpfFrac  = computation.purchasePrice > 0 ? computation.cpfCash20 / computation.purchasePrice : 0.20
+                return (
+                    <Section title="Total Liquidity Required" icon={<Wallet size={15} />}>
+                        <p className="text-[11px] text-slate-400 -mt-1">
+                            Misc fees (BSD + ABSD + legal) = {money(miscFees)}
+                        </p>
+
+                        {/* S1 — no pledging */}
+                        <div className="rounded-lg border border-slate-200 p-3 space-y-1.5">
+                            <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S1 — Without pledging / showing</p>
+                            <p className="text-sm font-semibold text-[#052d4a] pb-0.5">
+                                No Pledging/Showing to get {money(computation.bankLoan75)} loan (<span className="text-[#03a9e7]">{fmtPct(loanFrac)}</span>)
+                            </p>
+                            <Row label={<>Min Cash <span className="text-[#03a9e7]">(5%)</span></>} value={money(computation.cash5)} />
+                            <Row label={<>Balance Cash / CPF <span className="text-[#03a9e7]">({fmtPct(cpfFrac)})</span></>} value={money(computation.cpfCash20)} />
+                            <Row label="Misc Fees" value={money(miscFees)} valueClass="text-slate-400" />
+                            <div className="border-t border-dashed border-slate-200 pt-1.5">
+                                <Row label="Total Required" value={money(s1Total)} highlight />
+                            </div>
+                        </div>
+
+                        {combinedPledge && s2Total !== null && s3Total !== null && (
+                            <>
+                                {/* S2 — with pledging */}
+                                <div className="rounded-lg border border-slate-200 p-3 space-y-1.5">
+                                    <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S2 — With pledging</p>
+                                    <Row label="Pledging of Funds (all loans, locked 4 yrs)"
+                                        value={money(combinedPledge.pledgeFund)} highlight />
+                                    <Row label={<>Min Cash <span className="text-[#03a9e7]">(5%)</span></>} value={money(computation.cash5)} />
+                                    <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtPct(cpfFrac)})</span></>} value={money(computation.cpfCash20)} />
+                                    <Row label="Misc Fees" value={money(miscFees)} valueClass="text-slate-400" />
+                                    <div className="border-t border-dashed border-slate-200 pt-1.5">
+                                        <Row label="Total Required" value={money(s2Total)} highlight />
+                                    </div>
+                                </div>
+
+                                {/* S3 — with show funds */}
+                                <div className="rounded-lg border border-slate-200 p-3 space-y-1.5">
+                                    <p className="text-[11px] font-semibold text-red-500 uppercase tracking-wide">S3 — With show funds</p>
+                                    <Row label="Showing of Funds (all loans)"
+                                        value={money(combinedPledge.showFund)} highlight />
+                                    <Row label={<>Min Cash <span className="text-[#03a9e7]">(5%)</span></>} value={money(computation.cash5)} />
+                                    <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtPct(cpfFrac)})</span></>} value={money(computation.cpfCash20)} />
+                                    <Row label="Misc Fees" value={money(miscFees)} valueClass="text-slate-400" />
+                                    <div className="border-t border-dashed border-slate-200 pt-1.5">
+                                        <Row label="Total Required" value={money(s3Total)} highlight />
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </Section>
+                )
+            })()}
+
+            {/* ── 10. RATE PREFERENCE ── */}
             {computation.ready && scenario !== null && scenario !== 'S4' && (
                 <Section title="Rate Preference" icon={<Percent size={15} />}>
                     <Question label="Any preference for fixed or floating rates?">
@@ -841,7 +948,7 @@ export default function DecouplingWorkflowPanel({
                 </Section>
             )}
 
-            {/* ── 10. RECOMMENDED PACKAGES ── */}
+            {/* ── 11. RECOMMENDED PACKAGES ── */}
             {computation.ready && scenario !== null && scenario !== 'S4' && pkgLoan > 0 && (
                 <RefiPackages
                     loan={pkgLoan}
@@ -855,27 +962,315 @@ export default function DecouplingWorkflowPanel({
                 />
             )}
 
-            {/* ── 11. TENURE COMPARISON ── */}
+            {/* ── 12. MONTHLY INSTALMENT ── */}
             {computation.ready && scenario !== null && scenario !== 'S4' && pkgLoan > 0 && (() => {
                 const clamp = (v: number) => Math.min(Math.max(v, pkgTenureMin), pkgTenure)
                 const t1 = clamp(data.preferred_tenure_1 ?? pkgTenure)
-                const t2 = clamp(data.preferred_tenure_2 ?? pkgTenure)
+                const t2 = clamp(preferredTenure2 ?? pkgTenure)
+                const amortRows1 = computeAmortization(pkgLoan, t1, activeSchedule, soraForAmort)
+                const amortRows2 = computeAmortization(pkgLoan, t2, activeSchedule, soraForAmort)
+                const m1 = amortRows1[0]?.instalment ?? null
+                const m2 = amortRows2[0]?.instalment ?? null
+                // effectiveLockin: for interest cards + cumulative interest (requires > 0)
+                const effectiveLockin = (lockinYears != null && lockinYears > 0) ? lockinYears : null
+                const i1 = effectiveLockin != null ? (amortRows1.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                const i2 = effectiveLockin != null ? (amortRows2.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                const lockInCards = effectiveLockin != null
+                    ? Array.from({ length: effectiveLockin }, (_, i) => ({
+                        year: i + 1,
+                        value: amortRows1.find(r => r.year === i + 1)?.cumulativeInterest ?? null,
+                        instalment: amortRows1.find(r => r.year === i + 1)?.instalment ?? null,
+                    }))
+                    : []
+                // breakdownYears: always show year-by-year table; falls back to scheduled year count when no lock-in
+                const schedExplicitYears = activeSchedule.filter(e => !e.thereafter && e.year != null).length
+                const breakdownYears = effectiveLockin ?? (schedExplicitYears > 0 ? schedExplicitYears : 3)
+                const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
+                const fmt2 = (n: number | null) => n != null ? `$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
                 return (
-                    <TenureComparison
-                        loan={pkgLoan}
-                        ratePct={compRate}
-                        rateLabel={compRateLabel}
-                        lockinYears={compLockinYears}
-                        tenureMin={pkgTenureMin}
-                        tenureMax={pkgTenure}
-                        tenure1={t1}
-                        tenure2={t2}
-                        onT1Change={(v: number) => update({ preferred_tenure_1: v || undefined })}
-                        onT2Change={(v: number) => update({ preferred_tenure_2: v || undefined })}
-                        grossIncome={computation.grossMonthlyIncome > 0 ? computation.grossMonthlyIncome : null}
-                        existingDebts={computation.existingMonthlyDebts}
-                        propertyUse={data.property_use}
-                    />
+                    <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
+
+                        {/* Live SORA rates */}
+                        {soraForAmort && (soraForAmort.comp_sora_1m != null || soraForAmort.comp_sora_3m != null) && (
+                            <div className="flex items-center gap-3 flex-wrap">
+                                {soraForAmort.comp_sora_1m != null && (
+                                    <div className="flex items-baseline gap-1.5">
+                                        <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">1M SORA</span>
+                                        <span className="text-base font-black text-[#052d4a]">{soraForAmort.comp_sora_1m.toFixed(4)}%</span>
+                                    </div>
+                                )}
+                                {soraForAmort.comp_sora_1m != null && soraForAmort.comp_sora_3m != null && <span className="w-px h-5 bg-slate-200 shrink-0" />}
+                                {soraForAmort.comp_sora_3m != null && (
+                                    <div className="flex items-baseline gap-1.5">
+                                        <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">3M SORA</span>
+                                        <span className="text-base font-black text-[#052d4a]">{soraForAmort.comp_sora_3m.toFixed(4)}%</span>
+                                    </div>
+                                )}
+                                {(soraForAmort.published_date ?? soraForAmort.value_date) && (
+                                    <span className="text-[11px] text-slate-400 ml-auto">as of {soraForAmort.published_date ?? soraForAmort.value_date}</span>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Rate schedule */}
+                        <div>
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Interest Rates p.a.</span>
+                                {effectiveLockin != null && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#03a9e7] bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full">
+                                        <Lock size={9} /> {effectiveLockin}-yr lock-in
+                                    </span>
+                                )}
+                                {hasPkg && (
+                                    <button type="button" onClick={() => update({ selected_package_snapshot: undefined })}
+                                        className="ml-auto text-[11px] text-slate-400 hover:text-slate-600 underline underline-offset-2">
+                                        Clear package
+                                    </button>
+                                )}
+                            </div>
+                            <div className="rounded-xl border border-slate-100 overflow-hidden">
+                                {activeSchedule.filter(e => !e.thereafter).map((entry, idx) => {
+                                    const schedIdx = activeSchedule.indexOf(entry)
+                                    return hasPkg ? (
+                                        <div key={idx} className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 last:border-b-0 bg-white">
+                                            <div className="w-1 h-7 rounded-full shrink-0 bg-[#03a9e7]" />
+                                            <span className="w-20 shrink-0 text-xs font-bold text-[#052d4a]">Year {entry.year}</span>
+                                            <span className="text-xs font-semibold text-slate-600">
+                                                {entry.type === 'fixed'
+                                                    ? `${entry.rate?.toFixed(2) ?? '—'}% fixed`
+                                                    : `${entry.reference ?? ''} + ${entry.spread?.toFixed(2) ?? '—'}%`}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <AmortRateRow key={idx}
+                                            entry={entry} label={`Year ${entry.year}`} isLockin
+                                            onChange={patch => updateScheduleRow(schedIdx, patch)}
+                                            onRemove={() => removeScheduleRow(schedIdx)}
+                                            canRemove={(data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE).length > 1}
+                                            refId={`decouple-rate-${idx}`}
+                                        />
+                                    )
+                                })}
+                                {activeSchedule.some(e => e.thereafter) && (
+                                    <>
+                                        <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border-t border-b border-slate-100">
+                                            <div className="flex-1 h-px bg-slate-200" />
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Out of lock-in</span>
+                                            <div className="flex-1 h-px bg-slate-200" />
+                                        </div>
+                                        {activeSchedule.filter(e => e.thereafter).map((entry, idx) => {
+                                            const schedIdx = activeSchedule.indexOf(entry)
+                                            return hasPkg ? (
+                                                <div key={`t-${idx}`} className="flex items-center gap-2 px-3 py-2.5 bg-slate-50/60">
+                                                    <div className="w-1 h-7 rounded-full shrink-0 bg-slate-200" />
+                                                    <span className="w-20 shrink-0 text-xs font-bold text-slate-400">Thereafter</span>
+                                                    <span className="text-xs font-semibold text-slate-500">
+                                                        {entry.type === 'fixed'
+                                                            ? `${entry.rate?.toFixed(2) ?? '—'}% fixed`
+                                                            : `${entry.reference ?? ''} + ${entry.spread?.toFixed(2) ?? '—'}%`}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <AmortRateRow key={`t-${idx}`}
+                                                    entry={entry} label="Thereafter" isLockin={false}
+                                                    onChange={patch => updateScheduleRow(schedIdx, patch)}
+                                                    onRemove={() => removeScheduleRow(schedIdx)}
+                                                    canRemove={(data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE).length > 1}
+                                                    refId={`decouple-rate-thereafter-${idx}`}
+                                                />
+                                            )
+                                        })}
+                                    </>
+                                )}
+                            </div>
+                            {!hasPkg && (
+                                <button type="button" onClick={addScheduleYear}
+                                    className="mt-2 flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-50 px-2.5 py-1.5 rounded-lg transition-colors">
+                                    <Plus size={12} /> Add Year
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Lock-in period */}
+                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                            <Lock size={11} className="text-[#03a9e7] shrink-0" />
+                            <span className="shrink-0">Lock-in period:</span>
+                            <input type="number" min={1} max={10}
+                                value={data.reference_lockin_years ?? ''}
+                                placeholder={hasPkg && (data.selected_package_snapshot?.lockin_years as number | undefined) != null
+                                    ? String(data.selected_package_snapshot?.lockin_years) : 'yrs'}
+                                onChange={e => update({ reference_lockin_years: e.target.value === '' ? undefined : parseInt(e.target.value) })}
+                                className="w-14 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
+                            <span>yrs</span>
+                            {hasPkg && (data.selected_package_snapshot?.lockin_years as number | undefined) != null && data.reference_lockin_years == null && (
+                                <span className="text-[11px] text-slate-400">(from package)</span>
+                            )}
+                        </div>
+
+                        {/* Per-year interest cards */}
+                        {lockInCards.length > 0 && (
+                            <div className="flex gap-2 flex-wrap">
+                                {lockInCards.map(({ year, value, instalment }, i) => {
+                                    const isLast = i === lockInCards.length - 1
+                                    return isLast ? (
+                                        <div key={year} className="flex-1 min-w-[120px] rounded-xl border-2 border-[#052d4a] bg-[#052d4a] text-white px-4 py-3">
+                                            <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Total Int · Yr {year}</p>
+                                            <p className="text-xl font-black mt-0.5">{value != null ? money(value) : '—'}</p>
+                                            {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money(instalment)}/mo</p>}
+                                        </div>
+                                    ) : (
+                                        <div key={year} className="flex-1 min-w-[100px] rounded-xl border border-slate-200 bg-white px-4 py-3">
+                                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Int · Yr {year}</p>
+                                            <p className="text-lg font-black text-[#052d4a] mt-0.5">{value != null ? money(value) : '—'}</p>
+                                            {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money(instalment)}/mo</p>}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
+
+                        {/* Tenure comparison table */}
+                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                            Tenure Range based off loan: {pkgTenureMin} – {pkgTenure} yrs
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                <div className="flex items-center gap-2">
+                                    <input type="number" min={pkgTenureMin} max={pkgTenure}
+                                        value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
+                                        placeholder={String(pkgTenure)}
+                                        onChange={e => setRawPrefTenure1(e.target.value)}
+                                        onBlur={() => {
+                                            const parsed = parseInt(rawPrefTenure1, 10)
+                                            setRawPrefTenure1('')
+                                            update({ preferred_tenure_1: isNaN(parsed) ? undefined : clamp(parsed) })
+                                        }}
+                                        className={inputCls} />
+                                    <span className="text-xs text-slate-500">yrs</span>
+                                </div>
+                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Synced with preferred tenure above</p>}
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
+                                <div className="flex items-center gap-2">
+                                    <input type="number" min={pkgTenureMin} max={pkgTenure}
+                                        value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                        placeholder={String(pkgTenure)}
+                                        onChange={e => setRawPrefTenure2(e.target.value)}
+                                        onBlur={() => {
+                                            const parsed = parseInt(rawPrefTenure2, 10)
+                                            setRawPrefTenure2('')
+                                            setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
+                                        }}
+                                        className={inputCls} />
+                                    <span className="text-xs text-slate-500">yrs</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-200 overflow-hidden">
+                            <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/60">
+                                <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
+                                <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({t1} yrs)</div>
+                                <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({t2} yrs)</div>
+                            </div>
+                            <div className="grid grid-cols-3 border-b border-slate-100">
+                                <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
+                                <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
+                                    {m1 != null ? <>{money(m1)}<span className="text-slate-400 font-normal">/mo</span></> : <span className="text-slate-300">—</span>}
+                                </div>
+                                <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                    {m1 != null && m2 != null ? (
+                                        <>{money(m2)}<span className="text-slate-400 font-normal">/mo</span>
+                                        <span className={`ml-1.5 text-[11px] font-bold ${m2 > m1 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                            {m2 > m1 ? '+' : ''}{money(m2 - m1)}
+                                        </span></>
+                                    ) : <span className="text-slate-300">—</span>}
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-3">
+                                <div className="px-3 py-2.5 text-slate-600 text-sm">
+                                    {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
+                                </div>
+                                <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
+                                    {i1 != null ? money(i1) : <span className="text-slate-300">—</span>}
+                                </div>
+                                <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                    {i1 != null && i2 != null ? (
+                                        <>{money(i2)}
+                                        <span className={`ml-1.5 text-[11px] font-bold ${i2 > i1 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                            {i2 > i1 ? '+' : ''}{money(i2 - i1)}
+                                        </span></>
+                                    ) : <span className="text-slate-300">—</span>}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Year-by-Year Breakdown — both tenures */}
+                        {[
+                            { rows: amortRows1, t: t1, label: 'Tenure 1' },
+                            { rows: amortRows2, t: t2, label: 'Tenure 2' },
+                        ].map(({ rows, t, label }) => rows.length > 0 && (
+                            <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
+                                <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Year-by-Year Breakdown</span>
+                                    <span className="text-[11px] text-slate-400">
+                                        {effectiveLockin != null ? `Lock-in · ` : ''}{label} ({t} yrs)
+                                    </span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="border-b border-slate-100 bg-slate-50/50">
+                                                <th className="py-2 pl-3 pr-3 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">YR</th>
+                                                <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Rate</th>
+                                                <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Monthly</th>
+                                                <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Prin /mo</th>
+                                                <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int /mo</th>
+                                                <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int (yr)</th>
+                                                <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Balance</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {rows.filter(r => r.year <= breakdownYears).map(row => {
+                                                const hasData = row.instalment != null
+                                                const isLastLockin = row.year === breakdownYears
+                                                return (
+                                                    <tr key={row.year} className={`border-b border-slate-50 last:border-b-0 ${isLastLockin ? 'bg-sky-50/50' : 'bg-white'}`}>
+                                                        <td className="py-2.5 pl-3 pr-3">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <div className="w-0.5 h-4 rounded-full bg-[#03a9e7] shrink-0" />
+                                                                <span className="font-semibold text-[#052d4a]">{row.year}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-[#03a9e7] font-semibold">{hasData ? `${row.rate?.toFixed(2)}%` : '—'}</td>
+                                                        <td className="px-3 py-2.5 text-right text-slate-700">{fmt2(row.instalment)}</td>
+                                                        <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthPrincipal)}</td>
+                                                        <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthInterest)}</td>
+                                                        <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.yearInterest)}</td>
+                                                        <td className="px-3 py-2.5 text-right">
+                                                            {hasData ? (
+                                                                isLastLockin
+                                                                    ? <span className="font-black text-[#052d4a] bg-sky-100 border border-sky-200 px-2 py-0.5 rounded-full">{fmt2(row.balance)}</span>
+                                                                    : <span className="font-semibold text-slate-700">{fmt2(row.balance)}</span>
+                                                            ) : '—'}
+                                                        </td>
+                                                    </tr>
+                                                )
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ))}
+
+                        {effectiveLockin == null && (
+                            <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                                <Info size={11} className="text-[#03a9e7]" /> Set lock-in period above to see per-year interest cards.
+                            </p>
+                        )}
+                    </Section>
                 )
             })()}
 
@@ -1310,7 +1705,7 @@ function SubNote({ children }: { children: React.ReactNode }) {
 }
 
 function Row({ label, value, hint, highlight, valueClass }: {
-    label: string; value: string; hint?: string; highlight?: boolean; valueClass?: string
+    label: React.ReactNode; value: string; hint?: string; highlight?: boolean; valueClass?: string
 }) {
     return (
         <div className={`flex items-start justify-between gap-4 py-1 ${highlight ? 'font-semibold' : ''}`}>
@@ -1366,6 +1761,80 @@ function OwnershipBar({ loanPct, cpfPct, cashPct, loanAmt, cpfAmt, cashAmt }: {
                     Cash {fmt(cashPct)} · {money(cashAmt)}
                 </span>
             </div>
+        </div>
+    )
+}
+
+// ── Rate row for the embedded amortisation schedule ──────────────────────────
+
+const rateRowInp = 'px-2.5 py-1.5 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/10 bg-white transition-colors'
+const AMORT_RATE_REFS = ['3M SORA', '1M SORA', 'Custom'] as const
+
+function AmortRateRow({
+    entry, label, isLockin, onChange, onRemove, canRemove, refId,
+}: {
+    entry: RateScheduleEntry
+    label: string
+    isLockin: boolean
+    onChange: (patch: Partial<RateScheduleEntry>) => void
+    onRemove: () => void
+    canRemove: boolean
+    refId: string
+}) {
+    return (
+        <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 last:border-b-0 ${isLockin ? 'bg-white' : 'bg-slate-50/60'}`}>
+            <div className={`w-1 h-7 rounded-full shrink-0 ${isLockin ? 'bg-[#03a9e7]' : 'bg-slate-200'}`} />
+            <span className={`w-20 shrink-0 text-xs font-bold ${isLockin ? 'text-[#052d4a]' : 'text-slate-400'}`}>{label}</span>
+
+            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                {(['fixed', 'floating'] as const).map(t => (
+                    <button key={t} type="button" onClick={() => onChange({ type: t })}
+                        className={`px-2.5 py-1 font-semibold capitalize transition-colors ${entry.type === t ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                        {t}
+                    </button>
+                ))}
+            </div>
+
+            {entry.type === 'fixed' ? (
+                <div className="flex items-center gap-1.5 flex-1">
+                    <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="1.60"
+                        onChange={e => onChange({ rate: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                        className={`${rateRowInp} w-20`} />
+                    <span className="text-xs text-slate-400">%</span>
+                </div>
+            ) : (
+                <div className="flex items-center gap-1.5 flex-1 flex-wrap">
+                    <input list={refId} value={entry.reference ?? ''} placeholder="3M SORA"
+                        onChange={e => {
+                            const ref = e.target.value
+                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
+                        }}
+                        className={`${rateRowInp} w-24`} />
+                    <datalist id={refId}>
+                        {AMORT_RATE_REFS.map(r => <option key={r} value={r} />)}
+                    </datalist>
+                    {entry.reference === 'Custom' && (
+                        <>
+                            <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="0.50"
+                                onChange={e => onChange({ rate: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                                className={`${rateRowInp} w-16`} />
+                            <span className="text-xs text-slate-400">%</span>
+                        </>
+                    )}
+                    <span className="text-xs text-slate-400">+</span>
+                    <input type="number" step="0.01" value={entry.spread ?? ''} placeholder="0.35"
+                        onChange={e => onChange({ spread: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                        className={`${rateRowInp} w-16`} />
+                    <span className="text-xs text-slate-400">%</span>
+                </div>
+            )}
+
+            {canRemove && (
+                <button type="button" onClick={onRemove}
+                    className="ml-auto p-1 text-slate-300 hover:text-red-400 hover:bg-red-50 rounded-lg transition-colors shrink-0">
+                    <Trash2 size={12} />
+                </button>
+            )}
         </div>
     )
 }

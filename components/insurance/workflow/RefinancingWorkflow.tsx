@@ -12,6 +12,8 @@ import {
 } from '@/lib/insurance/refiCalc'
 import { buildRefiRemarks, refiNextActions, type RefiRemarks } from '@/lib/insurance/refiRemarks'
 import { monthlyInstallment, effectiveMonthlyIncome, tdsrAvailable, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
+import { computeAmortization } from '@/lib/insurance/amortCalc'
+import { type RateScheduleEntry } from '@/lib/types/rates'
 import type { RefiProposalPackage } from '@/lib/insurance/refiProposal'
 import { buildRefiProposalText } from '@/lib/insurance/refiProposal'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
@@ -24,7 +26,7 @@ import RefiPresentation from './RefiPresentation'
 import {
     Building2, CheckCircle2, AlertTriangle, Info, Lightbulb, Save, Wallet, Receipt,
     ArrowRight, ClipboardList, CalendarClock, CalendarRange, Copy, Printer, Circle,
-    Presentation, MessageSquare, Percent,
+    Presentation, MessageSquare, Percent, Lock, Plus, Trash2,
 } from 'lucide-react'
 
 const pct = (frac: number, dp = 1) => `${(frac * 100).toFixed(dp)}%`
@@ -72,6 +74,17 @@ export default function RefinancingWorkflowPanel({
     const [customSubsidy, setCustomSubsidy] = useState(
         data.subsidy_return_amount != null && !SUBSIDY_PRESETS.includes(String(data.subsidy_return_amount)),
     )
+    const [soraForAmort, setSoraForAmort] = useState<SoraRates | null>(null)
+    const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
+    const [rawPrefTenure1, setRawPrefTenure1] = useState('')
+    const [rawPrefTenure2, setRawPrefTenure2] = useState('')
+
+    useEffect(() => {
+        fetch('/api/insurance/rates')
+            .then(r => r.json())
+            .then(d => { if (d.sora) setSoraForAmort(d.sora) })
+            .catch(() => {})
+    }, [])
 
     const meta = refiPropertyMeta(data.property_type)
     const computation = useMemo(() => computeRefi(inputsFromWorkflow(data)), [data])
@@ -162,6 +175,28 @@ export default function RefinancingWorkflowPanel({
     }
     const stageIdx = currentStage ? STAGE_ORDER.indexOf(currentStage) : -1
     const suggestedStage = stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1 ? STAGE_ORDER[stageIdx + 1] : null
+
+    // ── Rate schedule for amortisation (package wins over manual) ──
+    const DEFAULT_RATE_SCHEDULE: RateScheduleEntry[] = [{ year: 1, type: 'fixed' }]
+    const pkgSchedule = data.selected_package_snapshot?.rate_schedule as RateScheduleEntry[] | undefined
+    const hasPkg = pkgSchedule != null && pkgSchedule.length > 0
+    const activeSchedule: RateScheduleEntry[] = hasPkg
+        ? pkgSchedule
+        : (data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE)
+    const lockinYears = (data.selected_package_snapshot?.lockin_years as number | undefined) ?? data.reference_lockin_years
+    const updateScheduleRow = (idx: number, patch: Partial<RateScheduleEntry>) => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        update({ manual_rate_schedule: s.map((e, i) => i === idx ? { ...e, ...patch } : e) })
+    }
+    const addScheduleYear = () => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        const maxYear = Math.max(0, ...s.filter(e => e.year != null).map(e => e.year!))
+        update({ manual_rate_schedule: [...s, { year: maxYear + 1, type: 'fixed' }] })
+    }
+    const removeScheduleRow = (idx: number) => {
+        const s = data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE
+        if (s.length > 1) update({ manual_rate_schedule: s.filter((_, i) => i !== idx) })
+    }
 
     // ── Tenure Comparison — rate source ──
     const snapshotRate = data.selected_package_snapshot?.avg_rate_lockin_pct as number | undefined
@@ -744,28 +779,319 @@ export default function RefinancingWorkflowPanel({
                         </div>
                     </div>
 
-                    {/* Tenure comparison — below tenure range */}
+                    {/* Monthly Instalment — replaces old TenureComparison */}
                     {computation.totalOutstanding > 0 && (() => {
+                        const loan = computation.totalOutstanding
                         const clamp = (v: number) => Math.min(Math.max(v, t.min), t.max)
                         const defaultT = clamp(data.current_tenure ?? t.max)
-                        const prefT1 = clamp(data.preferred_tenure_1 ?? defaultT)
-                        const prefT2 = clamp(data.preferred_tenure_2 ?? defaultT)
+                        const t1 = clamp(data.preferred_tenure_1 ?? defaultT)
+                        const t2 = clamp(preferredTenure2 ?? defaultT)
+                        const amortRows1 = computeAmortization(loan, t1, activeSchedule, soraForAmort)
+                        const amortRows2 = computeAmortization(loan, t2, activeSchedule, soraForAmort)
+                        const m1 = amortRows1[0]?.instalment ?? null
+                        const m2 = amortRows2[0]?.instalment ?? null
+                        const effectiveLockin = (lockinYears != null && lockinYears > 0) ? lockinYears : null
+                        const i1 = effectiveLockin != null ? (amortRows1.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const i2 = effectiveLockin != null ? (amortRows2.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const lockInCards = effectiveLockin != null
+                            ? Array.from({ length: effectiveLockin }, (_, i) => ({
+                                year: i + 1,
+                                value: amortRows1.find(r => r.year === i + 1)?.cumulativeInterest ?? null,
+                                instalment: amortRows1.find(r => r.year === i + 1)?.instalment ?? null,
+                            }))
+                            : []
+                        const schedExplicitYears = activeSchedule.filter(e => !e.thereafter && e.year != null).length
+                        const breakdownYears = effectiveLockin ?? (schedExplicitYears > 0 ? schedExplicitYears : 3)
+                        const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
+                        const fmt2 = (n: number | null) => n != null ? `$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
+                        const money2 = (n: number) => { const r = Math.round(n); return r < 0 ? `-$${(-r).toLocaleString()}` : `$${r.toLocaleString()}` }
                         return (
-                            <TenureComparison
-                                loan={computation.totalOutstanding}
-                                ratePct={compRate}
-                                rateLabel={compRateLabel}
-                                lockinYears={compLockinYears}
-                                tenureMin={t.min}
-                                tenureMax={t.max}
-                                tenure1={prefT1}
-                                tenure2={prefT2}
-                                onT1Change={v => update({ preferred_tenure_1: v || undefined })}
-                                onT2Change={v => update({ preferred_tenure_2: v || undefined })}
-                                grossIncome={grossForTdsr}
-                                existingDebts={debtsForTdsr}
-                                propertyUse={data.property_use}
-                            />
+                            <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
+
+                                {/* Live SORA */}
+                                {soraForAmort && (soraForAmort.comp_sora_1m != null || soraForAmort.comp_sora_3m != null) && (
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                        {soraForAmort.comp_sora_1m != null && (
+                                            <div className="flex items-baseline gap-1.5">
+                                                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">1M SORA</span>
+                                                <span className="text-base font-black text-[#052d4a]">{soraForAmort.comp_sora_1m.toFixed(4)}%</span>
+                                            </div>
+                                        )}
+                                        {soraForAmort.comp_sora_1m != null && soraForAmort.comp_sora_3m != null && <span className="w-px h-5 bg-slate-200 shrink-0" />}
+                                        {soraForAmort.comp_sora_3m != null && (
+                                            <div className="flex items-baseline gap-1.5">
+                                                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">3M SORA</span>
+                                                <span className="text-base font-black text-[#052d4a]">{soraForAmort.comp_sora_3m.toFixed(4)}%</span>
+                                            </div>
+                                        )}
+                                        {(soraForAmort.published_date ?? soraForAmort.value_date) && (
+                                            <span className="text-[11px] text-slate-400 ml-auto">as of {soraForAmort.published_date ?? soraForAmort.value_date}</span>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Rate schedule */}
+                                <div>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Interest Rates p.a.</span>
+                                        {effectiveLockin != null && (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#03a9e7] bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full">
+                                                <Lock size={9} /> {effectiveLockin}-yr lock-in
+                                            </span>
+                                        )}
+                                        {hasPkg && (
+                                            <button type="button" onClick={() => update({ selected_package_snapshot: undefined })}
+                                                className="ml-auto text-[11px] text-slate-400 hover:text-slate-600 underline underline-offset-2">
+                                                Clear package
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="rounded-xl border border-slate-100 overflow-hidden">
+                                        {activeSchedule.filter(e => !e.thereafter).map((entry, idx) => {
+                                            const schedIdx = activeSchedule.indexOf(entry)
+                                            return hasPkg ? (
+                                                <div key={idx} className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 last:border-b-0 bg-white">
+                                                    <div className="w-1 h-7 rounded-full shrink-0 bg-[#03a9e7]" />
+                                                    <span className="w-20 shrink-0 text-xs font-bold text-[#052d4a]">Year {entry.year}</span>
+                                                    <span className="text-xs font-semibold text-slate-600">
+                                                        {entry.type === 'fixed'
+                                                            ? `${entry.rate?.toFixed(2) ?? '—'}% fixed`
+                                                            : `${entry.reference ?? ''} + ${entry.spread?.toFixed(2) ?? '—'}%`}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <RefiAmortRateRow key={idx}
+                                                    entry={entry} label={`Year ${entry.year}`} isLockin
+                                                    onChange={patch => updateScheduleRow(schedIdx, patch)}
+                                                    onRemove={() => removeScheduleRow(schedIdx)}
+                                                    canRemove={(data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE).length > 1}
+                                                    refId={`refi-rate-${idx}`}
+                                                />
+                                            )
+                                        })}
+                                        {activeSchedule.some(e => e.thereafter) && (
+                                            <>
+                                                <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border-t border-b border-slate-100">
+                                                    <div className="flex-1 h-px bg-slate-200" />
+                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Out of lock-in</span>
+                                                    <div className="flex-1 h-px bg-slate-200" />
+                                                </div>
+                                                {activeSchedule.filter(e => e.thereafter).map((entry, idx) => {
+                                                    const schedIdx = activeSchedule.indexOf(entry)
+                                                    return hasPkg ? (
+                                                        <div key={`t-${idx}`} className="flex items-center gap-2 px-3 py-2.5 bg-slate-50/60">
+                                                            <div className="w-1 h-7 rounded-full shrink-0 bg-slate-200" />
+                                                            <span className="w-20 shrink-0 text-xs font-bold text-slate-400">Thereafter</span>
+                                                            <span className="text-xs font-semibold text-slate-500">
+                                                                {entry.type === 'fixed'
+                                                                    ? `${entry.rate?.toFixed(2) ?? '—'}% fixed`
+                                                                    : `${entry.reference ?? ''} + ${entry.spread?.toFixed(2) ?? '—'}%`}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <RefiAmortRateRow key={`t-${idx}`}
+                                                            entry={entry} label="Thereafter" isLockin={false}
+                                                            onChange={patch => updateScheduleRow(schedIdx, patch)}
+                                                            onRemove={() => removeScheduleRow(schedIdx)}
+                                                            canRemove={(data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE).length > 1}
+                                                            refId={`refi-rate-thereafter-${idx}`}
+                                                        />
+                                                    )
+                                                })}
+                                            </>
+                                        )}
+                                    </div>
+                                    {!hasPkg && (
+                                        <button type="button" onClick={addScheduleYear}
+                                            className="mt-2 flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-50 px-2.5 py-1.5 rounded-lg transition-colors">
+                                            <Plus size={12} /> Add Year
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Lock-in period */}
+                                <div className="flex items-center gap-2 text-xs text-slate-500">
+                                    <Lock size={11} className="text-[#03a9e7] shrink-0" />
+                                    <span className="shrink-0">Lock-in period:</span>
+                                    <input type="number" min={1} max={10}
+                                        value={data.reference_lockin_years ?? ''}
+                                        placeholder={hasPkg && (data.selected_package_snapshot?.lockin_years as number | undefined) != null
+                                            ? String(data.selected_package_snapshot?.lockin_years) : 'yrs'}
+                                        onChange={e => update({ reference_lockin_years: e.target.value === '' ? undefined : parseInt(e.target.value) })}
+                                        className="w-14 px-2 py-1 rounded-md border border-slate-200 bg-white text-center font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12" />
+                                    <span>yrs</span>
+                                    {hasPkg && (data.selected_package_snapshot?.lockin_years as number | undefined) != null && data.reference_lockin_years == null && (
+                                        <span className="text-[11px] text-slate-400">(from package)</span>
+                                    )}
+                                </div>
+
+                                {/* Per-year interest cards */}
+                                {lockInCards.length > 0 && (
+                                    <div className="flex gap-2 flex-wrap">
+                                        {lockInCards.map(({ year, value, instalment }, i) => {
+                                            const isLast = i === lockInCards.length - 1
+                                            return isLast ? (
+                                                <div key={year} className="flex-1 min-w-[120px] rounded-xl border-2 border-[#052d4a] bg-[#052d4a] text-white px-4 py-3">
+                                                    <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Total Int · Yr {year}</p>
+                                                    <p className="text-xl font-black mt-0.5">{value != null ? money2(value) : '—'}</p>
+                                                    {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money2(instalment)}/mo</p>}
+                                                </div>
+                                            ) : (
+                                                <div key={year} className="flex-1 min-w-[100px] rounded-xl border border-slate-200 bg-white px-4 py-3">
+                                                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Int · Yr {year}</p>
+                                                    <p className="text-lg font-black text-[#052d4a] mt-0.5">{value != null ? money2(value) : '—'}</p>
+                                                    {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money2(instalment)}/mo</p>}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* Tenure range label */}
+                                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                    Tenure Range: {t.min} – {t.max} yrs
+                                </div>
+
+                                {/* Tenure inputs */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="space-y-1">
+                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="number" min={t.min} max={t.max}
+                                                value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
+                                                placeholder={String(defaultT)}
+                                                onChange={e => setRawPrefTenure1(e.target.value)}
+                                                onBlur={() => {
+                                                    const parsed = parseInt(rawPrefTenure1, 10)
+                                                    setRawPrefTenure1('')
+                                                    update({ preferred_tenure_1: isNaN(parsed) ? undefined : clamp(parsed) })
+                                                }}
+                                                className={inputCls} />
+                                            <span className="text-xs text-slate-500">yrs</span>
+                                        </div>
+                                        {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to remaining tenure</p>}
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
+                                        <div className="flex items-center gap-2">
+                                            <input type="number" min={t.min} max={t.max}
+                                                value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                                placeholder={String(defaultT)}
+                                                onChange={e => setRawPrefTenure2(e.target.value)}
+                                                onBlur={() => {
+                                                    const parsed = parseInt(rawPrefTenure2, 10)
+                                                    setRawPrefTenure2('')
+                                                    setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
+                                                }}
+                                                className={inputCls} />
+                                            <span className="text-xs text-slate-500">yrs</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Comparison table */}
+                                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                                    <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/60">
+                                        <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
+                                        <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({t1} yrs)</div>
+                                        <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({t2} yrs)</div>
+                                    </div>
+                                    <div className="grid grid-cols-3 border-b border-slate-100">
+                                        <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
+                                            {m1 != null ? <>{money2(m1)}<span className="text-slate-400 font-normal">/mo</span></> : <span className="text-slate-300">—</span>}
+                                        </div>
+                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                            {m1 != null && m2 != null ? (
+                                                <>{money2(m2)}<span className="text-slate-400 font-normal">/mo</span>
+                                                <span className={`ml-1.5 text-[11px] font-bold ${m2 > m1 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                                    {m2 > m1 ? '+' : ''}{money2(m2 - m1)}
+                                                </span></>
+                                            ) : <span className="text-slate-300">—</span>}
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-3">
+                                        <div className="px-3 py-2.5 text-slate-600 text-sm">
+                                            {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
+                                        </div>
+                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
+                                            {i1 != null ? money2(i1) : <span className="text-slate-300">—</span>}
+                                        </div>
+                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                            {i1 != null && i2 != null ? (
+                                                <>{money2(i2)}
+                                                <span className={`ml-1.5 text-[11px] font-bold ${i2 > i1 ? 'text-red-500' : 'text-emerald-600'}`}>
+                                                    {i2 > i1 ? '+' : ''}{money2(i2 - i1)}
+                                                </span></>
+                                            ) : <span className="text-slate-300">—</span>}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Year-by-year breakdown — both tenures */}
+                                {[
+                                    { rows: amortRows1, tv: t1, label: 'Tenure 1' },
+                                    { rows: amortRows2, tv: t2, label: 'Tenure 2' },
+                                ].map(({ rows, tv, label }) => rows.length > 0 && (
+                                    <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
+                                        <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Year-by-Year Breakdown</span>
+                                            <span className="text-[11px] text-slate-400">
+                                                {effectiveLockin != null ? 'Lock-in · ' : ''}{label} ({tv} yrs)
+                                            </span>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-sm">
+                                                <thead>
+                                                    <tr className="border-b border-slate-100 bg-slate-50/50">
+                                                        <th className="py-2 pl-3 pr-3 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">YR</th>
+                                                        <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Rate</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Monthly</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Prin /mo</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int /mo</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int (yr)</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Balance</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {rows.filter(r => r.year <= breakdownYears).map(row => {
+                                                        const hasData = row.instalment != null
+                                                        const isLastRow = row.year === breakdownYears
+                                                        return (
+                                                            <tr key={row.year} className={`border-b border-slate-50 last:border-b-0 ${isLastRow ? 'bg-sky-50/50' : 'bg-white'}`}>
+                                                                <td className="py-2.5 pl-3 pr-3">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <div className="w-0.5 h-4 rounded-full bg-[#03a9e7] shrink-0" />
+                                                                        <span className="font-semibold text-[#052d4a]">{row.year}</span>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-3 py-2.5 text-[#03a9e7] font-semibold">{hasData ? `${row.rate?.toFixed(2)}%` : '—'}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-700">{fmt2(row.instalment)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthPrincipal)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthInterest)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.yearInterest)}</td>
+                                                                <td className="px-3 py-2.5 text-right">
+                                                                    {hasData ? (
+                                                                        isLastRow
+                                                                            ? <span className="font-black text-[#052d4a] bg-sky-100 border border-sky-200 px-2 py-0.5 rounded-full">{fmt2(row.balance)}</span>
+                                                                            : <span className="font-semibold text-slate-700">{fmt2(row.balance)}</span>
+                                                                    ) : '—'}
+                                                                </td>
+                                                            </tr>
+                                                        )
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {effectiveLockin == null && (
+                                    <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                                        <Info size={11} className="text-[#03a9e7]" /> Set lock-in period above to see per-year interest cards.
+                                    </p>
+                                )}
+                            </Section>
                         )
                     })()}
 
@@ -1296,3 +1622,78 @@ function ProposalView({ text }: { text: string }) {
         </div>
     )
 }
+
+// ── Rate row for the embedded amortisation schedule ──────────────────────────
+
+const refiRateRowInp = 'px-2.5 py-1.5 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/10 bg-white transition-colors'
+const REFI_AMORT_RATE_REFS = ['3M SORA', '1M SORA', 'Custom'] as const
+
+function RefiAmortRateRow({
+    entry, label, isLockin, onChange, onRemove, canRemove, refId,
+}: {
+    entry: RateScheduleEntry
+    label: string
+    isLockin: boolean
+    onChange: (patch: Partial<RateScheduleEntry>) => void
+    onRemove: () => void
+    canRemove: boolean
+    refId: string
+}) {
+    return (
+        <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 last:border-b-0 ${isLockin ? 'bg-white' : 'bg-slate-50/60'}`}>
+            <div className={`w-1 h-7 rounded-full shrink-0 ${isLockin ? 'bg-[#03a9e7]' : 'bg-slate-200'}`} />
+            <span className={`w-20 shrink-0 text-xs font-bold ${isLockin ? 'text-[#052d4a]' : 'text-slate-400'}`}>{label}</span>
+
+            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                {(['fixed', 'floating'] as const).map(t => (
+                    <button key={t} type="button" onClick={() => onChange({ type: t })}
+                        className={`px-2.5 py-1 font-semibold capitalize transition-colors ${entry.type === t ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                        {t}
+                    </button>
+                ))}
+            </div>
+
+            {entry.type === 'fixed' ? (
+                <div className="flex items-center gap-1.5 flex-1">
+                    <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="1.60"
+                        onChange={e => onChange({ rate: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                        className={`${refiRateRowInp} w-20`} />
+                    <span className="text-xs text-slate-400">%</span>
+                </div>
+            ) : (
+                <div className="flex items-center gap-1.5 flex-1 flex-wrap">
+                    <input list={refId} value={entry.reference ?? ''} placeholder="3M SORA"
+                        onChange={e => {
+                            const ref = e.target.value
+                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
+                        }}
+                        className={`${refiRateRowInp} w-24`} />
+                    <datalist id={refId}>
+                        {REFI_AMORT_RATE_REFS.map(r => <option key={r} value={r} />)}
+                    </datalist>
+                    {entry.reference === 'Custom' && (
+                        <>
+                            <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="0.50"
+                                onChange={e => onChange({ rate: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                                className={`${refiRateRowInp} w-16`} />
+                            <span className="text-xs text-slate-400">%</span>
+                        </>
+                    )}
+                    <span className="text-xs text-slate-400">+</span>
+                    <input type="number" step="0.01" value={entry.spread ?? ''} placeholder="0.35"
+                        onChange={e => onChange({ spread: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
+                        className={`${refiRateRowInp} w-16`} />
+                    <span className="text-xs text-slate-400">%</span>
+                </div>
+            )}
+
+            {canRemove && (
+                <button type="button" onClick={onRemove}
+                    className="ml-auto p-1 text-slate-300 hover:text-red-400 hover:bg-red-50 rounded-lg transition-colors shrink-0">
+                    <Trash2 size={12} />
+                </button>
+            )}
+        </div>
+    )
+}
+

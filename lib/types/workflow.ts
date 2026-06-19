@@ -66,6 +66,8 @@ export interface RefinancingWorkflow {
     preferred_tenure_1?: number                     // Tenure Planner — comparison slot 1
     preferred_tenure_2?: number                     // Tenure Planner — comparison slot 2
     rate_preference?: 'fixed' | 'floating' | 'both'
+    reference_lockin_years?: number                 // explicit lock-in years (overrides package value)
+    manual_rate_schedule?: import('@/lib/types/rates').RateScheduleEntry[]  // agent-entered schedule when no package
     // Frozen snapshot of the package the agent picked (so a later admin edit to the
     // package can't silently change a client's proposal).
     selected_package_snapshot?: Record<string, unknown>
@@ -207,6 +209,8 @@ export interface DecoupleWorkflow {
     preferred_tenure_equity?: number            // equity loan tenure (if taken)
     preferred_tenure_equity_current?: number    // TDSR exploration tenure for existing equity loan
     preferred_purchase_loan?: number            // preferred bank loan amount for S2/S3 (min $100k, max 75% × purchasePrice)
+    manual_rate_schedule?: import('@/lib/types/rates').RateScheduleEntry[]
+    reference_lockin_years?: number
 
     // Rate preference + Tenure Planner (mirrors RefinancingWorkflow)
     rate_preference?: 'fixed' | 'floating' | 'both'
