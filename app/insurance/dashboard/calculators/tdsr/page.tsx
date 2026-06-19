@@ -19,7 +19,7 @@ const ALT = { ltv: 0.55, maxAge: 75, tenPrivate: 35, tenHDB: 30, minCash: 0.10 }
 
 type PropType  = 'hdb' | 'private' | 'ecNewLaunch'
 type Residency = 'sc' | 'pr' | 'foreigner'
-type Params = typeof STD
+interface Params { ltv: number; maxAge: number; tenPrivate: number; tenHDB: number; minCash: number }
 
 // ── Engine ─────────────────────────────────────────────────────────────────────
 
