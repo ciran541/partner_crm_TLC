@@ -934,7 +934,7 @@ export default function PurchaseWorkflowPanel({
                                                         style={{ background: 'linear-gradient(135deg, #052d4a 0%, #0a4a7a 100%)' }}>
                                                         <p className="text-[10px] font-bold text-sky-300 uppercase tracking-wide">Total Int · Yr {year}</p>
                                                         <p className="text-lg font-black mt-1">{value != null ? money(value) : '—'}</p>
-                                                        {instalment != null && <p className="text-[10px] text-sky-200/80 mt-0.5">{money(instalment)}/mo</p>}
+                                                        {instalment != null && <p className="text-[10px] text-sky-200/80 mt-0.5">{money(instalment)}</p>}
                                                     </div>
                                                 )
                                             }
@@ -942,7 +942,7 @@ export default function PurchaseWorkflowPanel({
                                                 <div key={year} className="flex-1 min-w-[100px] card p-3">
                                                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Int · Yr {year}</p>
                                                     <p className="text-base font-bold text-[#052d4a] mt-0.5">{value != null ? money(value) : '—'}</p>
-                                                    {instalment != null && <p className="text-[10px] text-slate-400 mt-0.5">{money(instalment)}/mo</p>}
+                                                    {instalment != null && <p className="text-[10px] text-slate-400 mt-0.5">{money(instalment)}</p>}
                                                 </div>
                                             )
                                         })}
@@ -1009,12 +1009,12 @@ export default function PurchaseWorkflowPanel({
                                     <div className="grid grid-cols-3 border-b border-slate-100">
                                         <div className="px-3 py-2.5 text-slate-500">Monthly Instalment</div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
-                                            {m1 != null ? <>{money(m1)}<span className="text-slate-400 font-normal">/mo</span></> : <span className="text-slate-300">—</span>}
+                                            {m1 != null ? money(m1) : <span className="text-slate-300">—</span>}
                                         </div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
                                             {m2 != null ? (
                                                 <>
-                                                    {money(m2)}<span className="text-slate-400 font-normal">/mo</span>
+                                                    {money(m2)}
                                                     {t1 !== t2 && m1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${m2 < m1 ? 'text-emerald-600' : 'text-red-500'}`}>{m2 < m1 ? '↓' : '↑'}{money(Math.abs(m2 - m1))}</span>}
                                                 </>
                                             ) : <span className="text-slate-300">—</span>}

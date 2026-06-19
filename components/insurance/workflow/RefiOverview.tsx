@@ -131,10 +131,10 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                                 <p className="text-lg font-bold text-[#03a9e7]">{Number(pkg.avg_rate_lockin_pct).toFixed(2)}% <span className="text-xs font-medium text-slate-400">avg lock-in</span></p>
                             )}
                             {pkg.projected_monthly != null && (
-                                <p className="text-sm font-semibold text-[#052d4a] mt-0.5">{money(Number(pkg.projected_monthly))}<span className="text-xs font-normal text-slate-400">/mo</span></p>
+                                <p className="text-sm font-semibold text-[#052d4a] mt-0.5">{money(Number(pkg.projected_monthly))}</p>
                             )}
                             {pkg.monthly_saving != null && Number(pkg.monthly_saving) > 0 && (
-                                <p className="text-[11px] text-emerald-600 mt-0.5">saves {money(Number(pkg.monthly_saving))}/mo</p>
+                                <p className="text-[11px] text-emerald-600 mt-0.5">saves {money(Number(pkg.monthly_saving))}</p>
                             )}
                         </div>
                     </div>

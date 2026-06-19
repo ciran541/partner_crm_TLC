@@ -77,6 +77,7 @@ export interface RefiInputs {
     propertyType?: RefiPropertyType
     disbursed?: number
     equityLoan?: number          // private only: current outstanding equity loan
+    newEquityLoan?: number       // private only: new equity loan being drawn down
     undisbursed?: number
     currentRatePct?: number
     subsidyReturn?: number
@@ -217,9 +218,10 @@ export function computeRefi(inputs: RefiInputs): RefiComputation {
     const disbursed = inputs.disbursed ?? 0
     // Equity loan only applies to private properties.
     const equityLoan = (meta?.isPrivate ? (inputs.equityLoan ?? 0) : 0)
+    const newEquityLoan = (meta?.isPrivate ? (inputs.newEquityLoan ?? 0) : 0)
     // Undisbursed only counts for the BUC (incompleted) type.
     const undisbursed = meta?.buc ? (inputs.undisbursed ?? 0) : 0
-    const totalOutstanding = disbursed + equityLoan + undisbursed
+    const totalOutstanding = disbursed + equityLoan + newEquityLoan + undisbursed
     const cancellationFee = meta?.buc ? undisbursed * CANCELLATION_FEE_RATE : 0
 
     const borrowers = inputs.borrowers ?? []
@@ -270,6 +272,7 @@ export function inputsFromWorkflow(d: RefinancingWorkflow): RefiInputs {
         propertyType: d.property_type,
         disbursed: d.outstanding_disbursed,
         equityLoan: d.outstanding_equity_loan,
+        newEquityLoan: d.equity_loan_amount,
         undisbursed: d.outstanding_undisbursed,
         currentRatePct: d.current_rate,
         subsidyReturn: d.subsidy_return_amount,

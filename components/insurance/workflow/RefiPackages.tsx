@@ -104,12 +104,12 @@ export default function RefiPackages({
                             <p className="text-xs text-slate-500 truncate">{rec.pkg.package_name}</p>
                             <div className="flex flex-wrap gap-1.5 mt-1.5">
                                 {best && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Best match</span>}
-                                {saving != null && saving > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1"><TrendingDown size={10} /> Save {fmt(saving)}/mo</span>}
+                                {saving != null && saving > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1"><TrendingDown size={10} /> Save {fmt(saving)}</span>}
                             </div>
                         </div>
                         <div className="text-right shrink-0">
                             {year1 != null && <p className="text-sm font-bold text-[#03a9e7]">{year1.toFixed(2)}%</p>}
-                            {monthly != null ? <p className="text-xs text-slate-600">{fmt(monthly)}/mo</p> : <p className="text-[11px] text-slate-400">not auto-priced</p>}
+                            {monthly != null ? <p className="text-xs text-slate-600">{fmt(monthly)}</p> : <p className="text-[11px] text-slate-400">not auto-priced</p>}
                             {isSelected && <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#03a9e7] mt-1"><Check size={12} /> Selected</span>}
                         </div>
                     </div>

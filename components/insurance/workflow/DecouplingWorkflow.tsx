@@ -1116,13 +1116,13 @@ export default function DecouplingWorkflowPanel({
                                         <div key={year} className="flex-1 min-w-[120px] rounded-xl border-2 border-[#052d4a] bg-[#052d4a] text-white px-4 py-3">
                                             <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Total Int · Yr {year}</p>
                                             <p className="text-xl font-black mt-0.5">{value != null ? money(value) : '—'}</p>
-                                            {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money(instalment)}/mo</p>}
+                                            {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money(instalment)}</p>}
                                         </div>
                                     ) : (
                                         <div key={year} className="flex-1 min-w-[100px] rounded-xl border border-slate-200 bg-white px-4 py-3">
                                             <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Int · Yr {year}</p>
                                             <p className="text-lg font-black text-[#052d4a] mt-0.5">{value != null ? money(value) : '—'}</p>
-                                            {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money(instalment)}/mo</p>}
+                                            {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money(instalment)}</p>}
                                         </div>
                                     )
                                 })}
@@ -1178,11 +1178,11 @@ export default function DecouplingWorkflowPanel({
                             <div className="grid grid-cols-3 border-b border-slate-100">
                                 <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
                                 <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
-                                    {m1 != null ? <>{money(m1)}<span className="text-slate-400 font-normal">/mo</span></> : <span className="text-slate-300">—</span>}
+                                    {m1 != null ? money(m1) : <span className="text-slate-300">—</span>}
                                 </div>
                                 <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
                                     {m1 != null && m2 != null ? (
-                                        <>{money(m2)}<span className="text-slate-400 font-normal">/mo</span>
+                                        <>{money(m2)}
                                         <span className={`ml-1.5 text-[11px] font-bold ${m2 > m1 ? 'text-red-500' : 'text-emerald-600'}`}>
                                             {m2 > m1 ? '+' : ''}{money(m2 - m1)}
                                         </span></>
@@ -1509,6 +1509,9 @@ function TenureComparison({
     existingDebts: number
     propertyUse?: string
 }) {
+    const [rawT1, setRawT1] = useState('')
+    const [rawT2, setRawT2] = useState('')
+
     const canPrice = ratePct != null && loan > 0 && tenure1 > 0 && tenure2 > 0
 
     const m1 = canPrice ? monthlyInstallment(loan, ratePct!, tenure1) : null
@@ -1562,8 +1565,15 @@ function TenureComparison({
                             <th className="px-4 py-2 text-right">
                                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 1</p>
                                 <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
-                                    <input type="number" value={tenure1 || ''} min={tenureMin} max={tenureMax}
-                                        onChange={e => { const v = parseFloat(e.target.value) || 0; onT1Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0) }}
+                                    <input type="number"
+                                        value={rawT1 !== '' ? rawT1 : (tenure1 || '')}
+                                        min={tenureMin} max={tenureMax}
+                                        onChange={e => setRawT1(e.target.value)}
+                                        onBlur={() => {
+                                            const v = parseFloat(rawT1) || 0
+                                            setRawT1('')
+                                            onT1Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0)
+                                        }}
                                         className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
                                     <span className="text-[11px] text-slate-400">yrs</span>
                                 </div>
@@ -1572,8 +1582,15 @@ function TenureComparison({
                             <th className="px-4 py-2 text-right">
                                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Tenure 2</p>
                                 <div className="inline-flex items-center gap-1 border border-slate-200 rounded-md px-2 py-1 bg-white">
-                                    <input type="number" value={tenure2 || ''} min={tenureMin} max={tenureMax}
-                                        onChange={e => { const v = parseFloat(e.target.value) || 0; onT2Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0) }}
+                                    <input type="number"
+                                        value={rawT2 !== '' ? rawT2 : (tenure2 || '')}
+                                        min={tenureMin} max={tenureMax}
+                                        onChange={e => setRawT2(e.target.value)}
+                                        onBlur={() => {
+                                            const v = parseFloat(rawT2) || 0
+                                            setRawT2('')
+                                            onT2Change(v ? Math.min(Math.max(v, tenureMin), tenureMax) : 0)
+                                        }}
                                         className="w-9 text-center text-sm font-bold text-[#052d4a] outline-none bg-transparent" placeholder="—" />
                                     <span className="text-[11px] text-slate-400">yrs</span>
                                 </div>

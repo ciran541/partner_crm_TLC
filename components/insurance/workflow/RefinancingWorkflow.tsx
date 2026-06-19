@@ -78,6 +78,11 @@ export default function RefinancingWorkflowPanel({
     const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
     const [rawPrefTenure1, setRawPrefTenure1] = useState('')
     const [rawPrefTenure2, setRawPrefTenure2] = useState('')
+    const [estEligTenure, setEstEligTenure] = useState<number | undefined>(undefined)
+    const [estEligDraft, setEstEligDraft] = useState<string>('')
+    const [rawRefiTenure, setRawRefiTenure] = useState('')
+    const [rawEquityOutTenure, setRawEquityOutTenure] = useState('')
+    const [rawEquityNewTenure, setRawEquityNewTenure] = useState('')
 
     useEffect(() => {
         fetch('/api/insurance/rates')
@@ -121,6 +126,7 @@ export default function RefinancingWorkflowPanel({
             patch.cpf_used = undefined
             patch.equity_loan_amount = undefined
             patch.preferred_tenure_equity = undefined
+            patch.preferred_tenure_equity_outstanding = undefined
         }
         update(patch)
     }
@@ -489,6 +495,95 @@ export default function RefinancingWorkflowPanel({
                 </Section>
             )}
 
+            {/* ── Loan Structure & Available Equity ── (private properties only) */}
+            {data.property_type && meta?.isPrivate && (() => {
+                const totalLoan = (data.outstanding_disbursed ?? 0) + (data.outstanding_equity_loan ?? 0)
+                const valuation = data.market_price ?? 0
+                const cpfUsed = data.cpf_used ?? 0
+                const loanPct = valuation > 0 ? totalLoan / valuation : 0
+                const cpfPct = valuation > 0 ? cpfUsed / valuation : 0
+                const equityPct = Math.max(0, 0.75 - loanPct - cpfPct)
+                const equityAmt = equityPct * valuation
+                const cashPct = Math.max(0, 1 - loanPct - cpfPct)
+                const cashAmt = cashPct * valuation
+                const equityEligible = equityAmt >= 50_000
+                const hasInputs = valuation > 0 && totalLoan > 0
+                return (
+                    <Section title="Loan Structure & Available Equity" icon={<Building2 size={15} />}>
+                        <Question label="Total CPF accrued by all owner(s)">
+                            <FieldInput commas prefix="$" value={data.cpf_used ?? ''} placeholder="e.g. 100,000"
+                                onChange={v => update({ cpf_used: num(v) })} />
+                        </Question>
+
+                        {hasInputs ? (
+                            <>
+                                <div className="rounded-xl border border-[#03a9e7]/30 overflow-hidden">
+                                    <div className="px-4 py-3 bg-sky-50/70 border-b border-[#03a9e7]/15">
+                                        <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Property Ownership Structure</p>
+                                    </div>
+                                    <div className="p-4 space-y-3">
+                                        <OwnershipBar
+                                            loanPct={loanPct}
+                                            cpfPct={cpfPct}
+                                            cashPct={cashPct}
+                                            loanAmt={totalLoan}
+                                            cpfAmt={cpfUsed}
+                                            cashAmt={cashAmt}
+                                        />
+                                        <p className="text-[11px] text-slate-400">
+                                            Based on market price {money(valuation)}. Loan = {money(totalLoan)}.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
+                                    <p className="text-sm text-slate-600">
+                                        75% − {pct(loanPct)} (loan) − {pct(cpfPct)} (CPF)
+                                        {' '}= <span className={`font-bold ${equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPct)}</span>
+                                    </p>
+                                    {equityPct <= 0 ? (
+                                        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+                                            <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                                            <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
+                                        </div>
+                                    ) : !equityEligible ? (
+                                        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                            <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                                            <p className="text-[12px] text-amber-800">
+                                                Available equity {money(equityAmt)} — below $50,000 minimum for an equity loan.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                                                <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
+                                                <p className="text-[12px] text-emerald-800 font-semibold">
+                                                    Available Equity: {money(equityAmt)} — eligible for an equity loan.
+                                                </p>
+                                            </div>
+                                            <Question label="Would you like to take up an equity loan?">
+                                                <FieldInput commas prefix="$"
+                                                    value={data.equity_loan_amount ?? ''}
+                                                    placeholder={`max ${money(equityAmt)}`}
+                                                    onChange={v => {
+                                                        const n = num(v)
+                                                        update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
+                                                    }} />
+                                            </Question>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                                <Info size={12} /> Enter market price and outstanding loan above to see the property structure.
+                            </p>
+                        )}
+                    </Section>
+                )
+            })()}
+
             {/* ── Borrowers & age ── */}
             {data.property_type && (
                 <Section title="Borrower(s) & Age" icon={<CalendarRange size={15} />}>
@@ -569,25 +664,40 @@ export default function RefinancingWorkflowPanel({
             {data.property_type && grossForTdsr != null && grossForTdsr > 0 && (() => {
                 const availableTdsr = Math.max(grossForTdsr * 0.55 - debtsForTdsr, 0)
 
-                // Refinancing TDSR: home loan at current_tenure, 4% stress
+                // Est. Loan Eligibility
+                const effectiveEstEligTenure = estEligTenure ?? 35
+                const estEligLoan = availableTdsr > 0 && effectiveEstEligTenure > 0
+                    ? maxLoanFromPayment(availableTdsr, STRESS_TEST_RATE * 100, effectiveEstEligTenure)
+                    : 0
+
+                // Refinancing TDSR: each loan as its own block
                 const refiLoan = (data.outstanding_disbursed ?? 0)
-                const refiTenure = data.current_tenure ?? (t?.max ?? 0)
+                const refiTenureMax = t?.max ?? 35
+                const refiTenureMin = t?.min ?? 5
+                const refiTenure = data.preferred_tenure_refi != null
+                    ? Math.max(refiTenureMin, Math.min(refiTenureMax, data.preferred_tenure_refi))
+                    : (data.current_tenure ?? refiTenureMax)
                 const refiStress = refiLoan > 0 && refiTenure > 0
                     ? monthlyInstallment(refiLoan, STRESS_TEST_RATE * 100, refiTenure)
                     : 0
-                // If there's also an outstanding equity loan being refinanced, add its stress installment
+                const refiPass = refiStress > 0 ? refiStress <= availableTdsr : null
+
+                // Outstanding equity loan — separate card
                 const equityOutstandingLoan = meta?.isPrivate ? (data.outstanding_equity_loan ?? 0) : 0
-                const equityOutstandingTenure = data.current_equity_loan_tenure ?? refiTenure
+                const equityOutTenureMax = 35
+                const equityOutTenureMin = 5
+                const equityOutstandingTenure = data.preferred_tenure_equity_outstanding != null
+                    ? Math.max(equityOutTenureMin, Math.min(equityOutTenureMax, data.preferred_tenure_equity_outstanding))
+                    : (data.current_equity_loan_tenure ?? refiTenure)
                 const equityOutstandingStress = equityOutstandingLoan > 0 && equityOutstandingTenure > 0
                     ? monthlyInstallment(equityOutstandingLoan, STRESS_TEST_RATE * 100, equityOutstandingTenure)
                     : 0
-                const refiTotalStress = refiStress + equityOutstandingStress
-                const refiPass = refiTotalStress > 0 ? refiTotalStress <= availableTdsr : null
+                const balanceAfterHomeLoan = availableTdsr - refiStress
+                const equityOutstandingPass = equityOutstandingStress > 0 ? equityOutstandingStress <= balanceAfterHomeLoan : null
 
                 // New equity loan TDSR
                 const newEquityLoan = data.equity_loan_amount ?? 0
-                const maxEquityAge = agedBorrowers.length > 0 ? Math.max(...agedBorrowers.map(({ b }) => b.age ?? 0)) : 0
-                const equityTenureMax = maxEquityAge > 0 ? Math.min(75 - maxEquityAge, 35) : 35
+                const equityTenureMax = 35
                 const equityTenureMin = 5
                 const preferredEquityTenure = data.preferred_tenure_equity != null
                     ? Math.max(equityTenureMin, Math.min(equityTenureMax, data.preferred_tenure_equity))
@@ -595,57 +705,96 @@ export default function RefinancingWorkflowPanel({
                 const equityNewStress = newEquityLoan > 0 && preferredEquityTenure > 0
                     ? monthlyInstallment(newEquityLoan, STRESS_TEST_RATE * 100, preferredEquityTenure)
                     : 0
-                const balanceAfterRefi = availableTdsr - refiTotalStress
+                const balanceAfterRefi = availableTdsr - refiStress - equityOutstandingStress
                 const equityPass = newEquityLoan > 0 && equityNewStress > 0 ? equityNewStress <= balanceAfterRefi : null
 
-                const showEquityBlock = newEquityLoan > 0 && data.considerations?.equity_loan
+                const showEquityBlock = newEquityLoan > 0
 
                 return (
                     <Section title="TDSR Assessment" icon={<Percent size={15} />}>
-                        {/* Available TDSR header */}
+                        {/* Est. Loan Eligibility + Available TDSR */}
                         <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/40 px-4 py-3 flex items-start justify-between gap-4 flex-wrap">
                             <div>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Est. Loan Eligibility</p>
+                                <p className="text-xl font-bold text-[#052d4a]">{money(estEligLoan)}</p>
+                                <p className="text-[11px] text-slate-400">based on {effectiveEstEligTenure} yrs</p>
+                                <div className="flex items-center gap-1.5 mt-1.5">
+                                    <input
+                                        type="number"
+                                        value={estEligDraft}
+                                        placeholder="35"
+                                        onChange={e => setEstEligDraft(e.target.value)}
+                                        onBlur={e => {
+                                            const v = parseInt(e.target.value, 10)
+                                            const clamped = isNaN(v) ? undefined : Math.max(1, Math.min(35, v))
+                                            setEstEligTenure(clamped)
+                                            setEstEligDraft(clamped != null ? String(clamped) : '')
+                                        }}
+                                        className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 outline-none focus:border-[#03a9e7]"
+                                    />
+                                    <span className="text-[11px] text-slate-400">yrs</span>
+                                </div>
+                            </div>
+                            <div className="text-right shrink-0">
                                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Available TDSR</p>
-                                <p className="text-xl font-bold text-[#052d4a]">{money(availableTdsr)}/mo</p>
+                                <p className="text-xl font-bold text-[#052d4a]">{money(availableTdsr)}</p>
                                 <p className="text-[11px] text-slate-400 mt-0.5">
                                     {money(grossForTdsr)} × 55%{debtsForTdsr > 0 ? ` − ${money(debtsForTdsr)} commitments` : ''}
+                                    {computation.usingIwaa && computation.iwaa != null ? ` · IWAA ${Math.ceil(computation.iwaa)} yrs` : computation.averageAge != null ? ` · Age ${Math.ceil(computation.averageAge)} yrs` : ''}
                                 </p>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Gross Monthly Income</p>
-                                <p className="text-base font-bold text-[#052d4a]">{money(grossForTdsr)}</p>
                             </div>
                         </div>
 
-                        {/* Refinancing block */}
-                        {refiTotalStress > 0 && (
-                            <div className="rounded-lg border border-slate-200 p-4 space-y-3">
-                                <p className="text-xs font-bold text-[#052d4a] uppercase tracking-wide">Refinancing</p>
-                                {equityOutstandingStress > 0 && (
-                                    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5 space-y-1">
-                                        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Loan breakdown at 4% stress</p>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div>
-                                                <p className="text-[11px] text-slate-500">Home Loan ({refiTenure} yrs)</p>
-                                                <p className="text-sm font-bold text-[#052d4a]">{money(refiStress)}/mo</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-[11px] text-slate-500">Equity Loan ({equityOutstandingTenure} yrs)</p>
-                                                <p className="text-sm font-bold text-[#052d4a]">{money(equityOutstandingStress)}/mo</p>
-                                            </div>
-                                        </div>
+                        {/* TDSR Breakdown sub-header */}
+                        <div className="flex items-center gap-3">
+                            <div className="flex-1 border-t border-slate-200" />
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">TDSR Breakdown</p>
+                            <div className="flex-1 border-t border-slate-200" />
+                        </div>
+
+                        {/* Home Loan TDSR block */}
+                        {refiStress > 0 && (
+                            <div className="rounded-lg border border-slate-200 bg-white px-4 py-4 space-y-3">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Refinancing — Home Loan</p>
+                                        <p className="text-2xl font-bold text-[#052d4a]">{money(refiLoan)}</p>
                                     </div>
-                                )}
-                                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
-                                    <p className="text-[11px] text-slate-500">TDSR Required{equityOutstandingStress > 0 ? ' (combined)' : ` at ${refiTenure} yrs, 4% stress`}</p>
-                                    <p className="text-sm font-bold text-[#052d4a]">{money(refiTotalStress)}/mo</p>
+                                    <div className="text-right shrink-0">
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">TDSR Required</p>
+                                        <p className="text-lg font-bold text-[#052d4a]">{money(refiStress)}</p>
+                                        <p className="text-[11px] text-slate-400">at {refiTenure} yrs, 4% stress</p>
+                                    </div>
                                 </div>
+
+                                {/* Tenure range + preferred tenure input */}
+                                <div className="space-y-1.5">
+                                    <p className="text-[11px] text-slate-400">
+                                        Tenure range: {refiTenureMin} – {refiTenureMax} yrs (to age 75)
+                                    </p>
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="number"
+                                            value={rawRefiTenure !== '' ? rawRefiTenure : (data.preferred_tenure_refi != null ? String(data.preferred_tenure_refi) : '')}
+                                            placeholder={String(data.current_tenure ?? refiTenureMax)}
+                                            onChange={e => setRawRefiTenure(e.target.value)}
+                                            onBlur={() => {
+                                                const v = parseInt(rawRefiTenure, 10)
+                                                setRawRefiTenure('')
+                                                update({ preferred_tenure_refi: isNaN(v) ? undefined : Math.max(refiTenureMin, Math.min(refiTenureMax, v)) })
+                                            }}
+                                            className="w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
+                                        />
+                                        <span className="text-xs text-slate-500">years — adjust to explore TDSR required</span>
+                                    </div>
+                                </div>
+
                                 {refiPass !== null && (
                                     <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${refiPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
                                         {refiPass
                                             ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR Pass</span></>
                                             : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span>
-                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(refiTotalStress - availableTdsr)}/mo</span></>
+                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(refiStress - availableTdsr)}</span></>
                                         }
                                     </div>
                                 )}
@@ -662,41 +811,90 @@ export default function RefinancingWorkflowPanel({
                             </div>
                         )}
 
-                        {/* New equity loan TDSR block */}
-                        {showEquityBlock && (
-                            <div className="rounded-lg border border-slate-200 p-4 space-y-3">
-                                <p className="text-xs font-bold text-[#052d4a] uppercase tracking-wide">Equity Loan ({money(newEquityLoan)} requested)</p>
-                                <div className="space-y-2">
-                                    <div className="flex items-center gap-4 text-sm">
-                                        <span className="text-slate-500">Tenure range:</span>
-                                        <span className="font-semibold text-[#052d4a]">{equityTenureMin} – {equityTenureMax} yrs</span>
-                                        <span className="text-[11px] text-slate-400">(to age 75)</span>
+                        {/* Outstanding Equity Loan TDSR block */}
+                        {equityOutstandingLoan > 0 && equityOutstandingStress > 0 && (
+                            <div className="rounded-lg border border-slate-200 bg-white px-4 py-4 space-y-3">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Outstanding Equity Loan</p>
+                                        <p className="text-2xl font-bold text-[#052d4a]">{money(equityOutstandingLoan)}</p>
                                     </div>
+                                    <div className="text-right shrink-0">
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">TDSR Required</p>
+                                        <p className="text-lg font-bold text-[#052d4a]">{money(equityOutstandingStress)}</p>
+                                        <p className="text-[11px] text-slate-400">at {equityOutstandingTenure} yrs, 4% stress</p>
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <p className="text-[11px] text-slate-400">
+                                        Tenure range: {equityOutTenureMin} – {equityOutTenureMax} yrs
+                                    </p>
                                     <div className="flex items-center gap-3">
                                         <input
                                             type="number"
-                                            value={data.preferred_tenure_equity ?? ''}
-                                            placeholder={String(equityTenureMax)}
-                                            onChange={e => {
-                                                const v = parseInt(e.target.value, 10)
-                                                const clamped = isNaN(v) ? undefined : Math.max(equityTenureMin, Math.min(equityTenureMax, v))
-                                                update({ preferred_tenure_equity: clamped })
+                                            value={rawEquityOutTenure !== '' ? rawEquityOutTenure : (data.preferred_tenure_equity_outstanding != null ? String(data.preferred_tenure_equity_outstanding) : '')}
+                                            placeholder={String(equityOutTenureMax)}
+                                            onChange={e => setRawEquityOutTenure(e.target.value)}
+                                            onBlur={() => {
+                                                const v = parseInt(rawEquityOutTenure, 10)
+                                                setRawEquityOutTenure('')
+                                                update({ preferred_tenure_equity_outstanding: isNaN(v) ? undefined : Math.max(equityOutTenureMin, Math.min(equityOutTenureMax, v)) })
                                             }}
                                             className="w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
                                         />
-                                        <span className="text-xs text-slate-500">years (using {preferredEquityTenure} yrs)</span>
+                                        <span className="text-xs text-slate-500">years — adjust to explore TDSR required</span>
                                     </div>
                                 </div>
-                                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
-                                    <p className="text-[11px] text-slate-500">TDSR Required at {preferredEquityTenure} yrs, 4% stress</p>
-                                    <p className="text-sm font-bold text-[#052d4a]">{money(equityNewStress)}/mo</p>
+                                {equityOutstandingPass !== null && (
+                                    <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${equityOutstandingPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                                        {equityOutstandingPass
+                                            ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR Pass</span></>
+                                            : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span>
+                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(equityOutstandingStress - balanceAfterHomeLoan)}</span></>
+                                        }
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* New equity loan TDSR block */}
+                        {showEquityBlock && (
+                            <div className="rounded-lg border border-slate-200 bg-white px-4 py-4 space-y-3">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">New Equity Loan</p>
+                                        <p className="text-2xl font-bold text-[#052d4a]">{money(newEquityLoan)}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">TDSR Required</p>
+                                        <p className="text-lg font-bold text-[#052d4a]">{money(equityNewStress)}</p>
+                                        <p className="text-[11px] text-slate-400">at {preferredEquityTenure} yrs, 4% stress</p>
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <p className="text-[11px] text-slate-400">Tenure range: {equityTenureMin} – {equityTenureMax} yrs</p>
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="number"
+                                            value={rawEquityNewTenure !== '' ? rawEquityNewTenure : (data.preferred_tenure_equity != null ? String(data.preferred_tenure_equity) : '')}
+                                            placeholder={String(equityTenureMax)}
+                                            onChange={e => setRawEquityNewTenure(e.target.value)}
+                                            onBlur={() => {
+                                                const v = parseInt(rawEquityNewTenure, 10)
+                                                setRawEquityNewTenure('')
+                                                update({ preferred_tenure_equity: isNaN(v) ? undefined : Math.max(equityTenureMin, Math.min(equityTenureMax, v)) })
+                                            }}
+                                            className="w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
+                                        />
+                                        <span className="text-xs text-slate-500">years — adjust to explore TDSR required</span>
+                                    </div>
                                 </div>
                                 {equityPass !== null && (
                                     <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${equityPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
                                         {equityPass
                                             ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR Pass</span></>
                                             : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span>
-                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(equityNewStress - balanceAfterRefi)}/mo</span></>
+                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(equityNewStress - balanceAfterRefi)}</span></>
                                         }
                                     </div>
                                 )}
@@ -711,7 +909,7 @@ export default function RefinancingWorkflowPanel({
                             </div>
                         )}
 
-                        {refiTotalStress === 0 && (
+                        {refiStress === 0 && (
                             <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
                                 <Info size={12} /> Enter outstanding loan amount and tenure to see TDSR required.
                             </p>
@@ -934,13 +1132,13 @@ export default function RefinancingWorkflowPanel({
                                                 <div key={year} className="flex-1 min-w-[120px] rounded-xl border-2 border-[#052d4a] bg-[#052d4a] text-white px-4 py-3">
                                                     <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Total Int · Yr {year}</p>
                                                     <p className="text-xl font-black mt-0.5">{value != null ? money2(value) : '—'}</p>
-                                                    {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money2(instalment)}/mo</p>}
+                                                    {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money2(instalment)}</p>}
                                                 </div>
                                             ) : (
                                                 <div key={year} className="flex-1 min-w-[100px] rounded-xl border border-slate-200 bg-white px-4 py-3">
                                                     <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Int · Yr {year}</p>
                                                     <p className="text-lg font-black text-[#052d4a] mt-0.5">{value != null ? money2(value) : '—'}</p>
-                                                    {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money2(instalment)}/mo</p>}
+                                                    {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money2(instalment)}</p>}
                                                 </div>
                                             )
                                         })}
@@ -999,11 +1197,11 @@ export default function RefinancingWorkflowPanel({
                                     <div className="grid grid-cols-3 border-b border-slate-100">
                                         <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
-                                            {m1 != null ? <>{money2(m1)}<span className="text-slate-400 font-normal">/mo</span></> : <span className="text-slate-300">—</span>}
+                                            {m1 != null ? money2(m1) : <span className="text-slate-300">—</span>}
                                         </div>
                                         <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
                                             {m1 != null && m2 != null ? (
-                                                <>{money2(m2)}<span className="text-slate-400 font-normal">/mo</span>
+                                                <>{money2(m2)}
                                                 <span className={`ml-1.5 text-[11px] font-bold ${m2 > m1 ? 'text-red-500' : 'text-emerald-600'}`}>
                                                     {m2 > m1 ? '+' : ''}{money2(m2 - m1)}
                                                 </span></>

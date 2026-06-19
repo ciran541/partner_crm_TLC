@@ -61,8 +61,10 @@ export interface RefinancingWorkflow {
     cpf_used?: number                               // total CPF accrued by all owners (equity section)
     equity_loan_amount?: number                     // desired new equity loan amount
     preferred_tenure_equity?: number                // equity loan tenure for TDSR calc
+    preferred_tenure_equity_outstanding?: number    // TDSR exploration tenure for outstanding equity loan (overrides current_equity_loan_tenure)
     year_of_purchase?: number
     current_tenure?: number                         // remaining home loan tenure (years)
+    preferred_tenure_refi?: number                  // TDSR exploration tenure for home loan (overrides current_tenure in stress test)
     preferred_tenure_1?: number                     // Tenure Planner — comparison slot 1
     preferred_tenure_2?: number                     // Tenure Planner — comparison slot 2
     rate_preference?: 'fixed' | 'floating' | 'both'

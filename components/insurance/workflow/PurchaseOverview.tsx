@@ -160,7 +160,7 @@ export default function PurchaseOverview({ workflow, stage, followUpDate, onOpen
                                 <p className="text-lg font-bold text-[#03a9e7]">{Number(pkg.year1_rate).toFixed(2)}% <span className="text-xs font-medium text-slate-400">yr 1</span></p>
                             )}
                             {pkg.projected_monthly != null && (
-                                <p className="text-sm font-semibold text-[#052d4a] mt-0.5">{money(Number(pkg.projected_monthly))}<span className="text-xs font-normal text-slate-400">/mo</span></p>
+                                <p className="text-sm font-semibold text-[#052d4a] mt-0.5">{money(Number(pkg.projected_monthly))}</p>
                             )}
                         </div>
                     </div>

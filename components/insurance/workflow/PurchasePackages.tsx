@@ -143,7 +143,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                                     <div className="text-right shrink-0">
                                         {year1 != null && <p className="text-sm font-bold text-[#03a9e7]">{year1.toFixed(2)}%</p>}
                                         {monthly != null
-                                            ? <p className="text-xs text-slate-600">{fmt(monthly)}/mo</p>
+                                            ? <p className="text-xs text-slate-600">{fmt(monthly)}</p>
                                             : <p className="text-[11px] text-slate-400">not auto-priced</p>}
                                         {isSelected && <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#03a9e7] mt-1"><Check size={12} /> Selected</span>}
                                     </div>

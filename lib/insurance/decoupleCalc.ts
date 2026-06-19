@@ -331,7 +331,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     const availableTdsr  = tdsrAvailable(grossMonthlyIncome, existingMonthlyDebts)
 
     // ── Tenure — refi path (S1, S3) ──────────────────────────────────────────
-    const refiMaxByAge  = wa != null ? Math.max(0, AGE_CAP_REFI - wa) : cap
+    const refiMaxByAge  = wa != null ? Math.max(0, Math.floor(AGE_CAP_REFI - wa)) : cap
     const refiMaxByProp = Math.max(0, cap - yearsOwned - 1)
     const refiTenureMax = Math.max(MIN_TENURE, Math.min(refiMaxByAge, refiMaxByProp))
     const refiTenureMin = MIN_TENURE
@@ -341,7 +341,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     ))
 
     // ── Tenure — purchase path (S2, S3) ──────────────────────────────────────
-    const purchaseMaxByAge = wa != null ? Math.max(0, AGE_CAP_PURCHASE - wa) : cap
+    const purchaseMaxByAge = wa != null ? Math.max(0, Math.floor(AGE_CAP_PURCHASE - wa)) : cap
     const purchaseTenureMax = Math.max(MIN_TENURE, purchaseMaxByAge)
     const purchaseTenureMin = MIN_TENURE
     const effectivePurchaseTenure = Math.max(MIN_TENURE, Math.min(
