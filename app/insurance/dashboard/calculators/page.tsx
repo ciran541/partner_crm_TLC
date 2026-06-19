@@ -2,7 +2,7 @@
 
 import type React from 'react'
 import Link from 'next/link'
-import { Calculator, TrendingDown, Users } from 'lucide-react'
+import { Calculator, TrendingDown, Users, Receipt, Building2, BarChart3 } from 'lucide-react'
 
 const CALCULATORS: { name: string; description: string; href?: string; icon?: React.ElementType; available: boolean }[] = [
     {
@@ -19,7 +19,27 @@ const CALCULATORS: { name: string; description: string; href?: string; icon?: Re
         icon: Users,
         available: true,
     },
-    { name: 'Calculator 3', description: 'Coming soon', available: false },
+    {
+        name: 'Stamp Duty',
+        description: 'Calculate BSD and ABSD for any Singapore property purchase',
+        href: '/insurance/dashboard/calculators/stamp-duty',
+        icon: Receipt,
+        available: true,
+    },
+    {
+        name: 'BUC',
+        description: 'Progressive payment schedule for Building Under Construction properties',
+        href: '/insurance/dashboard/calculators/buc',
+        icon: Building2,
+        available: true,
+    },
+    {
+        name: 'Technical TDSR',
+        description: 'Loan eligibility under 75% and 55% LTV with pledge fund guidance',
+        href: '/insurance/dashboard/calculators/tdsr',
+        icon: BarChart3,
+        available: true,
+    },
 ]
 
 export default function CalculatorsPage() {
@@ -32,7 +52,7 @@ export default function CalculatorsPage() {
                 <p className="page-subtitle">Quick tools to run the numbers with your client.</p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {CALCULATORS.map(c => {
                     const Icon = c.icon ?? Calculator
                     if (!c.available) {
