@@ -142,7 +142,7 @@ export function tenureRange(args: {
 }): TenureRange {
     const currentYear = args.currentYear ?? new Date().getFullYear()
     const age = Math.ceil(args.ageForTenure)
-    const result1 = MAX_AGE - age
+    const result1 = Math.min(args.tenureCap, MAX_AGE - age)
     const yearsSince = currentYear - args.yearOfPurchase
     const result2 = args.tenureCap - yearsSince - 1
     const rawMax = Math.min(result1, result2)

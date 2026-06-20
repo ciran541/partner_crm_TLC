@@ -367,23 +367,42 @@ export default function RefinancingWorkflowPanel({
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <Question label={meta?.isPrivate ? 'Current Home Loan Tenure (remaining years)' : 'Current Tenure (remaining years on existing loan)'}>
-                            <FieldInput type="number" value={data.current_tenure ?? ''} placeholder="e.g. 20"
-                                onChange={v => update({ current_tenure: num(v) })} />
-                            {data.current_tenure != null && data.current_tenure < 5 && (
-                                <p className="text-[11px] text-red-500 mt-1">Cannot be less than 5 years</p>
-                            )}
-                            {data.current_tenure != null && data.current_tenure > (meta?.tenureCap ?? 35) && (
-                                <p className="text-[11px] text-red-500 mt-1">Cannot be more than {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private property'}</p>
-                            )}
-                            {!(data.current_tenure != null && (data.current_tenure < 5 || data.current_tenure > (meta?.tenureCap ?? 35))) && (
-                                <p className="text-[11px] text-slate-400 mt-1">5 – {meta?.tenureCap ?? 35} years for {meta?.isPrivate === false ? 'HDB' : 'private'}</p>
-                            )}
+                            {(() => {
+                                const homeTenureCap = meta?.tenureCap ?? 35
+                                return (
+                                    <>
+                                        <FieldInput type="number" value={data.current_tenure ?? ''} placeholder="e.g. 20"
+                                            onChange={v => update({ current_tenure: num(v) })}
+                                            onBlur={() => {
+                                                if (data.current_tenure != null) {
+                                                    update({ current_tenure: Math.max(5, Math.min(homeTenureCap, data.current_tenure)) })
+                                                }
+                                            }} />
+                                        {data.current_tenure != null && (data.current_tenure < 5 || data.current_tenure > homeTenureCap) ? (
+                                            <p className="text-[11px] text-red-500 mt-1">
+                                                Must be 5 – {homeTenureCap} years for {meta?.isPrivate === false ? 'HDB' : 'private property'}
+                                            </p>
+                                        ) : (
+                                            <p className="text-[11px] text-slate-400 mt-1">5 – {homeTenureCap} years for {meta?.isPrivate === false ? 'HDB' : 'private'}</p>
+                                        )}
+                                    </>
+                                )
+                            })()}
                         </Question>
                         {meta?.isPrivate && (data.outstanding_equity_loan ?? 0) > 0 && (
                             <Question label="Current Equity Loan Tenure (remaining years)">
                                 <FieldInput type="number" value={data.current_equity_loan_tenure ?? ''} placeholder="e.g. 10"
-                                    onChange={v => update({ current_equity_loan_tenure: num(v) })} />
-                                <p className="text-[11px] text-slate-400 mt-1">Up to 35 years, to age 75</p>
+                                    onChange={v => update({ current_equity_loan_tenure: num(v) })}
+                                    onBlur={() => {
+                                        if (data.current_equity_loan_tenure != null) {
+                                            update({ current_equity_loan_tenure: Math.max(5, Math.min(35, data.current_equity_loan_tenure)) })
+                                        }
+                                    }} />
+                                {data.current_equity_loan_tenure != null && (data.current_equity_loan_tenure < 5 || data.current_equity_loan_tenure > 35) ? (
+                                    <p className="text-[11px] text-red-500 mt-1">Must be 5 – 35 years</p>
+                                ) : (
+                                    <p className="text-[11px] text-slate-400 mt-1">5 – 35 years (to age 75)</p>
+                                )}
                             </Question>
                         )}
                     </div>
@@ -419,82 +438,6 @@ export default function RefinancingWorkflowPanel({
                         </div>
                     )}
 
-                    {/* Equity loan — CPF input + available equity diagram */}
-                    {data.considerations?.equity_loan && meta?.isPrivate && (() => {
-                        const totalLoan = (data.outstanding_disbursed ?? 0) + (data.outstanding_equity_loan ?? 0)
-                        const valuation = data.market_price ?? 0
-                        const cpfUsed = data.cpf_used ?? 0
-                        const loanPct = valuation > 0 ? totalLoan / valuation : 0
-                        const cpfPct  = valuation > 0 ? cpfUsed / valuation : 0
-                        const equityPct = Math.max(0, 0.75 - loanPct - cpfPct)
-                        const equityAmt = equityPct * valuation
-                        const cashPct = Math.max(0, 1 - loanPct - cpfPct)
-                        const cashAmt = cashPct * valuation
-                        const equityEligible = equityAmt >= 50_000
-                        const hasInputs = valuation > 0 && totalLoan > 0
-
-                        return (
-                            <div className="pl-1 space-y-4">
-                                <Question label="Total CPF accrued by all owner(s)">
-                                    <FieldInput commas prefix="$" value={data.cpf_used ?? ''} placeholder="e.g. 100,000"
-                                        onChange={v => update({ cpf_used: num(v) })} />
-                                </Question>
-
-                                {hasInputs && (
-                                    <div className="rounded-xl border border-[#03a9e7]/30 overflow-hidden">
-                                        <div className="px-4 py-3 bg-sky-50/70 border-b border-[#03a9e7]/15">
-                                            <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Single Ownership Structure</p>
-                                        </div>
-                                        <div className="p-4 space-y-4">
-                                            <OwnershipBar
-                                                loanPct={loanPct}
-                                                cpfPct={cpfPct}
-                                                cashPct={cashPct}
-                                                loanAmt={totalLoan}
-                                                cpfAmt={cpfUsed}
-                                                cashAmt={cashAmt}
-                                            />
-                                            <p className="text-[11px] text-slate-400">Based on property valuation of {money(valuation)}.</p>
-
-                                            <div className="space-y-2">
-                                                <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
-                                                <p className="text-sm text-slate-600">
-                                                    75% − {pct(loanPct)} (loan) − {pct(cpfPct)} (CPF) = <span className={`font-bold ${equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPct)}</span>
-                                                </p>
-                                                {equityPct <= 0 ? (
-                                                    <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
-                                                        <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
-                                                        <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
-                                                    </div>
-                                                ) : !equityEligible ? (
-                                                    <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-                                                        <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-                                                        <p className="text-[12px] text-amber-800">Available equity {money(equityAmt)} — below $50,000 minimum for an equity loan.</p>
-                                                    </div>
-                                                ) : (
-                                                    <div className="space-y-3">
-                                                        <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
-                                                            <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
-                                                            <p className="text-[12px] text-emerald-800 font-semibold">Available Equity: {money(equityAmt)} — eligible.</p>
-                                                        </div>
-                                                        <Question label="Would you like to take up an equity loan?">
-                                                            <FieldInput commas prefix="$"
-                                                                value={data.equity_loan_amount ?? ''}
-                                                                placeholder={`max ${money(equityAmt)}`}
-                                                                onChange={v => {
-                                                                    const n = num(v)
-                                                                    update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
-                                                                }} />
-                                                        </Question>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )
-                    })()}
                 </Section>
             )}
 
@@ -668,18 +611,19 @@ export default function RefinancingWorkflowPanel({
                 const availableTdsr = Math.max(grossForTdsr * 0.55 - debtsForTdsr, 0)
 
                 // Est. Loan Eligibility
-                const effectiveEstEligTenure = estEligTenure ?? 35
+                const estEligMax = meta?.tenureCap ?? 35
+                const effectiveEstEligTenure = estEligTenure ?? estEligMax
                 const estEligLoan = availableTdsr > 0 && effectiveEstEligTenure > 0
                     ? maxLoanFromPayment(availableTdsr, STRESS_TEST_RATE * 100, effectiveEstEligTenure)
                     : 0
 
                 // Refinancing TDSR: each loan as its own block
                 const refiLoan = (data.outstanding_disbursed ?? 0)
-                const refiTenureMax = t?.max ?? 35
+                const refiTenureMax = t?.max ?? (meta?.tenureCap ?? 35)
                 const refiTenureMin = t?.min ?? 5
                 const refiTenure = data.preferred_tenure_refi != null
                     ? Math.max(refiTenureMin, Math.min(refiTenureMax, data.preferred_tenure_refi))
-                    : (data.current_tenure ?? refiTenureMax)
+                    : refiTenureMax
                 const refiStress = refiLoan > 0 && refiTenure > 0
                     ? monthlyInstallment(refiLoan, STRESS_TEST_RATE * 100, refiTenure)
                     : 0
@@ -688,7 +632,7 @@ export default function RefinancingWorkflowPanel({
                 // Outstanding equity loan — separate card
                 const equityOutstandingLoan = meta?.isPrivate ? (data.outstanding_equity_loan ?? 0) : 0
                 const equityMaxTenureByAge = computation.ageForTenure != null
-                    ? Math.max(5, Math.floor(75 - computation.ageForTenure))
+                    ? Math.max(5, Math.min(35, Math.floor(75 - computation.ageForTenure)))
                     : 35
                 const equityOutTenureMax = equityMaxTenureByAge
                 const equityOutTenureMin = 5
@@ -728,11 +672,11 @@ export default function RefinancingWorkflowPanel({
                                     <input
                                         type="number"
                                         value={estEligDraft}
-                                        placeholder="35"
+                                        placeholder={String(estEligMax)}
                                         onChange={e => setEstEligDraft(e.target.value)}
                                         onBlur={e => {
                                             const v = parseInt(e.target.value, 10)
-                                            const clamped = isNaN(v) ? undefined : Math.max(1, Math.min(35, v))
+                                            const clamped = isNaN(v) ? undefined : Math.max(1, Math.min(estEligMax, v))
                                             setEstEligTenure(clamped)
                                             setEstEligDraft(clamped != null ? String(clamped) : '')
                                         }}
@@ -782,7 +726,7 @@ export default function RefinancingWorkflowPanel({
                                         <input
                                             type="number"
                                             value={rawRefiTenure !== '' ? rawRefiTenure : (data.preferred_tenure_refi != null ? String(data.preferred_tenure_refi) : '')}
-                                            placeholder={String(data.current_tenure ?? refiTenureMax)}
+                                            placeholder={String(refiTenureMax)}
                                             onChange={e => setRawRefiTenure(e.target.value)}
                                             onBlur={() => {
                                                 const v = parseInt(rawRefiTenure, 10)
@@ -974,13 +918,12 @@ export default function RefinancingWorkflowPanel({
 
                         // Home loan tenure range (property + age based)
                         const homeClamp = (v: number) => Math.min(Math.max(v, t.min), t.max)
-                        const defaultHomeT = homeClamp(data.current_tenure ?? t.max)
-                        const homeT1 = homeClamp(data.preferred_tenure_1 ?? defaultHomeT)
-                        const homeT2 = homeClamp(preferredTenure2 ?? defaultHomeT)
+                        const homeT1 = homeClamp(data.preferred_tenure_1 ?? t.max)
+                        const homeT2 = homeClamp(preferredTenure2 ?? t.max)
 
-                        // Equity loan tenure range (age based, no property-year constraint)
+                        // Equity loan tenure range (age based, capped at 35-year absolute max)
                         const equityMaxT = computation.ageForTenure != null
-                            ? Math.max(5, Math.floor(75 - computation.ageForTenure))
+                            ? Math.max(5, Math.min(35, Math.floor(75 - computation.ageForTenure)))
                             : 35
                         const equityMinT = 5
                         const equityClamp = (v: number) => Math.min(Math.max(v, equityMinT), equityMaxT)
@@ -992,7 +935,7 @@ export default function RefinancingWorkflowPanel({
                         const t1 = homeT1
                         const t2 = homeT2
                         const clamp = homeClamp
-                        const defaultT = defaultHomeT
+                        const defaultT = t.max
 
                         // Amortization rows
                         const homeAmort1 = homeLoanAmt > 0 ? computeAmortization(homeLoanAmt, homeT1, activeSchedule, soraForAmort) : []
@@ -1326,7 +1269,7 @@ export default function RefinancingWorkflowPanel({
                                                 <div className="flex items-center gap-2">
                                                     <input type="number" min={t.min} max={t.max}
                                                         value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
-                                                        placeholder={String(defaultHomeT)}
+                                                        placeholder={String(t.max)}
                                                         onChange={e => setRawPrefTenure1(e.target.value)}
                                                         onBlur={() => {
                                                             const parsed = parseInt(rawPrefTenure1, 10)
@@ -1336,14 +1279,14 @@ export default function RefinancingWorkflowPanel({
                                                         className={inputCls} />
                                                     <span className="text-xs text-slate-500">yrs</span>
                                                 </div>
-                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to remaining tenure</p>}
+                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to max tenure</p>}
                                             </div>
                                             <div className="space-y-1">
                                                 <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
                                                 <div className="flex items-center gap-2">
                                                     <input type="number" min={t.min} max={t.max}
                                                         value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
-                                                        placeholder={String(defaultHomeT)}
+                                                        placeholder={String(t.max)}
                                                         onChange={e => setRawPrefTenure2(e.target.value)}
                                                         onBlur={() => {
                                                             const parsed = parseInt(rawPrefTenure2, 10)
@@ -1434,7 +1377,7 @@ export default function RefinancingWorkflowPanel({
                                                         className={inputCls} />
                                                     <span className="text-xs text-slate-500">yrs</span>
                                                 </div>
-                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to remaining tenure</p>}
+                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to max tenure</p>}
                                             </div>
                                             <div className="space-y-1">
                                                 <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>

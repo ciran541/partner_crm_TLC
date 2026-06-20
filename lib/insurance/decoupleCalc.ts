@@ -331,7 +331,8 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     const availableTdsr  = tdsrAvailable(grossMonthlyIncome, existingMonthlyDebts)
 
     // ── Tenure — refi path (S1, S3) ──────────────────────────────────────────
-    const refiMaxByAge  = wa != null ? Math.max(0, Math.floor(AGE_CAP_REFI - wa)) : cap
+    // Formula 1: 75 − IWAA capped at tenureCap (35 private). Formula 2: cap − yearsOwned − 1. Shorter wins.
+    const refiMaxByAge  = wa != null ? Math.max(0, Math.min(cap, Math.floor(AGE_CAP_REFI - wa))) : cap
     const refiMaxByProp = Math.max(0, cap - yearsOwned - 1)
     const refiTenureMax = Math.max(MIN_TENURE, Math.min(refiMaxByAge, refiMaxByProp))
     const refiTenureMin = MIN_TENURE
@@ -341,7 +342,9 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
     ))
 
     // ── Tenure — purchase path (S2, S3) ──────────────────────────────────────
-    const purchaseMaxByAge = wa != null ? Math.max(0, Math.floor(AGE_CAP_PURCHASE - wa)) : cap
+    // Private LTV 75% (buyer purchases seller's share): age cap 65, absolute max 30 yrs.
+    const PURCHASE_TENURE_CAP = 30
+    const purchaseMaxByAge = wa != null ? Math.max(0, Math.min(PURCHASE_TENURE_CAP, Math.floor(AGE_CAP_PURCHASE - wa))) : PURCHASE_TENURE_CAP
     const purchaseTenureMax = Math.max(MIN_TENURE, purchaseMaxByAge)
     const purchaseTenureMin = MIN_TENURE
     const effectivePurchaseTenure = Math.max(MIN_TENURE, Math.min(
@@ -351,7 +354,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
 
     // ── TDSR calculations (scenario-aware) ───────────────────────────────────
     // Existing equity loan has its own remaining tenure — stress computed separately.
-    const equityLoanCurrentTenureMax = Math.max(MIN_TENURE, refiMaxByAge)
+    const equityLoanCurrentTenureMax = Math.max(MIN_TENURE, Math.min(35, refiMaxByAge))
     const effectiveCurrentEquityLoanTenure = equityOutstanding > 0
         ? Math.max(MIN_TENURE, Math.min(inputs.preferredTenureEquityLoanCurrent ?? equityLoanCurrentTenureMax, equityLoanCurrentTenureMax))
         : 0
@@ -458,7 +461,7 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
 
     // ── Equity loan — TDSR affordability check ────────────────────────────────
     // Equity loan tenure: 75 − age only (no property cap / year-of-purchase constraint).
-    const equityTenureMax        = Math.max(MIN_TENURE, refiMaxByAge)
+    const equityTenureMax        = Math.max(MIN_TENURE, Math.min(35, refiMaxByAge))
     const equityTenureMin        = MIN_TENURE
     const effectiveEquityTenure  = Math.max(MIN_TENURE, Math.min(
         inputs.preferredTenureEquity ?? equityTenureMax,

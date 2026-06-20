@@ -349,12 +349,32 @@ export default function DecouplingWorkflowPanel({
                             </Question>
                             <Question label="Home Loan — Remaining Tenure (years)">
                                 <FieldInput type="number" value={data.current_tenure ?? ''}
-                                    onChange={v => update({ current_tenure: num(v) })} />
+                                    onChange={v => update({ current_tenure: num(v) })}
+                                    onBlur={() => {
+                                        if (data.current_tenure != null) {
+                                            update({ current_tenure: Math.max(5, Math.min(35, data.current_tenure)) })
+                                        }
+                                    }} />
+                                {data.current_tenure != null && (data.current_tenure < 5 || data.current_tenure > 35) ? (
+                                    <p className="text-[11px] text-red-500 mt-1">Must be 5 – 35 years</p>
+                                ) : (
+                                    <p className="text-[11px] text-slate-400 mt-1">5 – 35 years for private property</p>
+                                )}
                             </Question>
                             {(data.outstanding_equity_loan ?? 0) > 0 && (
                                 <Question label="Equity Loan — Remaining Tenure (years)">
                                     <FieldInput type="number" value={data.current_tenure_equity_loan ?? ''}
-                                        onChange={v => update({ current_tenure_equity_loan: num(v) })} />
+                                        onChange={v => update({ current_tenure_equity_loan: num(v) })}
+                                        onBlur={() => {
+                                            if (data.current_tenure_equity_loan != null) {
+                                                update({ current_tenure_equity_loan: Math.max(5, Math.min(35, data.current_tenure_equity_loan)) })
+                                            }
+                                        }} />
+                                    {data.current_tenure_equity_loan != null && (data.current_tenure_equity_loan < 5 || data.current_tenure_equity_loan > 35) ? (
+                                        <p className="text-[11px] text-red-500 mt-1">Must be 5 – 35 years</p>
+                                    ) : (
+                                        <p className="text-[11px] text-slate-400 mt-1">5 – 35 years (to age 75)</p>
+                                    )}
                                 </Question>
                             )}
                             <Question label="Lock-in End Date">
