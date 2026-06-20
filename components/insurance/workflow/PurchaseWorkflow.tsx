@@ -1580,7 +1580,11 @@ function RateRow({
 
             <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
                 {(['fixed', 'floating'] as const).map(t => (
-                    <button key={t} type="button" onClick={() => onChange({ type: t })}
+                    <button key={t} type="button" onClick={() => onChange(
+                            t === 'floating'
+                                ? { type: 'floating', reference: '3M SORA', spread: entry.spread ?? 1.00 }
+                                : { type: 'fixed' }
+                        )}
                         className={`px-2.5 py-1 font-semibold capitalize transition-colors ${entry.type === t ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
                         {t}
                     </button>

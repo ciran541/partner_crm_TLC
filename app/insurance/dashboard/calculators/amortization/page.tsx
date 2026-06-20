@@ -112,11 +112,15 @@ const inp = 'px-3 py-2.5 text-sm rounded-lg border border-slate-200 outline-none
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-const DEFAULT_SCHEDULE: RateScheduleEntry[] = [{ year: 1, type: 'fixed' }]
+const DEFAULT_SCHEDULE: RateScheduleEntry[] = [
+    { year: 1, type: 'fixed', rate: undefined },
+    { thereafter: true, type: 'floating', reference: '3M SORA', spread: 1.00 },
+]
 
 export default function AmortizationPage() {
     const [loanAmount, setLoanAmount] = useState('300000')
     const [tenure, setTenure] = useState('25')
+    const [lockInInput, setLockInInput] = useState('')
     const [compareTenure, setCompareTenure] = useState('')
     const [schedule, setSchedule] = useState<RateScheduleEntry[]>(DEFAULT_SCHEDULE)
     const [sora, setSora] = useState<SoraRates | null>(null)
@@ -143,7 +147,8 @@ export default function AmortizationPage() {
         [loan, compareTen, ten, schedule, sora]
     )
 
-    const lockInYears = schedule.filter(e => !e.thereafter && e.year != null).length
+    const lockInRaw = parseInt(lockInInput)
+    const lockInYears = isNaN(lockInRaw) || lockInRaw < 0 ? 0 : lockInRaw
     const lockInCards = Array.from({ length: lockInYears }, (_, i) => {
         const yr = i + 1
         return { year: yr, value: rows.find(r => r.year === yr)?.cumulativeInterest ?? null }
@@ -179,7 +184,7 @@ export default function AmortizationPage() {
 
     function addThereafter() {
         if (schedule.some(e => e.thereafter)) return
-        setSchedule(s => [...s, { thereafter: true, type: 'fixed' }])
+        setSchedule(s => [...s, { thereafter: true, type: 'floating' }])
     }
 
     function removeRow(idx: number) {
@@ -244,7 +249,7 @@ export default function AmortizationPage() {
                     </div>
 
                     <div className="p-6 space-y-6">
-                        {/* Loan amount + tenures */}
+                        {/* Row 1: Loan amount + Tenure + Compare */}
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
@@ -303,6 +308,25 @@ export default function AmortizationPage() {
                                     />
                                 </div>
                             </div>
+                        </div>
+
+                        {/* Row 2: Lock-in */}
+                        <div className="max-w-xs">
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                Lock-in Period (Yrs)
+                            </label>
+                            <input
+                                type="number"
+                                value={lockInInput}
+                                onChange={e => setLockInInput(e.target.value)}
+                                onBlur={e => {
+                                    const v = parseInt(e.target.value)
+                                    if (!isNaN(v) && v < 0) setLockInInput('0')
+                                }}
+                                className={`${inp} w-full`}
+                                placeholder="e.g. 3"
+                                min={0}
+                            />
                         </div>
 
                         {/* Rate schedule */}
@@ -710,26 +734,28 @@ function RateRow({
                 {label}
             </span>
 
-            {/* Fixed / Floating toggle */}
-            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
-                {(['fixed', 'floating'] as const).map(t => (
-                    <button
-                        key={t}
-                        type="button"
-                        onClick={() => onChange({ type: t })}
-                        className={`px-3 py-1.5 font-semibold capitalize transition-colors ${
-                            entry.type === t
-                                ? 'bg-[#052d4a] text-white'
-                                : 'bg-white text-slate-500 hover:bg-slate-50'
-                        }`}
-                    >
-                        {t}
-                    </button>
-                ))}
-            </div>
+            {/* Fixed / Floating toggle — lock-in rows only; thereafter is always floating */}
+            {isLockin && (
+                <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                    {(['fixed', 'floating'] as const).map(t => (
+                        <button
+                            key={t}
+                            type="button"
+                            onClick={() => onChange({ type: t })}
+                            className={`px-3 py-1.5 font-semibold capitalize transition-colors ${
+                                entry.type === t
+                                    ? 'bg-[#052d4a] text-white'
+                                    : 'bg-white text-slate-500 hover:bg-slate-50'
+                            }`}
+                        >
+                            {t}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {/* Rate input */}
-            {entry.type === 'fixed' ? (
+            {isLockin && entry.type === 'fixed' ? (
                 <div className="flex items-center gap-1.5 flex-1">
                     <input
                         type="number"
@@ -775,7 +801,7 @@ function RateRow({
                         step="0.01"
                         value={entry.spread ?? ''}
                         onChange={e => onChange({ spread: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
-                        placeholder="0.35"
+                        placeholder="1.00"
                         className={`${inp} w-20`}
                     />
                     <span className="text-xs font-medium text-slate-400">%</span>

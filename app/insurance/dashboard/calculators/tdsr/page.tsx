@@ -22,11 +22,12 @@ type PropertyType = 'hdb' | 'private' | 'ec'
 type Employment   = 'employed' | 'selfEmployed'
 
 interface Borrower {
-    employment:      Employment
-    monthlyBasic:    string
-    annualVariable:  string   // commission / bonus (employed, optional)
-    annualNOA:       string   // self-employed only
-    age:             string
+    employment:         Employment
+    monthlyBasic:       string
+    annualVariable:     string   // commission / bonus (employed, optional)
+    annualNOA:          string   // self-employed only
+    age:                string
+    monthlyLiabilities: string
 }
 
 // ── Engine ────────────────────────────────────────────────────────────────────
@@ -61,7 +62,7 @@ function fmt(n: number): string {
 }
 
 function defaultBorrower(): Borrower {
-    return { employment: 'employed', monthlyBasic: '', annualVariable: '', annualNOA: '', age: '' }
+    return { employment: 'employed', monthlyBasic: '', annualVariable: '', annualNOA: '', age: '', monthlyLiabilities: '' }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -192,6 +193,22 @@ function BorrowerCard({ index, data, onChange }: {
                         max={80}
                     />
                 </div>
+
+                <div>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                        Monthly Liabilities <span className="font-normal normal-case">(optional)</span>
+                    </label>
+                    <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">$</span>
+                        <input
+                            type="text"
+                            value={data.monthlyLiabilities}
+                            onChange={setMoney('monthlyLiabilities')}
+                            className={`${inp} pl-6 border-dashed`}
+                            placeholder="e.g. 1,400 car loan"
+                        />
+                    </div>
+                </div>
             </div>
         </div>
     )
@@ -292,12 +309,11 @@ function LoanOptionCard({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function TDSRPage() {
-    const [numBorrowers,      setNumBorrowers]      = useState(1)
-    const [borrowers,         setBorrowers]          = useState<Borrower[]>([defaultBorrower()])
-    const [monthlyLiabilities, setMonthlyLiabilities] = useState('')
-    const [propertyType,      setPropertyType]      = useState<PropertyType>('private')
-    const [adjTenure1,        setAdjTenure1]        = useState<number | null>(null)
-    const [adjTenure2,        setAdjTenure2]        = useState<number | null>(null)
+    const [numBorrowers, setNumBorrowers] = useState(1)
+    const [borrowers,    setBorrowers]   = useState<Borrower[]>([defaultBorrower()])
+    const [propertyType, setPropertyType] = useState<PropertyType>('private')
+    const [adjTenure1,   setAdjTenure1]  = useState<number | null>(null)
+    const [adjTenure2,   setAdjTenure2]  = useState<number | null>(null)
 
     // Sync borrower array length
     useEffect(() => {
@@ -308,7 +324,7 @@ export default function TDSRPage() {
         })
     }, [numBorrowers])
 
-    const liab        = parseMoney(monthlyLiabilities)
+    const liab        = useMemo(() => borrowers.reduce((s, b) => s + parseMoney(b.monthlyLiabilities), 0), [borrowers])
     const totalIncome = useMemo(() => borrowers.reduce((s, b) => s + effectiveIncome(b), 0), [borrowers])
     const iwaa        = useMemo(() => computeIWAA(borrowers), [borrowers])
 
@@ -393,38 +409,20 @@ export default function TDSRPage() {
                         ))}
                     </div>
 
-                    {/* Liabilities + Property type */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2 border-t border-slate-100">
-                        <div>
-                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                Total Monthly Liabilities
-                                <span className="ml-1.5 font-normal text-slate-400 normal-case tracking-normal">(all borrowers combined)</span>
-                            </label>
-                            <div className="relative">
-                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
-                                <input
-                                    type="text"
-                                    value={monthlyLiabilities}
-                                    onChange={moneyChangeHandler(setMonthlyLiabilities)}
-                                    className={`${inp} pl-7`}
-                                    placeholder="e.g. 500 for car loan"
-                                />
-                            </div>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-                                Property Type
-                            </label>
-                            <Seg<PropertyType>
-                                options={[
-                                    { value: 'hdb',     label: 'HDB' },
-                                    { value: 'private', label: 'Private' },
-                                    { value: 'ec',      label: 'EC New Launch' },
-                                ]}
-                                value={propertyType}
-                                onChange={setPropertyType}
-                            />
-                        </div>
+                    {/* Property type */}
+                    <div className="pt-2 border-t border-slate-100">
+                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+                            Property Type
+                        </label>
+                        <Seg<PropertyType>
+                            options={[
+                                { value: 'hdb',     label: 'HDB' },
+                                { value: 'private', label: 'Private' },
+                                { value: 'ec',      label: 'EC New Launch' },
+                            ]}
+                            value={propertyType}
+                            onChange={setPropertyType}
+                        />
                     </div>
                 </div>
             </div>
@@ -485,7 +483,7 @@ export default function TDSRPage() {
                         <LoanOptionCard
                             label="Option 1"
                             maxAge={opts.opt1.maxAge}
-                            maxTen={opts.opt1.maxTen}
+                            maxTen={maxTen1}
                             loan={loan1}
                             tenure={ten1}
                             onTenureChange={t => setAdjTenure1(t)}
@@ -496,7 +494,7 @@ export default function TDSRPage() {
                         <LoanOptionCard
                             label="Option 2"
                             maxAge={opts.opt2.maxAge}
-                            maxTen={opts.opt2.maxTen}
+                            maxTen={maxTen2}
                             loan={loan2}
                             tenure={ten2}
                             onTenureChange={t => setAdjTenure2(t)}

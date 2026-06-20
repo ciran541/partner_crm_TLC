@@ -88,11 +88,12 @@ function IncomeTable({
     hasLiability: boolean
     ltvRemark?: boolean
 }) {
+    // Fixed per-column colors — independent of section accent
     const cols = [
-        { key: 'employed'     as const, label: 'Basic Pay',      sub: 'Employed'        },
-        { key: 'employedLiab' as const, label: 'With Liability',  sub: 'Employed'        },
-        { key: 'self'         as const, label: 'Self-employed',   sub: 'NOA income'      },
-        { key: 'selfLiab'     as const, label: 'With Liability',  sub: 'Self-employed'   },
+        { key: 'employed'     as const, label: 'Basic Pay',      sub: 'Employed',      dotColor: '#16a34a', subColor: '#f97316' },
+        { key: 'employedLiab' as const, label: 'With Liability',  sub: 'Employed',      dotColor: '#ef4444', subColor: '#f97316' },
+        { key: 'self'         as const, label: 'Self-employed',   sub: 'NOA income',    dotColor: '#7c3aed', subColor: '#94a3b8' },
+        { key: 'selfLiab'     as const, label: 'With Liability',  sub: 'Self-employed', dotColor: '#ef4444', subColor: '#7c3aed' },
     ]
 
     return (
@@ -118,10 +119,9 @@ function IncomeTable({
                                     className={`px-5 py-3 text-center text-[11px] font-bold uppercase tracking-wider ${
                                         !hasLiability && (i === 1 || i === 3) ? 'opacity-30' : ''
                                     }`}
-                                    style={{ color: i === 1 || i === 3 ? '#64748b' : accentColor }}
                                 >
-                                    <div>{c.label}</div>
-                                    <div className="text-[10px] font-medium text-slate-400 normal-case tracking-normal mt-0.5">{c.sub}</div>
+                                    <div style={{ color: c.dotColor }}>{c.label}</div>
+                                    <div className="text-[10px] font-semibold normal-case tracking-normal mt-0.5" style={{ color: c.subColor }}>{c.sub}</div>
                                 </th>
                             ))}
                         </tr>
@@ -148,9 +148,9 @@ function IncomeTable({
                                 <td
                                     key={i}
                                     className={`px-5 py-3.5 text-center font-black text-base ${
-                                        !hasLiability && (i === 1 || i === 3) ? 'opacity-30 text-slate-400' : ''
+                                        !hasLiability && (i === 1 || i === 3) ? 'opacity-30' : ''
                                     }`}
-                                    style={hasLiability || (i !== 1 && i !== 3) ? { color: accentColor } : {}}
+                                    style={{ color: c.dotColor }}
                                 >
                                     ${fmt(data[c.key].annual)}
                                 </td>

@@ -241,7 +241,7 @@ export default function StampDutyPage() {
                                 Residential Properties Currently Owned
                             </label>
                             <p className="text-xs text-slate-400 mb-3">
-                                {isJoint ? 'Combined property count for all buyers prior to this purchase' : 'How many do you own before this purchase?'}
+                                {isJoint ? 'Combined property count for all buyers prior to this purchase. Do not include properties that will be sold.' : 'Do not include properties that will be sold.'}
                             </p>
                             <div className="flex items-center gap-4">
                                 <button
