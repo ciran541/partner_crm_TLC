@@ -128,6 +128,35 @@ export async function fetchAllSoraFromMas(): Promise<SoraRates[]> {
     }
 }
 
+/**
+ * Fetch ALL SORA history from MAS for chart display — cached 24h server-side.
+ * Use this as a fallback when the DB hasn't been backfilled yet.
+ * The MAS endpoint returns ~8MB; the Next.js data cache keeps subsequent
+ * page loads instant without hitting MAS again.
+ */
+export async function fetchSoraHistoryForChart(): Promise<Pick<SoraRates, 'value_date' | 'sora' | 'comp_sora_1m' | 'comp_sora_3m'>[]> {
+    const key = process.env.MAS_API_KEY
+    if (!key) { console.error('[sora] MAS_API_KEY not set'); return [] }
+    try {
+        const res = await fetch(MAS_URL, {
+            headers: { keyid: key, accept: 'application/json' },
+            next: { revalidate: 86400 },   // 24h — large payload, safe to cache
+        })
+        if (!res.ok) { console.error('[sora] MAS chart fetch failed:', res.status); return [] }
+        const json = await res.json()
+        const rows: MasRow[] = json?.elements ?? []
+        return rows
+            .filter(r => typeof r.end_of_day === 'string' && r.end_of_day >= '2005-01-01')
+            .filter(r => r.sora != null || r.comp_sora_1m != null || r.comp_sora_3m != null)
+            .map(r => ({
+                value_date: r.end_of_day,
+                sora: num(r.sora),
+                comp_sora_1m: num(r.comp_sora_1m),
+                comp_sora_3m: num(r.comp_sora_3m),
+            }))
+    } catch (e) { console.error('[sora] fetchSoraHistoryForChart threw:', String(e)); return [] }
+}
+
 /** Read all stored SORA rows (chart columns only), oldest first. */
 export async function getAllSoraFromDb(): Promise<Pick<SoraRates, 'value_date' | 'sora' | 'comp_sora_1m' | 'comp_sora_3m'>[]> {
     const admin = createAdminClient()
