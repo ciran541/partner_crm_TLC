@@ -62,6 +62,7 @@ export interface RefinancingWorkflow {
     equity_loan_amount?: number                     // desired new equity loan amount
     preferred_tenure_equity?: number                // equity loan tenure for TDSR calc
     preferred_tenure_equity_outstanding?: number    // TDSR exploration tenure for outstanding equity loan (overrides current_equity_loan_tenure)
+    preferred_equity_amort_tenure_1?: number        // equity loan Tenure 1 for Monthly Instalment planner (mixed scenario)
     year_of_purchase?: number
     current_tenure?: number                         // remaining home loan tenure (years)
     preferred_tenure_refi?: number                  // TDSR exploration tenure for home loan (overrides current_tenure in stress test)
@@ -210,6 +211,7 @@ export interface DecoupleWorkflow {
     preferred_tenure_purchase?: number          // S2: purchase tenure; S3: purchase portion
     preferred_tenure_equity?: number            // equity loan tenure (if taken)
     preferred_tenure_equity_current?: number    // TDSR exploration tenure for existing equity loan
+    preferred_equity_amort_tenure_1?: number    // equity loan Tenure 1 for Monthly Instalment planner (mixed scenario)
     preferred_purchase_loan?: number            // preferred bank loan amount for S2/S3 (min $100k, max 75% × purchasePrice)
     manual_rate_schedule?: import('@/lib/types/rates').RateScheduleEntry[]
     reference_lockin_years?: number

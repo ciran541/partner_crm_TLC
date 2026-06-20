@@ -371,7 +371,7 @@ export default function BUCPage() {
                                     <th className="px-5 py-3 text-right text-[11px] font-bold text-amber-500 uppercase tracking-wider">Cash</th>
                                     <th className="px-5 py-3 text-right text-[11px] font-bold text-violet-500 uppercase tracking-wider">CPF</th>
                                     <th className="px-5 py-3 text-right text-[11px] font-bold text-emerald-600 uppercase tracking-wider">Loan Drawdown</th>
-                                    <th className="px-5 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Monthly Instalment</th>
+                                    <th className="px-5 py-3 text-right text-[11px] font-bold text-emerald-600 uppercase tracking-wider">Monthly Instalment</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -413,7 +413,7 @@ export default function BUCPage() {
                                         </td>
                                         <td className="px-5 py-3.5 text-right">
                                             {m.emi != null ? (
-                                                <span className="font-black text-[#052d4a]">${fmt(m.emi)}</span>
+                                                <span className="font-black text-emerald-600">${fmt(m.emi)}</span>
                                             ) : (
                                                 <span className="text-slate-200">—</span>
                                             )}

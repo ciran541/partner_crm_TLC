@@ -12,7 +12,7 @@ import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
 import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
 import {
-    Save, Edit2, X, User, Home,
+    Save, Edit2, X, User, Home, Pencil,
     Briefcase, CheckCircle2, AlertTriangle, CalendarClock
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
@@ -77,6 +77,12 @@ export default function CaseDetailPage() {
     const clientSectionRef = useRef<HTMLDivElement>(null)
     const wantScrollToClientRef = useRef(false)
 
+    // Inline case-name editing in the page header
+    const [nameEditing, setNameEditing] = useState(false)
+    const [nameValue, setNameValue] = useState('')
+    const [nameSaving, setNameSaving] = useState(false)
+    const nameInputRef = useRef<HTMLInputElement>(null)
+
     // Closed Won modal
     const [closedWonOpen, setClosedWonOpen] = useState(false)
     // Closed Lost modal
@@ -120,6 +126,7 @@ export default function CaseDetailPage() {
         } else {
             caseTypeRef.current = data.case_type
             setCaseData(data)
+            setNameValue(data.client_name ?? '')
             setWorkflowData(
                 data.case_type === 'Purchase'
                     ? getPurchaseWorkflow(data.workflow_data)
@@ -261,6 +268,22 @@ export default function CaseDetailPage() {
         else { refreshCases(); setAlert({ type: 'success', message: 'Follow-up reminder set.' }) }
     }, [persistCaseUpdate])
 
+    const commitNameEdit = useCallback(async () => {
+        const trimmed = nameValue.trim()
+        setNameEditing(false)
+        if (trimmed === (caseData?.client_name ?? '')) return
+        setNameSaving(true)
+        const err = await persistCaseUpdate({ client_name: trimmed || undefined })
+        setNameSaving(false)
+        if (err) {
+            setAlert({ type: 'error', message: `Name save failed: ${err}` })
+            setNameValue(caseData?.client_name ?? '')
+        } else {
+            setCaseData(prev => prev ? { ...prev, client_name: trimmed || undefined } : prev)
+            refreshCases()
+        }
+    }, [nameValue, caseData, persistCaseUpdate])
+
     const handleSave = () => {
         if (!caseData) return
         handleUpdate({
@@ -304,9 +327,33 @@ export default function CaseDetailPage() {
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
                         <div className="flex items-center gap-3 flex-wrap">
-                            <h1 className="ios-page-title">
-                                {caseData.client_name || 'Unnamed Case'}
-                            </h1>
+                            {nameEditing ? (
+                                <input
+                                    ref={nameInputRef}
+                                    value={nameValue}
+                                    onChange={e => setNameValue(e.target.value)}
+                                    onBlur={commitNameEdit}
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') { e.currentTarget.blur() }
+                                        if (e.key === 'Escape') { setNameValue(caseData.client_name ?? ''); setNameEditing(false) }
+                                    }}
+                                    placeholder="Client name…"
+                                    className="ios-page-title bg-transparent border-b-2 border-[#03a9e7] outline-none min-w-[180px] max-w-xs"
+                                    style={{ lineHeight: 'inherit', padding: '0 2px' }}
+                                />
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => { setNameEditing(true); setTimeout(() => nameInputRef.current?.focus(), 0) }}
+                                    className="group flex items-center gap-2 hover:opacity-80 transition-opacity"
+                                    title="Click to rename"
+                                >
+                                    <h1 className={`ios-page-title ${!caseData.client_name ? 'text-slate-400 italic' : ''}`}>
+                                        {nameSaving ? 'Saving…' : (caseData.client_name || 'Unnamed Case')}
+                                    </h1>
+                                    <Pencil size={14} className="text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                                </button>
+                            )}
                             <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-100">
                                 {caseData.case_type}
                             </span>

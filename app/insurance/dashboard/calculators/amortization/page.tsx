@@ -217,15 +217,29 @@ export default function AmortizationPage() {
                 <div className="lg:col-span-2 card overflow-hidden">
 
                     {/* Card header */}
-                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4 flex-wrap">
                         <h3 className="section-label mb-0">Loan Details</h3>
                         {(comp3m != null || comp1m != null) && (
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-400 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-full">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                                {comp3m != null && `3M SORA ${comp3m.toFixed(4)}%`}
-                                {comp3m != null && comp1m != null && <span className="text-slate-300">·</span>}
-                                {comp1m != null && `1M SORA ${comp1m.toFixed(4)}%`}
-                            </span>
+                            <div className="flex items-center gap-3">
+                                {comp3m != null && (
+                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+                                        <div>
+                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">3M SORA</p>
+                                            <p className="text-base font-black text-emerald-700 leading-none">{comp3m.toFixed(4)}%</p>
+                                        </div>
+                                    </div>
+                                )}
+                                {comp1m != null && (
+                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                                        <div>
+                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">1M SORA</p>
+                                            <p className="text-base font-black text-emerald-700 leading-none">{comp1m.toFixed(4)}%</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         )}
                     </div>
 

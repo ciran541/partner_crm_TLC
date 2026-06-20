@@ -241,7 +241,7 @@ export default function StampDutyPage() {
                                 Residential Properties Currently Owned
                             </label>
                             <p className="text-xs text-slate-400 mb-3">
-                                {isJoint ? 'Combined count for all buyers before this purchase.' : 'How many do you own before this purchase?'}
+                                {isJoint ? 'Combined property count for all buyers prior to this purchase' : 'How many do you own before this purchase?'}
                             </p>
                             <div className="flex items-center gap-4">
                                 <button
@@ -263,8 +263,12 @@ export default function StampDutyPage() {
                                 >
                                     <Plus size={16} />
                                 </button>
-                                <div className="text-sm text-slate-500 font-medium">
-                                    → Buying <span className="font-bold text-[#052d4a]">{ordinalLabel(existingCount + 1)}</span>
+                                <div className="inline-flex items-center gap-1.5 border border-amber-300 bg-amber-50 rounded-lg px-3 py-1.5 text-sm">
+                                    <span className="text-amber-600">→</span>
+                                    <span className="text-slate-500">
+                                        {existingCount === 1 ? '1 property' : `${existingCount} properties`} owned currently, buying{' '}
+                                        <span className="font-bold text-[#052d4a]">{ordinalLabel(existingCount + 1)}</span>
+                                    </span>
                                 </div>
                             </div>
                         </div>

@@ -83,6 +83,9 @@ export default function RefinancingWorkflowPanel({
     const [rawRefiTenure, setRawRefiTenure] = useState('')
     const [rawEquityOutTenure, setRawEquityOutTenure] = useState('')
     const [rawEquityNewTenure, setRawEquityNewTenure] = useState('')
+    const [preferredEquityAmortT2, setPreferredEquityAmortT2] = useState<number | undefined>()
+    const [rawEquityAmortT1, setRawEquityAmortT1] = useState('')
+    const [rawEquityAmortT2, setRawEquityAmortT2] = useState('')
 
     useEffect(() => {
         fetch('/api/insurance/rates')
@@ -684,11 +687,14 @@ export default function RefinancingWorkflowPanel({
 
                 // Outstanding equity loan — separate card
                 const equityOutstandingLoan = meta?.isPrivate ? (data.outstanding_equity_loan ?? 0) : 0
-                const equityOutTenureMax = 35
+                const equityMaxTenureByAge = computation.ageForTenure != null
+                    ? Math.max(5, Math.floor(75 - computation.ageForTenure))
+                    : 35
+                const equityOutTenureMax = equityMaxTenureByAge
                 const equityOutTenureMin = 5
                 const equityOutstandingTenure = data.preferred_tenure_equity_outstanding != null
                     ? Math.max(equityOutTenureMin, Math.min(equityOutTenureMax, data.preferred_tenure_equity_outstanding))
-                    : (data.current_equity_loan_tenure ?? refiTenure)
+                    : equityOutTenureMax
                 const equityOutstandingStress = equityOutstandingLoan > 0 && equityOutstandingTenure > 0
                     ? monthlyInstallment(equityOutstandingLoan, STRESS_TEST_RATE * 100, equityOutstandingTenure)
                     : 0
@@ -697,7 +703,7 @@ export default function RefinancingWorkflowPanel({
 
                 // New equity loan TDSR
                 const newEquityLoan = data.equity_loan_amount ?? 0
-                const equityTenureMax = 35
+                const equityTenureMax = equityMaxTenureByAge
                 const equityTenureMin = 5
                 const preferredEquityTenure = data.preferred_tenure_equity != null
                     ? Math.max(equityTenureMin, Math.min(equityTenureMax, data.preferred_tenure_equity))
@@ -958,51 +964,208 @@ export default function RefinancingWorkflowPanel({
                 </div>
             ) : computation.ready && t ? (
                 <>
-                    {/* Tenure range — shown first */}
-                    <div className="rounded-xl border-2 border-[#03a9e7]/40 overflow-hidden">
-                        <div className="bg-sky-50 px-4 py-3 flex items-center gap-2">
-                            <CalendarRange size={16} className="text-[#03a9e7]" />
-                            <p className="text-sm font-bold text-[#052d4a]">Estimated Tenure Range for Refinancing</p>
-                        </div>
-                        <div className="p-4 flex flex-wrap items-end gap-x-8 gap-y-2">
-                            <div>
-                                <p className="text-3xl font-extrabold text-[#052d4a] leading-none">{t.min} – {t.max} <span className="text-base font-semibold text-slate-500">years</span></p>
-                                <p className="text-[11px] text-slate-400 mt-1.5">
-                                    Min 5 yrs · max = lower of (75 − age = {t.result1}) and ({meta?.tenureCap} − yrs since purchase − 1 = {t.result2})
-                                </p>
-                            </div>
-                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                                <Info size={12} /> After picking a package, use the Tenure Planner below to compare instalment & interest.
-                            </p>
-                        </div>
-                    </div>
 
-                    {/* Monthly Instalment — replaces old TenureComparison */}
+
+                    {/* Monthly Instalment */}
                     {computation.totalOutstanding > 0 && (() => {
-                        const loan = computation.totalOutstanding
-                        const clamp = (v: number) => Math.min(Math.max(v, t.min), t.max)
-                        const defaultT = clamp(data.current_tenure ?? t.max)
-                        const t1 = clamp(data.preferred_tenure_1 ?? defaultT)
-                        const t2 = clamp(preferredTenure2 ?? defaultT)
-                        const amortRows1 = computeAmortization(loan, t1, activeSchedule, soraForAmort)
-                        const amortRows2 = computeAmortization(loan, t2, activeSchedule, soraForAmort)
-                        const m1 = amortRows1[0]?.instalment ?? null
-                        const m2 = amortRows2[0]?.instalment ?? null
+                        const homeLoanAmt = data.outstanding_disbursed ?? 0
+                        const equityLoanAmt = (data.outstanding_equity_loan ?? 0) + (data.equity_loan_amount ?? 0)
+                        const isMix = homeLoanAmt > 0 && equityLoanAmt > 0
+
+                        // Home loan tenure range (property + age based)
+                        const homeClamp = (v: number) => Math.min(Math.max(v, t.min), t.max)
+                        const defaultHomeT = homeClamp(data.current_tenure ?? t.max)
+                        const homeT1 = homeClamp(data.preferred_tenure_1 ?? defaultHomeT)
+                        const homeT2 = homeClamp(preferredTenure2 ?? defaultHomeT)
+
+                        // Equity loan tenure range (age based, no property-year constraint)
+                        const equityMaxT = computation.ageForTenure != null
+                            ? Math.max(5, Math.floor(75 - computation.ageForTenure))
+                            : 35
+                        const equityMinT = 5
+                        const equityClamp = (v: number) => Math.min(Math.max(v, equityMinT), equityMaxT)
+                        const equityT1 = equityClamp(data.preferred_equity_amort_tenure_1 ?? equityMaxT)
+                        const equityT2 = equityClamp(preferredEquityAmortT2 ?? equityMaxT)
+
+                        // Single-loan path uses home loan variables (equity-only not a typical scenario here)
+                        const singleLoan = computation.totalOutstanding
+                        const t1 = homeT1
+                        const t2 = homeT2
+                        const clamp = homeClamp
+                        const defaultT = defaultHomeT
+
+                        // Amortization rows
+                        const homeAmort1 = homeLoanAmt > 0 ? computeAmortization(homeLoanAmt, homeT1, activeSchedule, soraForAmort) : []
+                        const homeAmort2 = homeLoanAmt > 0 ? computeAmortization(homeLoanAmt, homeT2, activeSchedule, soraForAmort) : []
+                        const equityAmort1 = equityLoanAmt > 0 ? computeAmortization(equityLoanAmt, equityT1, activeSchedule, soraForAmort) : []
+                        const equityAmort2 = equityLoanAmt > 0 ? computeAmortization(equityLoanAmt, equityT2, activeSchedule, soraForAmort) : []
+                        const singleAmort1 = computeAmortization(singleLoan, t1, activeSchedule, soraForAmort)
+                        const singleAmort2 = computeAmortization(singleLoan, t2, activeSchedule, soraForAmort)
+
                         const effectiveLockin = (lockinYears != null && lockinYears > 0) ? lockinYears : null
-                        const i1 = effectiveLockin != null ? (amortRows1.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
-                        const i2 = effectiveLockin != null ? (amortRows2.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
-                        const lockInCards = effectiveLockin != null
-                            ? Array.from({ length: effectiveLockin }, (_, i) => ({
-                                year: i + 1,
-                                value: amortRows1.find(r => r.year === i + 1)?.cumulativeInterest ?? null,
-                                instalment: amortRows1.find(r => r.year === i + 1)?.instalment ?? null,
-                            }))
-                            : []
                         const schedExplicitYears = activeSchedule.filter(e => !e.thereafter && e.year != null).length
                         const breakdownYears = effectiveLockin ?? (schedExplicitYears > 0 ? schedExplicitYears : 3)
                         const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
                         const fmt2 = (n: number | null) => n != null ? `$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
                         const money2 = (n: number) => { const r = Math.round(n); return r < 0 ? `-$${(-r).toLocaleString()}` : `$${r.toLocaleString()}` }
+
+                        // Single-path values (non-mix)
+                        const m1 = singleAmort1[0]?.instalment ?? null
+                        const m2 = singleAmort2[0]?.instalment ?? null
+                        const i1 = effectiveLockin != null ? (singleAmort1.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const i2 = effectiveLockin != null ? (singleAmort2.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const lockInCards = effectiveLockin != null
+                            ? Array.from({ length: effectiveLockin }, (_, i) => ({
+                                year: i + 1,
+                                value: singleAmort1.find(r => r.year === i + 1)?.cumulativeInterest ?? null,
+                                instalment: singleAmort1.find(r => r.year === i + 1)?.instalment ?? null,
+                            }))
+                            : []
+
+                        // Mixed-path per-loan values
+                        const homeM1 = homeAmort1[0]?.instalment ?? null
+                        const homeM2 = homeAmort2[0]?.instalment ?? null
+                        const homeI1 = effectiveLockin != null ? (homeAmort1.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const homeI2 = effectiveLockin != null ? (homeAmort2.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const homeLockInCards = effectiveLockin != null
+                            ? Array.from({ length: effectiveLockin }, (_, i) => ({
+                                year: i + 1,
+                                value: homeAmort1.find(r => r.year === i + 1)?.cumulativeInterest ?? null,
+                                instalment: homeAmort1.find(r => r.year === i + 1)?.instalment ?? null,
+                            }))
+                            : []
+                        const equityM1 = equityAmort1[0]?.instalment ?? null
+                        const equityM2 = equityAmort2[0]?.instalment ?? null
+                        const equityI1 = effectiveLockin != null ? (equityAmort1.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const equityI2 = effectiveLockin != null ? (equityAmort2.find(r => r.year === effectiveLockin)?.cumulativeInterest ?? null) : null
+                        const equityLockInCards = effectiveLockin != null
+                            ? Array.from({ length: effectiveLockin }, (_, i) => ({
+                                year: i + 1,
+                                value: equityAmort1.find(r => r.year === i + 1)?.cumulativeInterest ?? null,
+                                instalment: equityAmort1.find(r => r.year === i + 1)?.instalment ?? null,
+                            }))
+                            : []
+
+                        const renderLockInCards = (cards: { year: number; value: number | null; instalment: number | null }[]) => (
+                            <div className="flex gap-2 flex-wrap">
+                                {cards.map(({ year, value, instalment }, i) => {
+                                    const isLast = i === cards.length - 1
+                                    return isLast ? (
+                                        <div key={year} className="flex-1 min-w-[120px] rounded-xl border-2 border-[#052d4a] bg-[#052d4a] text-white px-4 py-3">
+                                            <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Total Int · Yr {year}</p>
+                                            <p className="text-xl font-black mt-0.5">{value != null ? money2(value) : '—'}</p>
+                                            {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money2(instalment)}</p>}
+                                        </div>
+                                    ) : (
+                                        <div key={year} className="flex-1 min-w-[100px] rounded-xl border border-slate-200 bg-white px-4 py-3">
+                                            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Int · Yr {year}</p>
+                                            <p className="text-lg font-black text-[#052d4a] mt-0.5">{value != null ? money2(value) : '—'}</p>
+                                            {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money2(instalment)}</p>}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )
+
+                        const renderComparisonTable = (
+                            lv1: number | null, lv2: number | null,
+                            iv1: number | null, iv2: number | null,
+                            ta: number, tb: number,
+                        ) => (
+                            <div className="rounded-xl border border-slate-200 overflow-hidden">
+                                <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/60">
+                                    <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
+                                    <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({ta} yrs)</div>
+                                    <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({tb} yrs)</div>
+                                </div>
+                                <div className="grid grid-cols-3 border-b border-slate-100">
+                                    <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
+                                    <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
+                                        {lv1 != null ? money2(lv1) : <span className="text-slate-300">—</span>}
+                                    </div>
+                                    <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                        {lv1 != null && lv2 != null ? (
+                                            <>{money2(lv2)}<span className={`ml-1.5 text-[11px] font-bold ${lv2 > lv1 ? 'text-red-500' : 'text-emerald-600'}`}>{lv2 > lv1 ? '+' : ''}{money2(lv2 - lv1)}</span></>
+                                        ) : <span className="text-slate-300">—</span>}
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-3">
+                                    <div className="px-3 py-2.5 text-slate-600 text-sm">
+                                        {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
+                                    </div>
+                                    <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
+                                        {iv1 != null ? money2(iv1) : <span className="text-slate-300">—</span>}
+                                    </div>
+                                    <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                        {iv1 != null && iv2 != null ? (
+                                            <>{money2(iv2)}<span className={`ml-1.5 text-[11px] font-bold ${iv2 > iv1 ? 'text-red-500' : 'text-emerald-600'}`}>{iv2 > iv1 ? '+' : ''}{money2(iv2 - iv1)}</span></>
+                                        ) : <span className="text-slate-300">—</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        )
+
+                        const renderAmortTables = (rows1: ReturnType<typeof computeAmortization>, rows2: ReturnType<typeof computeAmortization>, ta: number, tb: number) => (
+                            <>
+                                {[
+                                    { rows: rows1, tv: ta, label: 'Tenure 1' },
+                                    { rows: rows2, tv: tb, label: 'Tenure 2' },
+                                ].map(({ rows, tv, label }) => rows.length > 0 && (
+                                    <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
+                                        <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Year-by-Year Breakdown</span>
+                                            <span className="text-[11px] text-slate-400">
+                                                {effectiveLockin != null ? 'Lock-in · ' : ''}{label} ({tv} yrs)
+                                            </span>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-sm">
+                                                <thead>
+                                                    <tr className="border-b border-slate-100 bg-slate-50/50">
+                                                        <th className="py-2 pl-3 pr-3 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">YR</th>
+                                                        <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Rate</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Monthly</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Prin /mo</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int /mo</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int (yr)</th>
+                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Balance</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {rows.filter(r => r.year <= breakdownYears).map(row => {
+                                                        const hasData = row.instalment != null
+                                                        const isLastRow = row.year === breakdownYears
+                                                        return (
+                                                            <tr key={row.year} className={`border-b border-slate-50 last:border-b-0 ${isLastRow ? 'bg-sky-50/50' : 'bg-white'}`}>
+                                                                <td className="py-2.5 pl-3 pr-3">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <div className="w-0.5 h-4 rounded-full bg-[#03a9e7] shrink-0" />
+                                                                        <span className="font-semibold text-[#052d4a]">{row.year}</span>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-3 py-2.5 text-[#03a9e7] font-semibold">{hasData ? `${row.rate?.toFixed(2)}%` : '—'}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-700">{fmt2(row.instalment)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthPrincipal)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthInterest)}</td>
+                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.yearInterest)}</td>
+                                                                <td className="px-3 py-2.5 text-right">
+                                                                    {hasData ? (
+                                                                        isLastRow
+                                                                            ? <span className="font-black text-[#052d4a] bg-sky-100 border border-sky-200 px-2 py-0.5 rounded-full">{fmt2(row.balance)}</span>
+                                                                            : <span className="font-semibold text-slate-700">{fmt2(row.balance)}</span>
+                                                                    ) : '—'}
+                                                                </td>
+                                                            </tr>
+                                                        )
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ))}
+                            </>
+                        )
+
                         return (
                             <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
 
@@ -1123,166 +1286,181 @@ export default function RefinancingWorkflowPanel({
                                     )}
                                 </div>
 
-                                {/* Per-year interest cards */}
-                                {lockInCards.length > 0 && (
-                                    <div className="flex gap-2 flex-wrap">
-                                        {lockInCards.map(({ year, value, instalment }, i) => {
-                                            const isLast = i === lockInCards.length - 1
-                                            return isLast ? (
-                                                <div key={year} className="flex-1 min-w-[120px] rounded-xl border-2 border-[#052d4a] bg-[#052d4a] text-white px-4 py-3">
-                                                    <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">Total Int · Yr {year}</p>
-                                                    <p className="text-xl font-black mt-0.5">{value != null ? money2(value) : '—'}</p>
-                                                    {instalment != null && <p className="text-[11px] opacity-60 mt-0.5">{money2(instalment)}</p>}
+                                {/* ── MIXED: home loan + equity loan split ── */}
+                                {isMix ? (
+                                    <>
+                                        {/* Home Loan interest cards */}
+                                        {homeLockInCards.length > 0 && (
+                                            <div className="space-y-2">
+                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                                                    Home Loan ({money2(homeLoanAmt)}) — Interest during lock-in
+                                                </p>
+                                                {renderLockInCards(homeLockInCards)}
+                                            </div>
+                                        )}
+
+                                        {/* Equity Loan interest cards */}
+                                        {equityLockInCards.length > 0 && (
+                                            <div className="space-y-2">
+                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                                                    Equity Loan ({money2(equityLoanAmt)}) — Interest during lock-in
+                                                </p>
+                                                {renderLockInCards(equityLockInCards)}
+                                            </div>
+                                        )}
+
+                                        {/* Divider */}
+                                        <div className="flex items-center gap-3">
+                                            <div className="flex-1 h-px bg-slate-200" />
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Home Loan Tenure Planner</span>
+                                            <div className="flex-1 h-px bg-slate-200" />
+                                        </div>
+
+                                        {/* Home loan tenure range + planner */}
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tenure Range: {t.min} – {t.max} yrs
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={t.min} max={t.max}
+                                                        value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
+                                                        placeholder={String(defaultHomeT)}
+                                                        onChange={e => setRawPrefTenure1(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawPrefTenure1, 10)
+                                                            setRawPrefTenure1('')
+                                                            update({ preferred_tenure_1: isNaN(parsed) ? undefined : homeClamp(parsed) })
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
                                                 </div>
-                                            ) : (
-                                                <div key={year} className="flex-1 min-w-[100px] rounded-xl border border-slate-200 bg-white px-4 py-3">
-                                                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Int · Yr {year}</p>
-                                                    <p className="text-lg font-black text-[#052d4a] mt-0.5">{value != null ? money2(value) : '—'}</p>
-                                                    {instalment != null && <p className="text-[11px] text-slate-400 mt-0.5">{money2(instalment)}</p>}
+                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to remaining tenure</p>}
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={t.min} max={t.max}
+                                                        value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                                        placeholder={String(defaultHomeT)}
+                                                        onChange={e => setRawPrefTenure2(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawPrefTenure2, 10)
+                                                            setRawPrefTenure2('')
+                                                            setPreferredTenure2(isNaN(parsed) ? undefined : homeClamp(parsed))
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
                                                 </div>
-                                            )
-                                        })}
-                                    </div>
+                                            </div>
+                                        </div>
+                                        {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2)}
+                                        {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2)}
+
+                                        {/* Divider */}
+                                        <div className="flex items-center gap-3">
+                                            <div className="flex-1 h-px bg-slate-200" />
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Equity Loan Tenure Planner</span>
+                                            <div className="flex-1 h-px bg-slate-200" />
+                                        </div>
+
+                                        {/* Equity loan tenure range + planner */}
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tenure Range: {equityMinT} – {equityMaxT} yrs
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={equityMinT} max={equityMaxT}
+                                                        value={rawEquityAmortT1 !== '' ? rawEquityAmortT1 : (data.preferred_equity_amort_tenure_1 != null ? String(data.preferred_equity_amort_tenure_1) : '')}
+                                                        placeholder={String(equityMaxT)}
+                                                        onChange={e => setRawEquityAmortT1(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawEquityAmortT1, 10)
+                                                            setRawEquityAmortT1('')
+                                                            update({ preferred_equity_amort_tenure_1: isNaN(parsed) ? undefined : equityClamp(parsed) })
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={equityMinT} max={equityMaxT}
+                                                        value={rawEquityAmortT2 !== '' ? rawEquityAmortT2 : (preferredEquityAmortT2 != null ? String(preferredEquityAmortT2) : '')}
+                                                        placeholder={String(equityMaxT)}
+                                                        onChange={e => setRawEquityAmortT2(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawEquityAmortT2, 10)
+                                                            setRawEquityAmortT2('')
+                                                            setPreferredEquityAmortT2(isNaN(parsed) ? undefined : equityClamp(parsed))
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2)}
+                                        {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
+                                    </>
+                                ) : (
+                                    /* ── SINGLE LOAN (home-only or equity-only) ── */
+                                    <>
+                                        {/* Per-year interest cards */}
+                                        {lockInCards.length > 0 && renderLockInCards(lockInCards)}
+
+                                        {/* Tenure range label */}
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tenure Range: {t.min} – {t.max} yrs
+                                        </div>
+
+                                        {/* Tenure inputs */}
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={t.min} max={t.max}
+                                                        value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
+                                                        placeholder={String(defaultT)}
+                                                        onChange={e => setRawPrefTenure1(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawPrefTenure1, 10)
+                                                            setRawPrefTenure1('')
+                                                            update({ preferred_tenure_1: isNaN(parsed) ? undefined : clamp(parsed) })
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                </div>
+                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to remaining tenure</p>}
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={t.min} max={t.max}
+                                                        value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                                        placeholder={String(defaultT)}
+                                                        onChange={e => setRawPrefTenure2(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawPrefTenure2, 10)
+                                                            setRawPrefTenure2('')
+                                                            setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Comparison table */}
+                                        {renderComparisonTable(m1, m2, i1, i2, t1, t2)}
+
+                                        {/* Year-by-year breakdown — both tenures */}
+                                        {renderAmortTables(singleAmort1, singleAmort2, t1, t2)}
+                                    </>
                                 )}
-
-                                {/* Tenure range label */}
-                                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                                    Tenure Range: {t.min} – {t.max} yrs
-                                </div>
-
-                                {/* Tenure inputs */}
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" min={t.min} max={t.max}
-                                                value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
-                                                placeholder={String(defaultT)}
-                                                onChange={e => setRawPrefTenure1(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawPrefTenure1, 10)
-                                                    setRawPrefTenure1('')
-                                                    update({ preferred_tenure_1: isNaN(parsed) ? undefined : clamp(parsed) })
-                                                }}
-                                                className={inputCls} />
-                                            <span className="text-xs text-slate-500">yrs</span>
-                                        </div>
-                                        {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to remaining tenure</p>}
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" min={t.min} max={t.max}
-                                                value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
-                                                placeholder={String(defaultT)}
-                                                onChange={e => setRawPrefTenure2(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawPrefTenure2, 10)
-                                                    setRawPrefTenure2('')
-                                                    setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
-                                                }}
-                                                className={inputCls} />
-                                            <span className="text-xs text-slate-500">yrs</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Comparison table */}
-                                <div className="rounded-xl border border-slate-200 overflow-hidden">
-                                    <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/60">
-                                        <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
-                                        <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({t1} yrs)</div>
-                                        <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({t2} yrs)</div>
-                                    </div>
-                                    <div className="grid grid-cols-3 border-b border-slate-100">
-                                        <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
-                                            {m1 != null ? money2(m1) : <span className="text-slate-300">—</span>}
-                                        </div>
-                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                            {m1 != null && m2 != null ? (
-                                                <>{money2(m2)}
-                                                <span className={`ml-1.5 text-[11px] font-bold ${m2 > m1 ? 'text-red-500' : 'text-emerald-600'}`}>
-                                                    {m2 > m1 ? '+' : ''}{money2(m2 - m1)}
-                                                </span></>
-                                            ) : <span className="text-slate-300">—</span>}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-3">
-                                        <div className="px-3 py-2.5 text-slate-600 text-sm">
-                                            {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
-                                        </div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
-                                            {i1 != null ? money2(i1) : <span className="text-slate-300">—</span>}
-                                        </div>
-                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                            {i1 != null && i2 != null ? (
-                                                <>{money2(i2)}
-                                                <span className={`ml-1.5 text-[11px] font-bold ${i2 > i1 ? 'text-red-500' : 'text-emerald-600'}`}>
-                                                    {i2 > i1 ? '+' : ''}{money2(i2 - i1)}
-                                                </span></>
-                                            ) : <span className="text-slate-300">—</span>}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Year-by-year breakdown — both tenures */}
-                                {[
-                                    { rows: amortRows1, tv: t1, label: 'Tenure 1' },
-                                    { rows: amortRows2, tv: t2, label: 'Tenure 2' },
-                                ].map(({ rows, tv, label }) => rows.length > 0 && (
-                                    <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
-                                        <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-                                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Year-by-Year Breakdown</span>
-                                            <span className="text-[11px] text-slate-400">
-                                                {effectiveLockin != null ? 'Lock-in · ' : ''}{label} ({tv} yrs)
-                                            </span>
-                                        </div>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-sm">
-                                                <thead>
-                                                    <tr className="border-b border-slate-100 bg-slate-50/50">
-                                                        <th className="py-2 pl-3 pr-3 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">YR</th>
-                                                        <th className="px-3 py-2 text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Rate</th>
-                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Monthly</th>
-                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Prin /mo</th>
-                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int /mo</th>
-                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Int (yr)</th>
-                                                        <th className="px-3 py-2 text-right text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Balance</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {rows.filter(r => r.year <= breakdownYears).map(row => {
-                                                        const hasData = row.instalment != null
-                                                        const isLastRow = row.year === breakdownYears
-                                                        return (
-                                                            <tr key={row.year} className={`border-b border-slate-50 last:border-b-0 ${isLastRow ? 'bg-sky-50/50' : 'bg-white'}`}>
-                                                                <td className="py-2.5 pl-3 pr-3">
-                                                                    <div className="flex items-center gap-1.5">
-                                                                        <div className="w-0.5 h-4 rounded-full bg-[#03a9e7] shrink-0" />
-                                                                        <span className="font-semibold text-[#052d4a]">{row.year}</span>
-                                                                    </div>
-                                                                </td>
-                                                                <td className="px-3 py-2.5 text-[#03a9e7] font-semibold">{hasData ? `${row.rate?.toFixed(2)}%` : '—'}</td>
-                                                                <td className="px-3 py-2.5 text-right text-slate-700">{fmt2(row.instalment)}</td>
-                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthPrincipal)}</td>
-                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.monthInterest)}</td>
-                                                                <td className="px-3 py-2.5 text-right text-slate-600">{fmt2(row.yearInterest)}</td>
-                                                                <td className="px-3 py-2.5 text-right">
-                                                                    {hasData ? (
-                                                                        isLastRow
-                                                                            ? <span className="font-black text-[#052d4a] bg-sky-100 border border-sky-200 px-2 py-0.5 rounded-full">{fmt2(row.balance)}</span>
-                                                                            : <span className="font-semibold text-slate-700">{fmt2(row.balance)}</span>
-                                                                    ) : '—'}
-                                                                </td>
-                                                            </tr>
-                                                        )
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                ))}
 
                                 {effectiveLockin == null && (
                                     <p className="text-[11px] text-slate-400 flex items-center gap-1.5">

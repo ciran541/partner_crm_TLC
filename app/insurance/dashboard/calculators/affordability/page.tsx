@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { ArrowLeft, Users } from 'lucide-react'
 import { monthlyInstallment, TDSR_LIMIT, MSR_LIMIT, NOA_FACTOR } from '@/lib/insurance/loanCalc'
 
+const STRESS_RATE = 4.0
+
 // ── Engine ────────────────────────────────────────────────────────────────────
 
 interface IncomeResult { monthly: number; annual: number }
@@ -16,33 +18,25 @@ interface AffordabilityResult {
 
 function compute(
     loanAmount: number,
-    stressRatePct: number,
     tenureYears: number,
     monthlyLiability: number,
 ): AffordabilityResult | null {
     if (!loanAmount || loanAmount <= 0 || !tenureYears || tenureYears <= 0) return null
 
-    const M = monthlyInstallment(loanAmount, stressRatePct, tenureYears)
+    const M = monthlyInstallment(loanAmount, STRESS_RATE, tenureYears)
     const L = monthlyLiability || 0
 
     // ── Private Property: TDSR (55%) only ────────────────────────────────────
-    // Employed: gross income = effective income (no haircut)
     const pEmp     = M / TDSR_LIMIT
     const pEmpL    = (M + L) / TDSR_LIMIT
-    // Self-employed: effective income = annual × NOA_FACTOR / 12
-    // → annual = (required effective) / NOA_FACTOR × 12
     const pSelfAnn  = (M / TDSR_LIMIT) / NOA_FACTOR * 12
     const pSelfLAnn = ((M + L) / TDSR_LIMIT) / NOA_FACTOR * 12
 
-    // ── HDB/EC: binding = max(MSR 30%, TDSR 55%) ─────────────────────────────
-    // For employed: gross monthly income needed
-    const hEmp     = Math.max(M / MSR_LIMIT, M / TDSR_LIMIT)           // MSR always stricter when L=0
+    // ── HDB / EC New Launch: binding = max(MSR 30%, TDSR 55%) ────────────────
+    const hEmp     = Math.max(M / MSR_LIMIT, M / TDSR_LIMIT)
     const hEmpL    = Math.max(M / MSR_LIMIT, (M + L) / TDSR_LIMIT)
-    // For self-employed: effective income needed → annual gross
     const hSelfEff  = Math.max(M / MSR_LIMIT, M / TDSR_LIMIT)
     const hSelfAnn  = hSelfEff / NOA_FACTOR * 12
-    // MSR caps the mortgage instalment only (liability excluded), so the
-    // NOA-haircutted MSR floor is unchanged when liability is present.
     const hSelfLAnn = hSelfAnn
 
     return {
@@ -78,36 +72,38 @@ const inp = 'px-3 py-2.5 text-sm rounded-lg border border-slate-200 outline-none
 function IncomeTable({
     title,
     subtitle,
+    tenureNote,
     accentColor,
     accentBg,
     data,
     hasLiability,
+    ltvRemark,
 }: {
     title: string
     subtitle: string
+    tenureNote: string
     accentColor: string
     accentBg: string
     data: AffordabilityResult['private']
     hasLiability: boolean
+    ltvRemark?: boolean
 }) {
     const cols = [
-        { key: 'employed'     as const, label: 'Basic Pay',    sub: 'Employed'      },
-        { key: 'employedLiab' as const, label: 'With Liability', sub: 'Employed'    },
-        { key: 'self'         as const, label: 'Self-employed', sub: 'NOA income'   },
-        { key: 'selfLiab'     as const, label: 'With Liability', sub: 'Self-employed' },
+        { key: 'employed'     as const, label: 'Basic Pay',      sub: 'Employed'        },
+        { key: 'employedLiab' as const, label: 'With Liability',  sub: 'Employed'        },
+        { key: 'self'         as const, label: 'Self-employed',   sub: 'NOA income'      },
+        { key: 'selfLiab'     as const, label: 'With Liability',  sub: 'Self-employed'   },
     ]
 
     return (
         <div className="card overflow-hidden">
             {/* Section header */}
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3" style={{ background: accentBg }}>
-                <div
-                    className="w-1 h-8 rounded-full shrink-0"
-                    style={{ background: accentColor }}
-                />
-                <div>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-start gap-3" style={{ background: accentBg }}>
+                <div className="w-1 h-8 rounded-full shrink-0 mt-0.5" style={{ background: accentColor }} />
+                <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold" style={{ color: accentColor }}>{title}</p>
-                    <p className="text-[11px] text-slate-500">{subtitle}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{subtitle}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5 italic">{tenureNote}</p>
                 </div>
             </div>
 
@@ -163,6 +159,13 @@ function IncomeTable({
                     </tbody>
                 </table>
             </div>
+
+            {ltvRemark && (
+                <div className="px-5 py-2.5 border-t border-amber-100 bg-amber-50 flex items-center gap-2">
+                    <span className="text-amber-500 text-sm font-bold shrink-0">⚠</span>
+                    <p className="text-xs font-semibold text-amber-700">Loan is capped at 55% LTV</p>
+                </div>
+            )}
         </div>
     )
 }
@@ -170,22 +173,26 @@ function IncomeTable({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AffordabilityPage() {
-    const [loanAmount, setLoanAmount]       = useState('900000')
-    const [stressRate, setStressRate]       = useState('4.00')
-    const [tenure, setTenure]               = useState('30')
-    const [liability, setLiability]         = useState('')
+    const [loanAmount, setLoanAmount] = useState('900000')
+    const [tenure, setTenure]         = useState('30')
+    const [liability, setLiability]   = useState('')
 
-    const loan    = parseFloat(loanAmount.replace(/,/g, '')) || 0
-    const stress  = parseFloat(stressRate) || 4
-    const tenRaw  = parseInt(tenure)
-    const ten     = isNaN(tenRaw) ? 0 : Math.min(Math.max(tenRaw, 5), 35)
-    const liab    = parseFloat(liability.replace(/,/g, '')) || 0
+    const loan   = parseFloat(loanAmount.replace(/,/g, '')) || 0
+    const tenRaw = parseInt(tenure)
+    const ten    = isNaN(tenRaw) ? 0 : Math.min(Math.max(tenRaw, 5), 35)
+    const liab   = parseFloat(liability.replace(/,/g, '')) || 0
     const hasLiab = liab > 0
 
     const result = useMemo(
-        () => compute(loan, stress, ten, liab),
-        [loan, stress, ten, liab]
+        () => compute(loan, ten, liab),
+        [loan, ten, liab]
     )
+
+    // Blur / remark rules
+    const hdbBlurred     = ten > 30
+    const showLtvPrivate = ten > 30
+    const showLtvHdb     = ten >= 26 && ten <= 30
+    const showLtvEc      = ten > 30
 
     return (
         <div className="max-w-6xl mx-auto space-y-6">
@@ -207,122 +214,118 @@ export default function AffordabilityPage() {
                 <p className="page-subtitle mt-1">Find the minimum income needed to qualify for a given loan.</p>
             </div>
 
-            {/* ── Top: inputs ── */}
-            <div>
-
-                {/* Inputs */}
-                <div className="card overflow-hidden">
-                    <div className="px-6 py-4 border-b border-slate-100">
-                        <h3 className="section-label mb-0">Loan Details</h3>
-                    </div>
-                    <div className="p-6">
-                        <div className="grid grid-cols-2 gap-4">
-                            {/* Loan Amount */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                    Loan Amount
-                                </label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
-                                    <input
-                                        type="text"
-                                        value={loanAmount}
-                                        onChange={e => setLoanAmount(e.target.value)}
-                                        className={`${inp} pl-7`}
-                                        placeholder="900,000"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Stress Test Rate */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                    Stress Test Rate
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        value={stressRate}
-                                        onChange={e => setStressRate(e.target.value)}
-                                        className={`${inp} pr-7`}
-                                        placeholder="4.00"
-                                    />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">%</span>
-                                </div>
-                            </div>
-
-                            {/* Tenure */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                    Tenure (Years)
-                                </label>
+            {/* ── Inputs ── */}
+            <div className="card overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-100">
+                    <h3 className="section-label mb-0">Loan Details</h3>
+                </div>
+                <div className="p-6">
+                    <div className="grid grid-cols-2 gap-4">
+                        {/* Loan Amount */}
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                Loan Amount
+                            </label>
+                            <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
                                 <input
-                                    type="number"
-                                    value={tenure}
-                                    onChange={e => setTenure(e.target.value)}
-                                    onBlur={e => {
-                                        const v = parseInt(e.target.value)
-                                        if (isNaN(v) || v < 5) setTenure('5')
-                                        else if (v > 35) setTenure('35')
-                                    }}
-                                    className={inp}
-                                    placeholder="30"
-                                    min={5}
-                                    max={35}
+                                    type="text"
+                                    value={loanAmount}
+                                    onChange={e => setLoanAmount(e.target.value)}
+                                    className={`${inp} pl-7`}
+                                    placeholder="900,000"
                                 />
                             </div>
+                        </div>
 
-                            {/* Monthly Liability */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                    Monthly Liability
-                                    <span className="ml-1.5 font-normal text-slate-400 normal-case tracking-normal">(optional)</span>
-                                </label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
-                                    <input
-                                        type="text"
-                                        value={liability}
-                                        onChange={e => setLiability(e.target.value)}
-                                        className={`${inp} pl-7 border-dashed`}
-                                        placeholder="e.g. 500 for car loan"
-                                    />
-                                </div>
+                        {/* Monthly Liability */}
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                Monthly Liability
+                                <span className="ml-1.5 font-normal text-slate-400 normal-case tracking-normal">(optional)</span>
+                            </label>
+                            <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
+                                <input
+                                    type="text"
+                                    value={liability}
+                                    onChange={e => setLiability(e.target.value)}
+                                    className={`${inp} pl-7 border-dashed`}
+                                    placeholder="e.g. 500 for car loan"
+                                />
                             </div>
+                        </div>
+
+                        {/* Tenure */}
+                        <div className="col-span-2 sm:col-span-1">
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                Tenure (Years)
+                            </label>
+                            <input
+                                type="number"
+                                value={tenure}
+                                onChange={e => setTenure(e.target.value)}
+                                onBlur={e => {
+                                    const v = parseInt(e.target.value)
+                                    if (isNaN(v) || v < 5) setTenure('5')
+                                    else if (v > 35) setTenure('35')
+                                }}
+                                className={inp}
+                                placeholder="30"
+                                min={5}
+                                max={35}
+                            />
                         </div>
                     </div>
                 </div>
-
             </div>
 
             {/* ── Output tables ── */}
             {result && (
-                <>
+                <div className="space-y-4">
+                    {/* Private Property */}
                     <IncomeTable
                         title="Private Property (55% TDSR)"
-                        subtitle="Borrower will only need to pass TDSR."
+                        subtitle="Borrower will need to pass TDSR."
+                        tenureNote="Tenure range 5 – 35 years"
                         accentColor="#03a9e7"
                         accentBg="#f0f9ff"
                         data={result.private}
                         hasLiability={hasLiab}
+                        ltvRemark={showLtvPrivate}
                     />
-                    <div className={`transition-opacity ${ten > 30 ? 'opacity-40 pointer-events-none' : ''}`}>
-                        {ten > 30 && (
-                            <p className="text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-3">
-                                HDB / EC loans cannot exceed 30 years — results below are not applicable at this tenure.
+
+                    {/* HDB */}
+                    <div className={`transition-opacity duration-200 ${hdbBlurred ? 'opacity-40 pointer-events-none' : ''}`}>
+                        {hdbBlurred && (
+                            <p className="text-xs font-semibold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-4 py-2 mb-3">
+                                HDB loans cannot exceed 30 years — not applicable at this tenure.
                             </p>
                         )}
                         <IncomeTable
-                            title="HDB / EC Property (30% MSR)"
-                            subtitle="Borrower will need to pass both TDSR and MSR."
+                            title="HDB (55% TDSR / 30% MSR)"
+                            subtitle="Borrower will need to pass TDSR and MSR."
+                            tenureNote="Tenure range 5 – 30 years"
                             accentColor="#059669"
                             accentBg="#f0fdf4"
                             data={result.hdb}
                             hasLiability={hasLiab}
+                            ltvRemark={showLtvHdb}
                         />
                     </div>
-                </>
+
+                    {/* EC New Launch */}
+                    <IncomeTable
+                        title="EC New Launch (55% TDSR / 30% MSR)"
+                        subtitle="Borrower will need to pass TDSR and MSR."
+                        tenureNote="Tenure range 5 – 35 years"
+                        accentColor="#7c3aed"
+                        accentBg="#f5f3ff"
+                        data={result.hdb}
+                        hasLiability={hasLiab}
+                        ltvRemark={showLtvEc}
+                    />
+                </div>
             )}
         </div>
     )
