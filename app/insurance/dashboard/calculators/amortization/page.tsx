@@ -741,7 +741,11 @@ function RateRow({
                         <button
                             key={t}
                             type="button"
-                            onClick={() => onChange({ type: t })}
+                            onClick={() => onChange(
+                                t === 'floating'
+                                    ? { type: 'floating', reference: '3M SORA', spread: entry.spread ?? 1.00 }
+                                    : { type: 'fixed' }
+                            )}
                             className={`px-3 py-1.5 font-semibold capitalize transition-colors ${
                                 entry.type === t
                                     ? 'bg-[#052d4a] text-white'
