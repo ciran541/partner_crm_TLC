@@ -92,6 +92,55 @@ export async function refreshSora(): Promise<SoraRates | null> {
     return latest
 }
 
+/** Fetch ALL rows from MAS (same endpoint, different mapping). Used for one-time historical backfill. */
+export async function fetchAllSoraFromMas(): Promise<SoraRates[]> {
+    const key = process.env.MAS_API_KEY
+    if (!key) {
+        console.error('[sora] MAS_API_KEY not set')
+        return []
+    }
+    try {
+        const res = await fetch(MAS_URL, {
+            headers: { keyid: key, accept: 'application/json' },
+            cache: 'no-store',
+        })
+        if (!res.ok) {
+            console.error('[sora] MAS fetch failed:', res.status)
+            return []
+        }
+        const json = await res.json()
+        const rows: MasRow[] = json?.elements ?? []
+        return rows
+            .filter(r => typeof r.end_of_day === 'string' && r.end_of_day >= '2005-01-01')
+            .filter(r => r.sora != null || r.comp_sora_1m != null || r.comp_sora_3m != null)
+            .map(r => ({
+                value_date: r.end_of_day,
+                sora: num(r.sora),
+                sora_index: num(r.sora_index),
+                comp_sora_1m: num(r.comp_sora_1m),
+                comp_sora_3m: num(r.comp_sora_3m),
+                comp_sora_6m: num(r.comp_sora_6m),
+                published_date: r.published_date ? r.published_date.slice(0, 10) : null,
+            }))
+    } catch (e) {
+        console.error('[sora] fetchAllSoraFromMas threw:', String(e))
+        return []
+    }
+}
+
+/** Read all stored SORA rows (chart columns only), oldest first. */
+export async function getAllSoraFromDb(): Promise<Pick<SoraRates, 'value_date' | 'sora' | 'comp_sora_1m' | 'comp_sora_3m'>[]> {
+    const admin = createAdminClient()
+    const { data, error } = await admin
+        .from('sora_rates')
+        .select('value_date, sora, comp_sora_1m, comp_sora_3m')
+        .gte('value_date', '2005-01-01')
+        .order('value_date', { ascending: true })
+        .limit(50000)   // PostgREST defaults to 1000 rows; override for full history
+    if (error || !data) return []
+    return data
+}
+
 /** Read the most recent stored SORA values (no network). Returns null if none stored yet. */
 export async function getCurrentSora(): Promise<SoraRates | null> {
     const admin = createAdminClient()

@@ -187,9 +187,13 @@ function BorrowerCard({ index, data, onChange }: {
                         type="number"
                         value={data.age}
                         onChange={e => onChange({ ...data, age: e.target.value })}
+                        onBlur={e => {
+                            const v = parseInt(e.target.value)
+                            if (!isNaN(v) && v > 0 && v < 21) onChange({ ...data, age: '21' })
+                        }}
                         className={inp}
                         placeholder="35"
-                        min={18}
+                        min={21}
                         max={80}
                     />
                 </div>

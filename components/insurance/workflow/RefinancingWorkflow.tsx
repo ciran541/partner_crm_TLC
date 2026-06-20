@@ -86,6 +86,7 @@ export default function RefinancingWorkflowPanel({
     const [preferredEquityAmortT2, setPreferredEquityAmortT2] = useState<number | undefined>()
     const [rawEquityAmortT1, setRawEquityAmortT1] = useState('')
     const [rawEquityAmortT2, setRawEquityAmortT2] = useState('')
+    const [showCompare, setShowCompare] = useState(false)
 
     useEffect(() => {
         fetch('/api/insurance/rates')
@@ -539,7 +540,8 @@ export default function RefinancingWorkflowPanel({
                                 <div key={i}>
                                     <label className="text-[11px] text-slate-500">Borrower {i + 1}</label>
                                     <FieldInput type="number" value={b.age ?? ''} placeholder="0"
-                                        onChange={v => updateBorrower(i, { age: num(v) })} />
+                                        onChange={v => updateBorrower(i, { age: num(v) })}
+                                        onBlur={() => { if (b.age != null && b.age > 0 && b.age < 21) updateBorrower(i, { age: 21 }) }} />
                                 </div>
                             ))}
                         </div>
@@ -660,6 +662,26 @@ export default function RefinancingWorkflowPanel({
 
                 const showEquityBlock = newEquityLoan > 0
 
+                // Pledge computation — shortfall → pledgeFund (lock 4 yrs) / showFund (liquid)
+                const pledgeFromShortfall = (shortfall: number, tenure: number) => {
+                    if (shortfall <= 1 || tenure <= 0) return null
+                    const r = STRESS_TEST_RATE / 12
+                    const n = tenure * 12
+                    const payment = shortfall * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)
+                    const pledgeFund = (payment * 48) / 0.55
+                    const showFund = pledgeFund / 0.30
+                    return pledgeFund > 1 ? { pledgeFund, showFund } : null
+                }
+                const refiPledge = refiPass === false
+                    ? pledgeFromShortfall(Math.max(0, refiLoan - maxLoanFromPayment(availableTdsr, STRESS_TEST_RATE * 100, refiTenure)), refiTenure)
+                    : null
+                const equityOutPledge = equityOutstandingPass === false
+                    ? pledgeFromShortfall(Math.max(0, equityOutstandingLoan - maxLoanFromPayment(Math.max(0, balanceAfterHomeLoan), STRESS_TEST_RATE * 100, equityOutstandingTenure)), equityOutstandingTenure)
+                    : null
+                const equityNewPledge = equityPass === false
+                    ? pledgeFromShortfall(Math.max(0, newEquityLoan - maxLoanFromPayment(Math.max(0, balanceAfterRefi), STRESS_TEST_RATE * 100, preferredEquityTenure)), preferredEquityTenure)
+                    : null
+
                 return (
                     <Section title="TDSR Assessment" icon={<Percent size={15} />}>
                         {/* Est. Loan Eligibility + Available TDSR */}
@@ -749,13 +771,19 @@ export default function RefinancingWorkflowPanel({
                                     </div>
                                 )}
                                 {refiPass === false && (
-                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                                        <p className="text-[12px] font-semibold text-amber-800 mb-1">Potential Remedies</p>
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+                                        <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
                                         <p className="text-[12px] text-amber-700 leading-relaxed">
                                             {data.property_use === 'investment'
                                                 ? 'Bank will require client to pay down 3% of outstanding loan and/or show some funds to prove repayment ability.'
                                                 : 'Client may qualify for TDSR Waiver with most banks — to double check with banker.'}
                                         </p>
+                                        {refiPledge && (
+                                            <p className="text-[12px] text-amber-900">
+                                                <span className="font-semibold">Pledge {money(refiPledge.pledgeFund)}</span> (locked 4 yrs)
+                                                {' '}or <span className="font-semibold">Show {money(refiPledge.showFund)}</span> in funds.
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -804,6 +832,18 @@ export default function RefinancingWorkflowPanel({
                                         }
                                     </div>
                                 )}
+                                {equityOutstandingPass === false && (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+                                        <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
+                                        <p className="text-[12px] text-amber-700 leading-relaxed">Pledge or show funds required to pass TDSR for the outstanding equity loan.</p>
+                                        {equityOutPledge && (
+                                            <p className="text-[12px] text-amber-900">
+                                                <span className="font-semibold">Pledge {money(equityOutPledge.pledgeFund)}</span> (locked 4 yrs)
+                                                {' '}or <span className="font-semibold">Show {money(equityOutPledge.showFund)}</span> in funds.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -849,11 +889,15 @@ export default function RefinancingWorkflowPanel({
                                     </div>
                                 )}
                                 {equityPass === false && (
-                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-                                        <p className="text-[12px] font-semibold text-amber-800 mb-1">Potential Remedies</p>
-                                        <p className="text-[12px] text-amber-700 leading-relaxed">
-                                            Pledge or show funds required to pass TDSR for the equity loan component.
-                                        </p>
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+                                        <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
+                                        <p className="text-[12px] text-amber-700 leading-relaxed">Pledge or show funds required to pass TDSR for the new equity loan.</p>
+                                        {equityNewPledge && (
+                                            <p className="text-[12px] text-amber-900">
+                                                <span className="font-semibold">Pledge {money(equityNewPledge.pledgeFund)}</span> (locked 4 yrs)
+                                                {' '}or <span className="font-semibold">Show {money(equityNewPledge.showFund)}</span> in funds.
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -864,6 +908,42 @@ export default function RefinancingWorkflowPanel({
                                 <Info size={12} /> Enter outstanding loan amount and tenure to see TDSR required.
                             </p>
                         )}
+
+                        {/* Summary pledge/show — shown when any loan fails TDSR */}
+                        {(() => {
+                            const entries = [
+                                { label: 'Refinancing — Home Loan',    pledge: refiPledge },
+                                { label: 'Outstanding Equity Loan',    pledge: equityOutPledge },
+                                { label: 'New Equity Loan',            pledge: equityNewPledge },
+                            ].filter((e): e is { label: string; pledge: { pledgeFund: number; showFund: number } } => e.pledge != null)
+                            if (!entries.length) return null
+                            const totalPledge = entries.reduce((s, e) => s + e.pledge.pledgeFund, 0)
+                            const totalShow   = entries.reduce((s, e) => s + e.pledge.showFund, 0)
+                            return (
+                                <div className="card p-5 space-y-3">
+                                    <p className="text-sm font-bold text-[#052d4a] uppercase tracking-wide">Summary to Pass TDSR</p>
+                                    <div className="space-y-1.5">
+                                        {entries.map(({ label, pledge }) => (
+                                            <div key={label} className="flex items-center justify-between text-[12px] text-slate-600">
+                                                <span className="font-medium text-slate-500">{label}</span>
+                                                <span>
+                                                    Pledge <span className="font-semibold text-[#052d4a]">{money(pledge.pledgeFund)}</span>
+                                                    {' '}or Show <span className="font-semibold text-[#052d4a]">{money(pledge.showFund)}</span>
+                                                </span>
+                                            </div>
+                                        ))}
+                                        {entries.length > 1 && (
+                                            <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
+                                                <span className="text-[12px] font-semibold text-slate-600">Combined</span>
+                                                <span className="text-[13px] font-bold text-[#052d4a]">
+                                                    Pledge {money(totalPledge)} (locked 4 yrs) or Show {money(totalShow)} in funds
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )
+                        })()}
                     </Section>
                 )
             })()}
@@ -1016,34 +1096,38 @@ export default function RefinancingWorkflowPanel({
                             ta: number, tb: number,
                         ) => (
                             <div className="rounded-xl border border-slate-200 overflow-hidden">
-                                <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/60">
+                                <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100 bg-slate-50/60`}>
                                     <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
                                     <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({ta} yrs)</div>
-                                    <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({tb} yrs)</div>
+                                    {showCompare && <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({tb} yrs)</div>}
                                 </div>
-                                <div className="grid grid-cols-3 border-b border-slate-100">
+                                <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100`}>
                                     <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
                                     <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
                                         {lv1 != null ? money2(lv1) : <span className="text-slate-300">—</span>}
                                     </div>
-                                    <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                        {lv1 != null && lv2 != null ? (
-                                            <>{money2(lv2)}<span className={`ml-1.5 text-[11px] font-bold ${lv2 > lv1 ? 'text-red-500' : 'text-emerald-600'}`}>{lv2 > lv1 ? '+' : ''}{money2(lv2 - lv1)}</span></>
-                                        ) : <span className="text-slate-300">—</span>}
-                                    </div>
+                                    {showCompare && (
+                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                            {lv1 != null && lv2 != null ? (
+                                                <>{money2(lv2)}<span className={`ml-1.5 text-[11px] font-bold ${lv2 > lv1 ? 'text-red-500' : 'text-emerald-600'}`}>{lv2 > lv1 ? '+' : ''}{money2(lv2 - lv1)}</span></>
+                                            ) : <span className="text-slate-300">—</span>}
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="grid grid-cols-3">
+                                <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'}`}>
                                     <div className="px-3 py-2.5 text-slate-600 text-sm">
                                         {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
                                     </div>
                                     <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
                                         {iv1 != null ? money2(iv1) : <span className="text-slate-300">—</span>}
                                     </div>
-                                    <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                        {iv1 != null && iv2 != null ? (
-                                            <>{money2(iv2)}<span className={`ml-1.5 text-[11px] font-bold ${iv2 > iv1 ? 'text-red-500' : 'text-emerald-600'}`}>{iv2 > iv1 ? '+' : ''}{money2(iv2 - iv1)}</span></>
-                                        ) : <span className="text-slate-300">—</span>}
-                                    </div>
+                                    {showCompare && (
+                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                            {iv1 != null && iv2 != null ? (
+                                                <>{money2(iv2)}<span className={`ml-1.5 text-[11px] font-bold ${iv2 > iv1 ? 'text-red-500' : 'text-emerald-600'}`}>{iv2 > iv1 ? '+' : ''}{money2(iv2 - iv1)}</span></>
+                                            ) : <span className="text-slate-300">—</span>}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )
@@ -1052,7 +1136,7 @@ export default function RefinancingWorkflowPanel({
                             <>
                                 {[
                                     { rows: rows1, tv: ta, label: 'Tenure 1' },
-                                    { rows: rows2, tv: tb, label: 'Tenure 2' },
+                                    ...(showCompare ? [{ rows: rows2, tv: tb, label: 'Tenure 2' }] : []),
                                 ].map(({ rows, tv, label }) => rows.length > 0 && (
                                     <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
                                         <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
@@ -1110,7 +1194,7 @@ export default function RefinancingWorkflowPanel({
                         )
 
                         return (
-                            <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
+                            <Section title="Amortization" icon={<Wallet size={15} />}>
 
                                 {/* Live SORA */}
                                 {soraForAmort && (soraForAmort.comp_sora_1m != null || soraForAmort.comp_sora_3m != null) && (
@@ -1232,122 +1316,128 @@ export default function RefinancingWorkflowPanel({
                                 {/* ── MIXED: home loan + equity loan split ── */}
                                 {isMix ? (
                                     <>
-                                        {/* Home Loan interest cards */}
-                                        {homeLockInCards.length > 0 && (
-                                            <div className="space-y-2">
-                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                                                    Home Loan ({money2(homeLoanAmt)}) — Interest during lock-in
-                                                </p>
-                                                {renderLockInCards(homeLockInCards)}
+                                        {/* ── Home Loan card ── */}
+                                        <div className="rounded-xl border border-sky-200 overflow-hidden">
+                                            <div className="bg-sky-50 border-b border-sky-100 px-4 py-3">
+                                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Home Loan Tenure Planner</p>
+                                                <p className="text-lg font-black text-[#052d4a]">Home Loan — {money2(homeLoanAmt)}</p>
                                             </div>
-                                        )}
-
-                                        {/* Equity Loan interest cards */}
-                                        {equityLockInCards.length > 0 && (
-                                            <div className="space-y-2">
-                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                                                    Equity Loan ({money2(equityLoanAmt)}) — Interest during lock-in
-                                                </p>
-                                                {renderLockInCards(equityLockInCards)}
-                                            </div>
-                                        )}
-
-                                        {/* Divider */}
-                                        <div className="flex items-center gap-3">
-                                            <div className="flex-1 h-px bg-slate-200" />
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Home Loan Tenure Planner</span>
-                                            <div className="flex-1 h-px bg-slate-200" />
-                                        </div>
-
-                                        {/* Home loan tenure range + planner */}
-                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                                            Tenure Range: {t.min} – {t.max} yrs
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="space-y-1">
-                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
-                                                <div className="flex items-center gap-2">
-                                                    <input type="number" min={t.min} max={t.max}
-                                                        value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
-                                                        placeholder={String(t.max)}
-                                                        onChange={e => setRawPrefTenure1(e.target.value)}
-                                                        onBlur={() => {
-                                                            const parsed = parseInt(rawPrefTenure1, 10)
-                                                            setRawPrefTenure1('')
-                                                            update({ preferred_tenure_1: isNaN(parsed) ? undefined : homeClamp(parsed) })
-                                                        }}
-                                                        className={inputCls} />
-                                                    <span className="text-xs text-slate-500">yrs</span>
+                                            <div className="p-4 space-y-3">
+                                                {homeLockInCards.length > 0 && (
+                                                    <div className="space-y-2">
+                                                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Interest Paid during Lock-in</p>
+                                                        {renderLockInCards(homeLockInCards)}
+                                                    </div>
+                                                )}
+                                                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                                    Tenure Range: {t.min} – {t.max} yrs
                                                 </div>
-                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to max tenure</p>}
-                                            </div>
-                                            <div className="space-y-1">
-                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
-                                                <div className="flex items-center gap-2">
-                                                    <input type="number" min={t.min} max={t.max}
-                                                        value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
-                                                        placeholder={String(t.max)}
-                                                        onChange={e => setRawPrefTenure2(e.target.value)}
-                                                        onBlur={() => {
-                                                            const parsed = parseInt(rawPrefTenure2, 10)
-                                                            setRawPrefTenure2('')
-                                                            setPreferredTenure2(isNaN(parsed) ? undefined : homeClamp(parsed))
-                                                        }}
-                                                        className={inputCls} />
-                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="space-y-1">
+                                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                        <div className="flex items-center gap-2">
+                                                            <input type="number" min={t.min} max={t.max}
+                                                                value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
+                                                                placeholder={String(t.max)}
+                                                                onChange={e => setRawPrefTenure1(e.target.value)}
+                                                                onBlur={() => {
+                                                                    const parsed = parseInt(rawPrefTenure1, 10)
+                                                                    setRawPrefTenure1('')
+                                                                    update({ preferred_tenure_1: isNaN(parsed) ? undefined : homeClamp(parsed) })
+                                                                }}
+                                                                className={inputCls} />
+                                                            <span className="text-xs text-slate-500">yrs</span>
+                                                        </div>
+                                                        {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to max tenure</p>}
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 uppercase tracking-wide font-semibold cursor-pointer select-none">
+                                                            <input type="checkbox" checked={showCompare} onChange={e => setShowCompare(e.target.checked)}
+                                                                className="rounded border-slate-300 accent-[#03a9e7]" />
+                                                            {showCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                                        </label>
+                                                        {showCompare && (
+                                                            <div className="flex items-center gap-2">
+                                                                <input type="number" min={t.min} max={t.max}
+                                                                    value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                                                    placeholder={String(t.max)}
+                                                                    onChange={e => setRawPrefTenure2(e.target.value)}
+                                                                    onBlur={() => {
+                                                                        const parsed = parseInt(rawPrefTenure2, 10)
+                                                                        setRawPrefTenure2('')
+                                                                        setPreferredTenure2(isNaN(parsed) ? undefined : homeClamp(parsed))
+                                                                    }}
+                                                                    className={inputCls} />
+                                                                <span className="text-xs text-slate-500">yrs</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
+                                                {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2)}
+                                                {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2)}
                                             </div>
                                         </div>
-                                        {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2)}
-                                        {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2)}
 
-                                        {/* Divider */}
-                                        <div className="flex items-center gap-3">
-                                            <div className="flex-1 h-px bg-slate-200" />
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Equity Loan Tenure Planner</span>
-                                            <div className="flex-1 h-px bg-slate-200" />
-                                        </div>
-
-                                        {/* Equity loan tenure range + planner */}
-                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                                            Tenure Range: {equityMinT} – {equityMaxT} yrs
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="space-y-1">
-                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
-                                                <div className="flex items-center gap-2">
-                                                    <input type="number" min={equityMinT} max={equityMaxT}
-                                                        value={rawEquityAmortT1 !== '' ? rawEquityAmortT1 : (data.preferred_equity_amort_tenure_1 != null ? String(data.preferred_equity_amort_tenure_1) : '')}
-                                                        placeholder={String(equityMaxT)}
-                                                        onChange={e => setRawEquityAmortT1(e.target.value)}
-                                                        onBlur={() => {
-                                                            const parsed = parseInt(rawEquityAmortT1, 10)
-                                                            setRawEquityAmortT1('')
-                                                            update({ preferred_equity_amort_tenure_1: isNaN(parsed) ? undefined : equityClamp(parsed) })
-                                                        }}
-                                                        className={inputCls} />
-                                                    <span className="text-xs text-slate-500">yrs</span>
-                                                </div>
+                                        {/* ── Equity Loan card ── */}
+                                        <div className="rounded-xl border border-violet-200 overflow-hidden">
+                                            <div className="bg-violet-50 border-b border-violet-100 px-4 py-3">
+                                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Equity Loan Tenure Planner</p>
+                                                <p className="text-lg font-black text-[#052d4a]">Equity Loan — {money2(equityLoanAmt)}</p>
                                             </div>
-                                            <div className="space-y-1">
-                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
-                                                <div className="flex items-center gap-2">
-                                                    <input type="number" min={equityMinT} max={equityMaxT}
-                                                        value={rawEquityAmortT2 !== '' ? rawEquityAmortT2 : (preferredEquityAmortT2 != null ? String(preferredEquityAmortT2) : '')}
-                                                        placeholder={String(equityMaxT)}
-                                                        onChange={e => setRawEquityAmortT2(e.target.value)}
-                                                        onBlur={() => {
-                                                            const parsed = parseInt(rawEquityAmortT2, 10)
-                                                            setRawEquityAmortT2('')
-                                                            setPreferredEquityAmortT2(isNaN(parsed) ? undefined : equityClamp(parsed))
-                                                        }}
-                                                        className={inputCls} />
-                                                    <span className="text-xs text-slate-500">yrs</span>
+                                            <div className="p-4 space-y-3">
+                                                {equityLockInCards.length > 0 && (
+                                                    <div className="space-y-2">
+                                                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Interest Paid during Lock-in</p>
+                                                        {renderLockInCards(equityLockInCards)}
+                                                    </div>
+                                                )}
+                                                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                                    Tenure Range: {equityMinT} – {equityMaxT} yrs
                                                 </div>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="space-y-1">
+                                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                        <div className="flex items-center gap-2">
+                                                            <input type="number" min={equityMinT} max={equityMaxT}
+                                                                value={rawEquityAmortT1 !== '' ? rawEquityAmortT1 : (data.preferred_equity_amort_tenure_1 != null ? String(data.preferred_equity_amort_tenure_1) : '')}
+                                                                placeholder={String(equityMaxT)}
+                                                                onChange={e => setRawEquityAmortT1(e.target.value)}
+                                                                onBlur={() => {
+                                                                    const parsed = parseInt(rawEquityAmortT1, 10)
+                                                                    setRawEquityAmortT1('')
+                                                                    update({ preferred_equity_amort_tenure_1: isNaN(parsed) ? undefined : equityClamp(parsed) })
+                                                                }}
+                                                                className={inputCls} />
+                                                            <span className="text-xs text-slate-500">yrs</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 uppercase tracking-wide font-semibold cursor-pointer select-none">
+                                                            <input type="checkbox" checked={showCompare} onChange={e => setShowCompare(e.target.checked)}
+                                                                className="rounded border-slate-300 accent-[#03a9e7]" />
+                                                            {showCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                                        </label>
+                                                        {showCompare && (
+                                                            <div className="flex items-center gap-2">
+                                                                <input type="number" min={equityMinT} max={equityMaxT}
+                                                                    value={rawEquityAmortT2 !== '' ? rawEquityAmortT2 : (preferredEquityAmortT2 != null ? String(preferredEquityAmortT2) : '')}
+                                                                    placeholder={String(equityMaxT)}
+                                                                    onChange={e => setRawEquityAmortT2(e.target.value)}
+                                                                    onBlur={() => {
+                                                                        const parsed = parseInt(rawEquityAmortT2, 10)
+                                                                        setRawEquityAmortT2('')
+                                                                        setPreferredEquityAmortT2(isNaN(parsed) ? undefined : equityClamp(parsed))
+                                                                    }}
+                                                                    className={inputCls} />
+                                                                <span className="text-xs text-slate-500">yrs</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2)}
+                                                {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
                                             </div>
                                         </div>
-                                        {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2)}
-                                        {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
                                     </>
                                 ) : (
                                     /* ── SINGLE LOAN (home-only or equity-only) ── */
@@ -1380,20 +1470,26 @@ export default function RefinancingWorkflowPanel({
                                                 {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Defaults to max tenure</p>}
                                             </div>
                                             <div className="space-y-1">
-                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
-                                                <div className="flex items-center gap-2">
-                                                    <input type="number" min={t.min} max={t.max}
-                                                        value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
-                                                        placeholder={String(defaultT)}
-                                                        onChange={e => setRawPrefTenure2(e.target.value)}
-                                                        onBlur={() => {
-                                                            const parsed = parseInt(rawPrefTenure2, 10)
-                                                            setRawPrefTenure2('')
-                                                            setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
-                                                        }}
-                                                        className={inputCls} />
-                                                    <span className="text-xs text-slate-500">yrs</span>
-                                                </div>
+                                                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 uppercase tracking-wide font-semibold cursor-pointer select-none">
+                                                    <input type="checkbox" checked={showCompare} onChange={e => setShowCompare(e.target.checked)}
+                                                        className="rounded border-slate-300 accent-[#03a9e7]" />
+                                                    {showCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                                </label>
+                                                {showCompare && (
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="number" min={t.min} max={t.max}
+                                                            value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                                            placeholder={String(defaultT)}
+                                                            onChange={e => setRawPrefTenure2(e.target.value)}
+                                                            onBlur={() => {
+                                                                const parsed = parseInt(rawPrefTenure2, 10)
+                                                                setRawPrefTenure2('')
+                                                                setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
+                                                            }}
+                                                            className={inputCls} />
+                                                        <span className="text-xs text-slate-500">yrs</span>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
 

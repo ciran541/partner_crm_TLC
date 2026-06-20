@@ -65,6 +65,7 @@ export default function DecouplingWorkflowPanel({
     const [preferredEquityAmortT2, setPreferredEquityAmortT2] = useState<number | undefined>()
     const [rawEquityAmortT1, setRawEquityAmortT1] = useState('')
     const [rawEquityAmortT2, setRawEquityAmortT2] = useState('')
+    const [showCompare, setShowCompare] = useState(false)
 
     useEffect(() => {
         fetch('/api/insurance/rates')
@@ -653,7 +654,8 @@ export default function DecouplingWorkflowPanel({
                                 </Question>
                                 <Question label="Age">
                                     <FieldInput type="number" value={b.age ?? ''}
-                                        onChange={v => updateBorrower({ age: num(v) })} />
+                                        onChange={v => updateBorrower({ age: num(v) })}
+                                        onBlur={() => { if (b.age != null && b.age > 0 && b.age < 21) updateBorrower({ age: 21 }) }} />
                                 </Question>
                                 <Question label="Monthly Commitments (excl. property)">
                                     <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="car, credit cards…"
@@ -1071,34 +1073,38 @@ export default function DecouplingWorkflowPanel({
                     ta: number, tb: number,
                 ) => (
                     <div className="rounded-xl border border-slate-200 overflow-hidden">
-                        <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50/60">
+                        <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100 bg-slate-50/60`}>
                             <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
                             <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({ta} yrs)</div>
-                            <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({tb} yrs)</div>
+                            {showCompare && <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({tb} yrs)</div>}
                         </div>
-                        <div className="grid grid-cols-3 border-b border-slate-100">
+                        <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100`}>
                             <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
                             <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
                                 {lv1 != null ? money(lv1) : <span className="text-slate-300">—</span>}
                             </div>
-                            <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                {lv1 != null && lv2 != null ? (
-                                    <>{money(lv2)}<span className={`ml-1.5 text-[11px] font-bold ${lv2 > lv1 ? 'text-red-500' : 'text-emerald-600'}`}>{lv2 > lv1 ? '+' : ''}{money(lv2 - lv1)}</span></>
-                                ) : <span className="text-slate-300">—</span>}
-                            </div>
+                            {showCompare && (
+                                <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                    {lv1 != null && lv2 != null ? (
+                                        <>{money(lv2)}<span className={`ml-1.5 text-[11px] font-bold ${lv2 > lv1 ? 'text-red-500' : 'text-emerald-600'}`}>{lv2 > lv1 ? '+' : ''}{money(lv2 - lv1)}</span></>
+                                    ) : <span className="text-slate-300">—</span>}
+                                </div>
+                            )}
                         </div>
-                        <div className="grid grid-cols-3">
+                        <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'}`}>
                             <div className="px-3 py-2.5 text-slate-600 text-sm">
                                 {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
                             </div>
                             <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
                                 {iv1 != null ? money(iv1) : <span className="text-slate-300">—</span>}
                             </div>
-                            <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                {iv1 != null && iv2 != null ? (
-                                    <>{money(iv2)}<span className={`ml-1.5 text-[11px] font-bold ${iv2 > iv1 ? 'text-red-500' : 'text-emerald-600'}`}>{iv2 > iv1 ? '+' : ''}{money(iv2 - iv1)}</span></>
-                                ) : <span className="text-slate-300">—</span>}
-                            </div>
+                            {showCompare && (
+                                <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
+                                    {iv1 != null && iv2 != null ? (
+                                        <>{money(iv2)}<span className={`ml-1.5 text-[11px] font-bold ${iv2 > iv1 ? 'text-red-500' : 'text-emerald-600'}`}>{iv2 > iv1 ? '+' : ''}{money(iv2 - iv1)}</span></>
+                                    ) : <span className="text-slate-300">—</span>}
+                                </div>
+                            )}
                         </div>
                     </div>
                 )
@@ -1107,7 +1113,7 @@ export default function DecouplingWorkflowPanel({
                     <>
                         {[
                             { rows: rows1, tv: ta, label: 'Tenure 1' },
-                            { rows: rows2, tv: tb, label: 'Tenure 2' },
+                            ...(showCompare ? [{ rows: rows2, tv: tb, label: 'Tenure 2' }] : []),
                         ].map(({ rows, tv, label }) => rows.length > 0 && (
                             <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
                                 <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
@@ -1165,7 +1171,7 @@ export default function DecouplingWorkflowPanel({
                 )
 
                 return (
-                    <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
+                    <Section title="Amortization" icon={<Wallet size={15} />}>
 
                         {/* Live SORA rates */}
                         {soraForAmort && (soraForAmort.comp_sora_1m != null || soraForAmort.comp_sora_3m != null) && (
@@ -1287,120 +1293,128 @@ export default function DecouplingWorkflowPanel({
                         {/* ── MIXED: home/refi loan + new equity loan split ── */}
                         {isMix ? (
                             <>
-                                {/* Home/refi loan interest cards */}
-                                {homeLockInCards.length > 0 && (
-                                    <div className="space-y-2">
-                                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                                            {scenario === 'S1' ? 'Refi Loan' : 'Bank Loan'} ({money(pkgLoan)}) — Interest during lock-in
-                                        </p>
-                                        {renderLockInCards(homeLockInCards)}
+                                {/* ── Home Loan card ── */}
+                                <div className="rounded-xl border border-sky-200 overflow-hidden">
+                                    <div className="bg-sky-50 border-b border-sky-100 px-4 py-3">
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Home Loan Tenure Planner</p>
+                                        <p className="text-lg font-black text-[#052d4a]">Home Loan — {money(pkgLoan)}</p>
                                     </div>
-                                )}
+                                    <div className="p-4 space-y-3">
+                                        {homeLockInCards.length > 0 && (
+                                            <div className="space-y-2">
+                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Interest Paid during Lock-in</p>
+                                                {renderLockInCards(homeLockInCards)}
+                                            </div>
+                                        )}
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tenure Range: {pkgTenureMin} – {pkgTenure} yrs
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={pkgTenureMin} max={pkgTenure}
+                                                        value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
+                                                        placeholder={String(pkgTenure)}
+                                                        onChange={e => setRawPrefTenure1(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawPrefTenure1, 10)
+                                                            setRawPrefTenure1('')
+                                                            update({ preferred_tenure_1: isNaN(parsed) ? undefined : clamp(parsed) })
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                </div>
+                                                {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Synced with preferred tenure above</p>}
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 uppercase tracking-wide font-semibold cursor-pointer select-none">
+                                                    <input type="checkbox" checked={showCompare} onChange={e => setShowCompare(e.target.checked)}
+                                                        className="rounded border-slate-300 accent-[#03a9e7]" />
+                                                    {showCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                                </label>
+                                                {showCompare && (
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="number" min={pkgTenureMin} max={pkgTenure}
+                                                            value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                                            placeholder={String(pkgTenure)}
+                                                            onChange={e => setRawPrefTenure2(e.target.value)}
+                                                            onBlur={() => {
+                                                                const parsed = parseInt(rawPrefTenure2, 10)
+                                                                setRawPrefTenure2('')
+                                                                setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
+                                                            }}
+                                                            className={inputCls} />
+                                                        <span className="text-xs text-slate-500">yrs</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2)}
+                                        {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2)}
+                                    </div>
+                                </div>
 
-                                {/* Equity loan interest cards */}
-                                {equityLockInCards.length > 0 && (
-                                    <div className="space-y-2">
-                                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                                            Equity Loan ({money(equityAmt)}) — Interest during lock-in
-                                        </p>
-                                        {renderLockInCards(equityLockInCards)}
+                                {/* ── Equity Loan card ── */}
+                                <div className="rounded-xl border border-violet-200 overflow-hidden">
+                                    <div className="bg-violet-50 border-b border-violet-100 px-4 py-3">
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Equity Loan Tenure Planner</p>
+                                        <p className="text-lg font-black text-[#052d4a]">Equity Loan — {money(equityAmt)}</p>
                                     </div>
-                                )}
-
-                                {/* Home/refi loan tenure planner */}
-                                <div className="flex items-center gap-3">
-                                    <div className="flex-1 h-px bg-slate-200" />
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                        {scenario === 'S1' ? 'Refi Loan' : 'Bank Loan'} Tenure Planner
-                                    </span>
-                                    <div className="flex-1 h-px bg-slate-200" />
-                                </div>
-                                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                                    Tenure Range: {pkgTenureMin} – {pkgTenure} yrs
-                                </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" min={pkgTenureMin} max={pkgTenure}
-                                                value={rawPrefTenure1 !== '' ? rawPrefTenure1 : (data.preferred_tenure_1 != null ? String(data.preferred_tenure_1) : '')}
-                                                placeholder={String(pkgTenure)}
-                                                onChange={e => setRawPrefTenure1(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawPrefTenure1, 10)
-                                                    setRawPrefTenure1('')
-                                                    update({ preferred_tenure_1: isNaN(parsed) ? undefined : clamp(parsed) })
-                                                }}
-                                                className={inputCls} />
-                                            <span className="text-xs text-slate-500">yrs</span>
+                                    <div className="p-4 space-y-3">
+                                        {equityLockInCards.length > 0 && (
+                                            <div className="space-y-2">
+                                                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Interest Paid during Lock-in</p>
+                                                {renderLockInCards(equityLockInCards)}
+                                            </div>
+                                        )}
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tenure Range: {equityMinT} – {equityMaxT} yrs
                                         </div>
-                                        {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Synced with preferred tenure above</p>}
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" min={pkgTenureMin} max={pkgTenure}
-                                                value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
-                                                placeholder={String(pkgTenure)}
-                                                onChange={e => setRawPrefTenure2(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawPrefTenure2, 10)
-                                                    setRawPrefTenure2('')
-                                                    setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
-                                                }}
-                                                className={inputCls} />
-                                            <span className="text-xs text-slate-500">yrs</span>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={equityMinT} max={equityMaxT}
+                                                        value={rawEquityAmortT1 !== '' ? rawEquityAmortT1 : (data.preferred_equity_amort_tenure_1 != null ? String(data.preferred_equity_amort_tenure_1) : '')}
+                                                        placeholder={String(equityMaxT)}
+                                                        onChange={e => setRawEquityAmortT1(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawEquityAmortT1, 10)
+                                                            setRawEquityAmortT1('')
+                                                            update({ preferred_equity_amort_tenure_1: isNaN(parsed) ? undefined : equityClamp(parsed) })
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 uppercase tracking-wide font-semibold cursor-pointer select-none">
+                                                    <input type="checkbox" checked={showCompare} onChange={e => setShowCompare(e.target.checked)}
+                                                        className="rounded border-slate-300 accent-[#03a9e7]" />
+                                                    {showCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                                </label>
+                                                {showCompare && (
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="number" min={equityMinT} max={equityMaxT}
+                                                            value={rawEquityAmortT2 !== '' ? rawEquityAmortT2 : (preferredEquityAmortT2 != null ? String(preferredEquityAmortT2) : '')}
+                                                            placeholder={String(equityMaxT)}
+                                                            onChange={e => setRawEquityAmortT2(e.target.value)}
+                                                            onBlur={() => {
+                                                                const parsed = parseInt(rawEquityAmortT2, 10)
+                                                                setRawEquityAmortT2('')
+                                                                setPreferredEquityAmortT2(isNaN(parsed) ? undefined : equityClamp(parsed))
+                                                            }}
+                                                            className={inputCls} />
+                                                        <span className="text-xs text-slate-500">yrs</span>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
+                                        {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2)}
+                                        {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
                                     </div>
                                 </div>
-                                {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2)}
-                                {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2)}
-
-                                {/* Equity loan tenure planner */}
-                                <div className="flex items-center gap-3">
-                                    <div className="flex-1 h-px bg-slate-200" />
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Equity Loan Tenure Planner</span>
-                                    <div className="flex-1 h-px bg-slate-200" />
-                                </div>
-                                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                                    Tenure Range: {equityMinT} – {equityMaxT} yrs
-                                </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" min={equityMinT} max={equityMaxT}
-                                                value={rawEquityAmortT1 !== '' ? rawEquityAmortT1 : (data.preferred_equity_amort_tenure_1 != null ? String(data.preferred_equity_amort_tenure_1) : '')}
-                                                placeholder={String(equityMaxT)}
-                                                onChange={e => setRawEquityAmortT1(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawEquityAmortT1, 10)
-                                                    setRawEquityAmortT1('')
-                                                    update({ preferred_equity_amort_tenure_1: isNaN(parsed) ? undefined : equityClamp(parsed) })
-                                                }}
-                                                className={inputCls} />
-                                            <span className="text-xs text-slate-500">yrs</span>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" min={equityMinT} max={equityMaxT}
-                                                value={rawEquityAmortT2 !== '' ? rawEquityAmortT2 : (preferredEquityAmortT2 != null ? String(preferredEquityAmortT2) : '')}
-                                                placeholder={String(equityMaxT)}
-                                                onChange={e => setRawEquityAmortT2(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawEquityAmortT2, 10)
-                                                    setRawEquityAmortT2('')
-                                                    setPreferredEquityAmortT2(isNaN(parsed) ? undefined : equityClamp(parsed))
-                                                }}
-                                                className={inputCls} />
-                                            <span className="text-xs text-slate-500">yrs</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2)}
-                                {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
                             </>
                         ) : (
                             /* ── SINGLE LOAN (no equity loan) ── */
@@ -1431,20 +1445,26 @@ export default function DecouplingWorkflowPanel({
                                         {data.preferred_tenure_1 == null && <p className="text-[11px] text-slate-400">Synced with preferred tenure above</p>}
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 2</label>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" min={pkgTenureMin} max={pkgTenure}
-                                                value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
-                                                placeholder={String(pkgTenure)}
-                                                onChange={e => setRawPrefTenure2(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawPrefTenure2, 10)
-                                                    setRawPrefTenure2('')
-                                                    setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
-                                                }}
-                                                className={inputCls} />
-                                            <span className="text-xs text-slate-500">yrs</span>
-                                        </div>
+                                        <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 uppercase tracking-wide font-semibold cursor-pointer select-none">
+                                            <input type="checkbox" checked={showCompare} onChange={e => setShowCompare(e.target.checked)}
+                                                className="rounded border-slate-300 accent-[#03a9e7]" />
+                                            {showCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                        </label>
+                                        {showCompare && (
+                                            <div className="flex items-center gap-2">
+                                                <input type="number" min={pkgTenureMin} max={pkgTenure}
+                                                    value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? String(preferredTenure2) : '')}
+                                                    placeholder={String(pkgTenure)}
+                                                    onChange={e => setRawPrefTenure2(e.target.value)}
+                                                    onBlur={() => {
+                                                        const parsed = parseInt(rawPrefTenure2, 10)
+                                                        setRawPrefTenure2('')
+                                                        setPreferredTenure2(isNaN(parsed) ? undefined : clamp(parsed))
+                                                    }}
+                                                    className={inputCls} />
+                                                <span className="text-xs text-slate-500">yrs</span>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                                 {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, t1, t2)}

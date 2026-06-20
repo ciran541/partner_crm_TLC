@@ -25,6 +25,7 @@ import {
     ChevronRight,
     Lock,
     X,
+    BarChart2,
 } from 'lucide-react'
 
 type NavItem = { name: string; href: string; icon: React.ElementType; soon?: boolean }
@@ -37,6 +38,7 @@ const toolsNav: NavItem[] = [
     { name: 'Calculators', href: '/insurance/dashboard/calculators', icon: Calculator },
     { name: 'Knowledge', href: '/insurance/dashboard/knowledge', icon: BookOpen },
     { name: 'Rates', href: '/insurance/dashboard/rates', icon: Percent },
+    { name: 'Resources', href: '/insurance/dashboard/resources', icon: BarChart2 },
     { name: 'Valuation Fees', href: '/insurance/dashboard/valuation', icon: Receipt, soon: true },
     { name: 'Legal', href: '/insurance/dashboard/legal', icon: Scale, soon: true },
 ]

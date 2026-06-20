@@ -162,6 +162,10 @@ export default function AmortizationPage() {
     const primaryLockInInterest = lockInYears > 0 ? (rows.find(r => r.year === lockInYears)?.cumulativeInterest ?? null) : null
     const compareInstalment = compareRows[0]?.instalment ?? null
     const compareLockInInterest = lockInYears > 0 ? (compareRows.find(r => r.year === lockInYears)?.cumulativeInterest ?? null) : null
+    const primaryTotalInstalment = primaryInstalment != null && lockInYears > 0 ? primaryInstalment * lockInYears * 12 : null
+    const compareTotalInstalment = compareInstalment != null && lockInYears > 0 ? compareInstalment * lockInYears * 12 : null
+    const primaryOutstanding = lockInYears > 0 ? (rows.find(r => r.year === lockInYears)?.balance ?? null) : null
+    const compareOutstanding = lockInYears > 0 ? (compareRows.find(r => r.year === lockInYears)?.balance ?? null) : null
     const showComparison = compareTen > 0 && compareTen !== ten && compareRows.length > 0
 
     function updateRow(idx: number, patch: Partial<RateScheduleEntry>) {
@@ -478,104 +482,147 @@ export default function AmortizationPage() {
             </div>
 
             {/* ── Tenure comparison ── */}
-            {showComparison && (
-                <div className="card overflow-hidden">
-                    <div className="px-6 py-4 border-b border-slate-100">
-                        <h3 className="section-label mb-0">Tenure Comparison</h3>
-                        {lockInYears === 0 && (
-                            <p className="text-xs text-slate-400 mt-1">Add lock-in years to compare interest over the lock-in period.</p>
-                        )}
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="bg-slate-50 border-b border-slate-200">
-                                    <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Tenure (Years)</th>
-                                    <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Monthly Instalment</th>
-                                    {lockInYears > 0 && (
-                                        <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                                            Total Interest Over {lockInYears} Yr{lockInYears > 1 ? 's' : ''}
-                                        </th>
-                                    )}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {/* Primary tenure row */}
-                                <tr className="border-b border-slate-100 bg-sky-50/30">
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-2">
-                                            <span className="w-1.5 h-5 rounded-full bg-[#03a9e7] shrink-0" />
-                                            <span className="font-bold text-[#052d4a]">{ten}</span>
-                                            <span className="text-xs text-slate-400 font-medium">yrs</span>
-                                            <span className="text-[10px] font-bold text-[#03a9e7] bg-sky-100 px-1.5 py-0.5 rounded-full">Primary</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
-                                        {primaryInstalment != null ? `$${fmt(primaryInstalment)}` : '—'}
-                                    </td>
-                                    {lockInYears > 0 && (
+            {showComparison && (() => {
+                const dc = (diff: number) => diff > 0 ? 'text-red-500' : diff < 0 ? 'text-emerald-600' : 'text-slate-400'
+                const ds = (diff: number) => diff > 0 ? '+' : '−'
+                return (
+                    <div className="card overflow-hidden">
+                        <div className="px-6 py-4 border-b border-slate-100">
+                            <h3 className="section-label mb-0">Tenure Comparison</h3>
+                            {lockInYears === 0 && (
+                                <p className="text-xs text-slate-400 mt-1">Add lock-in years to compare interest over the lock-in period.</p>
+                            )}
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="bg-slate-50 border-b border-slate-200">
+                                        <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Tenure (Years)</th>
+                                        <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Monthly Instalment</th>
+                                        {lockInYears > 0 && (<>
+                                            <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                Total Instalment<br />
+                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Paid over {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
+                                            </th>
+                                            <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                Outstanding Loan<br />
+                                                <span className="text-slate-400 font-normal normal-case tracking-normal">After {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
+                                            </th>
+                                            <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                Total Interest Paid<br />
+                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Over {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
+                                            </th>
+                                        </>)}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {/* Primary tenure row */}
+                                    <tr className="border-b border-slate-100 bg-sky-50/30">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-1.5 h-5 rounded-full bg-[#03a9e7] shrink-0" />
+                                                <span className="font-bold text-[#052d4a]">{ten}</span>
+                                                <span className="text-xs text-slate-400 font-medium">yrs</span>
+                                                <span className="text-[10px] font-bold text-[#03a9e7] bg-sky-100 px-1.5 py-0.5 rounded-full">Primary</span>
+                                            </div>
+                                        </td>
                                         <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
-                                            {primaryLockInInterest != null ? `$${fmt(primaryLockInInterest)}` : '—'}
+                                            {primaryInstalment != null ? `$${fmt(primaryInstalment)}` : '—'}
                                         </td>
-                                    )}
-                                </tr>
+                                        {lockInYears > 0 && (<>
+                                            <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
+                                                {primaryTotalInstalment != null ? `$${fmt(primaryTotalInstalment)}` : '—'}
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
+                                                {primaryOutstanding != null ? `$${fmt(primaryOutstanding)}` : '—'}
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
+                                                {primaryLockInInterest != null ? `$${fmt(primaryLockInInterest)}` : '—'}
+                                            </td>
+                                        </>)}
+                                    </tr>
 
-                                {/* Comparison tenure row */}
-                                <tr className="border-b border-slate-100">
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-2">
-                                            <span className="w-1.5 h-5 rounded-full bg-slate-300 shrink-0" />
-                                            <span className="font-bold text-slate-700">{compareTen}</span>
-                                            <span className="text-xs text-slate-400 font-medium">yrs</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
-                                        {compareInstalment != null ? `$${fmt(compareInstalment)}` : '—'}
-                                    </td>
-                                    {lockInYears > 0 && (
+                                    {/* Comparison tenure row */}
+                                    <tr className="border-b border-slate-100">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-1.5 h-5 rounded-full bg-slate-300 shrink-0" />
+                                                <span className="font-bold text-slate-700">{compareTen}</span>
+                                                <span className="text-xs text-slate-400 font-medium">yrs</span>
+                                            </div>
+                                        </td>
                                         <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
-                                            {compareLockInInterest != null ? `$${fmt(compareLockInInterest)}` : '—'}
+                                            {compareInstalment != null ? `$${fmt(compareInstalment)}` : '—'}
                                         </td>
-                                    )}
-                                </tr>
+                                        {lockInYears > 0 && (<>
+                                            <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
+                                                {compareTotalInstalment != null ? `$${fmt(compareTotalInstalment)}` : '—'}
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
+                                                {compareOutstanding != null ? `$${fmt(compareOutstanding)}` : '—'}
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
+                                                {compareLockInInterest != null ? `$${fmt(compareLockInInterest)}` : '—'}
+                                            </td>
+                                        </>)}
+                                    </tr>
 
-                                {/* Difference row */}
-                                {primaryInstalment != null && compareInstalment != null && (
-                                    <tr className="bg-orange-50/40 border-t-2 border-orange-100">
-                                        <td className="px-6 py-3">
-                                            <span className="text-xs font-black text-orange-500 uppercase tracking-wider">Difference</span>
-                                        </td>
-                                        <td className="px-6 py-3 text-right">
-                                            {(() => {
-                                                const diff = Math.abs(compareInstalment - primaryInstalment)
-                                                const sign = compareInstalment > primaryInstalment ? '+' : '−'
-                                                return (
-                                                    <span className="font-bold text-orange-500">
-                                                        {sign}${fmt(diff)}<span className="text-[11px] font-medium text-orange-400 ml-1">/mth</span>
-                                                    </span>
-                                                )
-                                            })()}
-                                        </td>
-                                        {lockInYears > 0 && primaryLockInInterest != null && compareLockInInterest != null && (
+                                    {/* Difference row */}
+                                    {primaryInstalment != null && compareInstalment != null && (
+                                        <tr className="bg-slate-50/60 border-t-2 border-slate-200">
+                                            <td className="px-6 py-3">
+                                                <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Difference</span>
+                                            </td>
                                             <td className="px-6 py-3 text-right">
                                                 {(() => {
-                                                    const diff = Math.abs(compareLockInInterest - primaryLockInInterest)
-                                                    const sign = compareLockInInterest > primaryLockInInterest ? '+' : '−'
+                                                    const diff = compareInstalment - primaryInstalment
                                                     return (
-                                                        <span className="font-bold text-orange-500">
-                                                            {sign}${fmt(diff)}
+                                                        <span className={`font-bold ${dc(diff)}`}>
+                                                            {ds(diff)}${fmt(Math.abs(diff))}<span className="text-[11px] font-medium ml-1">/mth</span>
                                                         </span>
                                                     )
                                                 })()}
                                             </td>
-                                        )}
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
+                                            {lockInYears > 0 && (<>
+                                                <td className="px-6 py-3 text-right">
+                                                    {primaryTotalInstalment != null && compareTotalInstalment != null && (() => {
+                                                        const diff = compareTotalInstalment - primaryTotalInstalment
+                                                        return (
+                                                            <span className={`font-bold ${dc(diff)}`}>
+                                                                {ds(diff)}${fmt(Math.abs(diff))}
+                                                            </span>
+                                                        )
+                                                    })()}
+                                                </td>
+                                                <td className="px-6 py-3 text-right">
+                                                    {primaryOutstanding != null && compareOutstanding != null && (() => {
+                                                        const diff = compareOutstanding - primaryOutstanding
+                                                        return (
+                                                            <span className={`font-bold ${dc(diff)}`}>
+                                                                {ds(diff)}${fmt(Math.abs(diff))}
+                                                            </span>
+                                                        )
+                                                    })()}
+                                                </td>
+                                                <td className="px-6 py-3 text-right">
+                                                    {primaryLockInInterest != null && compareLockInInterest != null && (() => {
+                                                        const diff = compareLockInInterest - primaryLockInInterest
+                                                        return (
+                                                            <span className={`font-bold ${dc(diff)}`}>
+                                                                {ds(diff)}${fmt(Math.abs(diff))}
+                                                            </span>
+                                                        )
+                                                    })()}
+                                                </td>
+                                            </>)}
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            })()}
 
             {/* ── Amortization table ── */}
             {rows.length > 0 && (

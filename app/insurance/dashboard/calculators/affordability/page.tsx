@@ -92,7 +92,7 @@ function IncomeTable({
     const cols = [
         { key: 'employed'     as const, label: 'Basic Pay',      sub: 'Employed',      dotColor: '#16a34a', subColor: '#f97316' },
         { key: 'employedLiab' as const, label: 'With Liability',  sub: 'Employed',      dotColor: '#ef4444', subColor: '#f97316' },
-        { key: 'self'         as const, label: 'Self-employed',   sub: 'NOA income',    dotColor: '#7c3aed', subColor: '#94a3b8' },
+        { key: 'self'         as const, label: 'NOA income',      sub: 'Self-employed', dotColor: '#7c3aed', subColor: '#94a3b8' },
         { key: 'selfLiab'     as const, label: 'With Liability',  sub: 'Self-employed', dotColor: '#ef4444', subColor: '#7c3aed' },
     ]
 
@@ -120,8 +120,8 @@ function IncomeTable({
                                         !hasLiability && (i === 1 || i === 3) ? 'opacity-30' : ''
                                     }`}
                                 >
-                                    <div style={{ color: c.dotColor }}>{c.label}</div>
-                                    <div className="text-[10px] font-semibold normal-case tracking-normal mt-0.5" style={{ color: c.subColor }}>{c.sub}</div>
+                                    <div className="font-semibold normal-case tracking-normal" style={{ color: accentColor }}>{c.sub}</div>
+                                    <div className="mt-0.5" style={{ color: (c.label === 'Basic Pay' || c.label === 'NOA income') ? accentColor : c.dotColor }}>{c.label}</div>
                                 </th>
                             ))}
                         </tr>
@@ -130,31 +130,38 @@ function IncomeTable({
                         {/* Monthly row */}
                         <tr className="border-b border-slate-100">
                             <td className="px-5 py-3.5 text-xs font-semibold text-slate-500 whitespace-nowrap">Monthly Income</td>
-                            {cols.map((c, i) => (
-                                <td
-                                    key={i}
-                                    className={`px-5 py-3.5 text-center font-semibold text-slate-700 ${
-                                        !hasLiability && (i === 1 || i === 3) ? 'opacity-30' : ''
-                                    }`}
-                                >
-                                    ${fmt(data[c.key].monthly)}
-                                </td>
-                            ))}
+                            {cols.map((c, i) => {
+                                const isLiab = i === 1 || i === 3
+                                return (
+                                    <td
+                                        key={i}
+                                        className={`px-5 py-3.5 text-center font-semibold ${
+                                            !hasLiability && isLiab ? 'opacity-30' : ''
+                                        }`}
+                                        style={{ color: isLiab ? '#374151' : accentColor }}
+                                    >
+                                        ${fmt(data[c.key].monthly)}
+                                    </td>
+                                )
+                            })}
                         </tr>
                         {/* Annual row */}
                         <tr className="bg-slate-50/60">
                             <td className="px-5 py-3.5 text-xs font-semibold text-slate-500 whitespace-nowrap">Annual Income</td>
-                            {cols.map((c, i) => (
-                                <td
-                                    key={i}
-                                    className={`px-5 py-3.5 text-center font-black text-base ${
-                                        !hasLiability && (i === 1 || i === 3) ? 'opacity-30' : ''
-                                    }`}
-                                    style={{ color: c.dotColor }}
-                                >
-                                    ${fmt(data[c.key].annual)}
-                                </td>
-                            ))}
+                            {cols.map((c, i) => {
+                                const isLiab = i === 1 || i === 3
+                                return (
+                                    <td
+                                        key={i}
+                                        className={`px-5 py-3.5 text-center font-black text-base ${
+                                            !hasLiability && isLiab ? 'opacity-30' : ''
+                                        }`}
+                                        style={{ color: isLiab ? '#374151' : accentColor }}
+                                    >
+                                        ${fmt(data[c.key].annual)}
+                                    </td>
+                                )
+                            })}
                         </tr>
                     </tbody>
                 </table>

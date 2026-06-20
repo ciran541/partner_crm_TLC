@@ -71,6 +71,7 @@ export default function PurchaseWorkflowPanel({
     const [liquidityOption, setLiquidityOption] = useState<'1' | '2'>('1')
     const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
     const [rawPrefTenure2, setRawPrefTenure2] = useState('')
+    const [showCompare, setShowCompare] = useState(false)
     const [adjustedLoans, setAdjustedLoans] = useState<Record<string, number | undefined>>({})
     const [soraForAmort, setSoraForAmort] = useState<SoraRates | null>(null)
 
@@ -587,7 +588,8 @@ export default function PurchaseWorkflowPanel({
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <Question label="Age">
                                     <FieldInput type="number" value={b.age ?? ''}
-                                        onChange={v => updateBorrower(i, { age: num(v) })} />
+                                        onChange={v => updateBorrower(i, { age: num(v) })}
+                                        onBlur={() => { if (b.age != null && b.age > 0 && b.age < 21) updateBorrower(i, { age: 21 }) }} />
                                 </Question>
                                 {b.employment !== 'self_employed' && (
                                     <Question label="Monthly Basic Salary">
@@ -789,7 +791,7 @@ export default function PurchaseWorkflowPanel({
 
                         const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
                         return (
-                            <Section title="Monthly Instalment" icon={<Wallet size={15} />}>
+                            <Section title="Amortization" icon={<Wallet size={15} />}>
 
                                 {/* Live SORA rates */}
                                 {soraForAmort && (soraForAmort.comp_sora_1m != null || soraForAmort.comp_sora_3m != null) && (
@@ -955,7 +957,7 @@ export default function PurchaseWorkflowPanel({
                                     <span className="font-semibold">5 – {selectedOpt.maxTenure} yrs</span>
                                 </p>
 
-                                {/* Two tenure inputs */}
+                                {/* Tenure inputs */}
                                 <div className="grid grid-cols-2 gap-5">
                                     <div>
                                         <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Preferred Tenure 1</p>
@@ -977,50 +979,58 @@ export default function PurchaseWorkflowPanel({
                                         </div>
                                         <p className="text-[10px] text-slate-400 mt-1">Synced with preferred tenure above</p>
                                     </div>
-                                    <div>
-                                        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Preferred Tenure 2</p>
-                                        <div className="flex items-center gap-2">
-                                            <input
-                                                type="number" min={5} max={selectedOpt.maxTenure}
-                                                value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? preferredTenure2 : '')}
-                                                placeholder={String(selectedOpt.maxTenure)}
-                                                onChange={e => setRawPrefTenure2(e.target.value)}
-                                                onBlur={() => {
-                                                    const parsed = parseInt(rawPrefTenure2, 10)
-                                                    setRawPrefTenure2('')
-                                                    if (!isNaN(parsed) && parsed > 0) {
-                                                        setPreferredTenure2(Math.max(5, Math.min(selectedOpt.maxTenure, parsed)))
-                                                    }
-                                                }}
-                                                className={inputCls}
-                                            />
-                                            <span className="text-xs text-slate-400">yrs</span>
-                                        </div>
+                                    <div className="space-y-1">
+                                        <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wide cursor-pointer select-none">
+                                            <input type="checkbox" checked={showCompare} onChange={e => setShowCompare(e.target.checked)}
+                                                className="rounded border-slate-300 accent-[#03a9e7]" />
+                                            {showCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                        </label>
+                                        {showCompare && (
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="number" min={5} max={selectedOpt.maxTenure}
+                                                    value={rawPrefTenure2 !== '' ? rawPrefTenure2 : (preferredTenure2 != null ? preferredTenure2 : '')}
+                                                    placeholder={String(selectedOpt.maxTenure)}
+                                                    onChange={e => setRawPrefTenure2(e.target.value)}
+                                                    onBlur={() => {
+                                                        const parsed = parseInt(rawPrefTenure2, 10)
+                                                        setRawPrefTenure2('')
+                                                        if (!isNaN(parsed) && parsed > 0) {
+                                                            setPreferredTenure2(Math.max(5, Math.min(selectedOpt.maxTenure, parsed)))
+                                                        }
+                                                    }}
+                                                    className={inputCls}
+                                                />
+                                                <span className="text-xs text-slate-400">yrs</span>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
                                 {/* Comparison table */}
                                 <div className="rounded-lg border border-slate-200 overflow-hidden text-sm">
-                                    <div className="grid grid-cols-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50 border-b border-slate-200">
+                                    <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} text-[11px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50 border-b border-slate-200`}>
                                         <div className="px-3 py-2">Option {selectedOpt.key}</div>
                                         <div className="px-3 py-2 text-right border-l border-slate-200">Tenure 1 ({t1} yrs)</div>
-                                        <div className="px-3 py-2 text-right border-l border-slate-200">Tenure 2 ({t2} yrs)</div>
+                                        {showCompare && <div className="px-3 py-2 text-right border-l border-slate-200">Tenure 2 ({t2} yrs)</div>}
                                     </div>
-                                    <div className="grid grid-cols-3 border-b border-slate-100">
+                                    <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100`}>
                                         <div className="px-3 py-2.5 text-slate-500">Monthly Instalment</div>
                                         <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
                                             {m1 != null ? money(m1) : <span className="text-slate-300">—</span>}
                                         </div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
-                                            {m2 != null ? (
-                                                <>
-                                                    {money(m2)}
-                                                    {t1 !== t2 && m1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${m2 < m1 ? 'text-emerald-600' : 'text-red-500'}`}>{m2 < m1 ? '↓' : '↑'}{money(Math.abs(m2 - m1))}</span>}
-                                                </>
-                                            ) : <span className="text-slate-300">—</span>}
-                                        </div>
+                                        {showCompare && (
+                                            <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
+                                                {m2 != null ? (
+                                                    <>
+                                                        {money(m2)}
+                                                        {t1 !== t2 && m1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${m2 < m1 ? 'text-emerald-600' : 'text-red-500'}`}>{m2 < m1 ? '↓' : '↑'}{money(Math.abs(m2 - m1))}</span>}
+                                                    </>
+                                                ) : <span className="text-slate-300">—</span>}
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="grid grid-cols-3">
+                                    <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'}`}>
                                         <div className="px-3 py-2.5 text-slate-500">
                                             {lockinYears != null
                                                 ? isBuc ? `Interest (${lockinYears} yrs to TOP)` : `Interest (${lockinYears}-yr lock-in)`
@@ -1029,21 +1039,23 @@ export default function PurchaseWorkflowPanel({
                                         <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
                                             {i1 != null ? money(i1) : <span className="text-slate-300">—</span>}
                                         </div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
-                                            {i2 != null ? (
-                                                <>
-                                                    {money(i2)}
-                                                    {t1 !== t2 && i1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${i2 < i1 ? 'text-emerald-600' : 'text-red-500'}`}>{i2 < i1 ? '↓' : '↑'}{money(Math.abs(i2 - i1))}</span>}
-                                                </>
-                                            ) : <span className="text-slate-300">—</span>}
-                                        </div>
+                                        {showCompare && (
+                                            <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
+                                                {i2 != null ? (
+                                                    <>
+                                                        {money(i2)}
+                                                        {t1 !== t2 && i1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${i2 < i1 ? 'text-emerald-600' : 'text-red-500'}`}>{i2 < i1 ? '↓' : '↑'}{money(Math.abs(i2 - i1))}</span>}
+                                                    </>
+                                                ) : <span className="text-slate-300">—</span>}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
                                 {/* Year-by-Year Breakdown — lock-in period, both tenures */}
                                 {lockinYears != null && [
                                     { rows: amortRows1, t: t1, label: 'Tenure 1' },
-                                    { rows: amortRows2, t: t2, label: 'Tenure 2' },
+                                    ...(showCompare ? [{ rows: amortRows2, t: t2, label: 'Tenure 2' }] : []),
                                 ].map(({ rows, t, label }) => rows.length > 0 && (
                                     <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
                                         <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
