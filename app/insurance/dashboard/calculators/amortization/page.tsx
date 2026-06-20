@@ -156,6 +156,7 @@ export default function AmortizationPage() {
     const validRows = rows.filter(r => r.cumulativeInterest != null)
     const totalPrincipal = validRows.reduce((s, r) => s + (r.yearPrincipal ?? 0), 0)
     const totalInterest = validRows.at(-1)?.cumulativeInterest ?? null
+    const compareTotalInterest = compareRows.filter(r => r.cumulativeInterest != null).at(-1)?.cumulativeInterest ?? null
 
     // Tenure comparison values
     const primaryInstalment = rows[0]?.instalment ?? null
@@ -476,6 +477,15 @@ export default function AmortizationPage() {
                             </p>
                             <p className="text-xl font-bold text-slate-600 mt-0.5">${fmt(totalInterest)}</p>
                             <p className="text-[11px] text-slate-400 mt-1">Over {ten} years</p>
+                        </div>
+                    )}
+                    {showComparison && compareTotalInterest != null && (
+                        <div className="card p-4 border-dashed border-slate-300">
+                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                                Total Interest · Full Tenure
+                            </p>
+                            <p className="text-xl font-bold text-slate-600 mt-0.5">${fmt(compareTotalInterest)}</p>
+                            <p className="text-[11px] text-slate-400 mt-1">Over {compareTen} years</p>
                         </div>
                     )}
                 </div>
