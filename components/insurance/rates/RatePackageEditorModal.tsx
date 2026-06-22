@@ -239,14 +239,19 @@ function RateRow({ entry, label, onChange, onRemove, canRemove }: {
                     <span className="text-xs text-slate-400">% Fixed</span>
                 </div>
             ) : (
-                <div className="flex items-center gap-1">
-                    <input list="rate-refs" value={entry.reference ?? ''} onChange={e => onChange({ reference: e.target.value })}
-                        placeholder="3M SORA" className={`${rowInput} w-32`} />
+                <div className="flex items-center gap-1 flex-wrap">
+                    <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                        {RATE_REFERENCES.map(r => (
+                            <button key={r} type="button" onClick={() => onChange({ reference: r })}
+                                className={`px-2.5 py-1.5 font-semibold transition-colors ${(entry.reference ?? '3M SORA') === r ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                                {r}
+                            </button>
+                        ))}
+                    </div>
                     <span className="text-xs text-slate-400">+</span>
                     <input type="number" step="0.01" value={entry.spread ?? ''} onChange={e => onChange({ spread: e.target.value === '' ? undefined : parseFloat(e.target.value) })}
                         placeholder="0.35" className={`${rowInput} w-20`} />
                     <span className="text-xs text-slate-400">%</span>
-                    <datalist id="rate-refs">{RATE_REFERENCES.map(r => <option key={r} value={r} />)}</datalist>
                 </div>
             )}
 

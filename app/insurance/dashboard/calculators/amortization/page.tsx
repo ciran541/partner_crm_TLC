@@ -830,19 +830,15 @@ function RateRow({
                 </div>
             ) : (
                 <div className="flex items-center gap-1.5 flex-1 flex-wrap">
-                    <input
-                        list={refId}
-                        value={entry.reference ?? ''}
-                        onChange={e => {
-                            const ref = e.target.value
-                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
-                        }}
-                        placeholder="3M SORA"
-                        className={`${inp} w-28`}
-                    />
-                    <datalist id={refId}>
-                        {soraRefs.map(r => <option key={r} value={r} />)}
-                    </datalist>
+                    <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                        {soraRefs.map(r => (
+                            <button key={r} type="button"
+                                onClick={() => onChange(r !== 'Custom' ? { reference: r, rate: undefined } : { reference: r })}
+                                className={`px-2.5 py-1.5 font-semibold transition-colors ${(entry.reference ?? '3M SORA') === r ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                                {r}
+                            </button>
+                        ))}
+                    </div>
                     {entry.reference === 'Custom' && (
                         <>
                             <input

@@ -106,7 +106,17 @@ export default function PurchaseWorkflowPanel({
     }, [])
 
     const meta = propertyMeta(data.property_type)
-    const computation = useMemo(() => computePurchase(inputsFromWorkflow(data)), [data])
+    const isBuc = data.property_type === 'new_launch_condo' || data.property_type === 'ec_new_launch'
+    const isDps = data.property_type === 'ec_new_launch' && data.ec_payment_scheme === 'dps'
+    const effectivePrice = isDps && data.property_price ? Math.round(data.property_price * 1.03) : (data.property_price ?? 0)
+    const computation = useMemo(() => {
+        const inputs = inputsFromWorkflow(
+            isDps && data.property_price
+                ? { ...data, property_price: Math.round(data.property_price * 1.03) }
+                : data,
+        )
+        return computePurchase(inputs)
+    }, [data, isDps])
 
     // Auto-switch liquidity view away from a blocked income option
     useEffect(() => {
@@ -702,7 +712,7 @@ export default function PurchaseWorkflowPanel({
                                     key={opt.key}
                                     opt={opt}
                                     ipaBank={opt.source === 'ipa' ? (data.ipa?.bank ?? undefined) : undefined}
-                                    price={data.property_price ?? 0}
+                                    price={effectivePrice}
                                     selectable={computation.options.length > 1}
                                     selected={liquidityOption === opt.key}
                                     onSelect={() => setLiquidityOption(opt.key as '1' | '2')}
@@ -734,7 +744,7 @@ export default function PurchaseWorkflowPanel({
                     <LiquidityCard
                         options={computation.options.length > 1 ? computation.options.filter(o => o.key === liquidityOption) : computation.options}
                         miscFees={computation.bsd + computation.absd + computation.legalFee + computation.valuationFee}
-                        price={data.property_price ?? 0}
+                        price={effectivePrice}
                         adjustedLoans={adjustedLoans}
                         rule={meta?.rule ?? 'tdsr'}
                     />
@@ -776,8 +786,115 @@ export default function PurchaseWorkflowPanel({
                         />
                     )}
 
-                    {/* Monthly Instalment — embedded amortisation calculator */}
-                    {(() => {
+                    {/* BUC Progressive Payment Scheme — New Launch Condo and EC New Launch */}
+                    {isBuc && (() => {
+                        const selectedOpt = computation.options.find(o => o.key === liquidityOption) ?? computation.options[0]
+                        if (!selectedOpt) return null
+                        const ltvPct = selectedOpt.ltvPct
+                        type StageSource = 'cash' | 'cashcpf' | 'bank'
+                        const stages: Array<{ label: string; pct: number; source: StageSource }> = isDps ? [
+                            { label: 'OTP / Booking Fee', pct: 0.05, source: 'cash' },
+                            { label: 'S&P Signing (within 8 weeks)', pct: 0.15, source: 'cashcpf' },
+                            { label: 'TOP — Bank loan (disbursed in full)', pct: ltvPct, source: 'bank' },
+                            { label: 'TOP — Buyer balance (cash / CPF)', pct: Math.max(0, 0.80 - ltvPct), source: 'cashcpf' },
+                        ] : [
+                            { label: 'OTP / Booking Fee', pct: 0.05, source: 'cash' },
+                            { label: 'S&P Exercise (within 8 weeks)', pct: 0.20, source: 'cashcpf' },
+                            { label: 'Foundation', pct: 0.10, source: 'bank' },
+                            { label: 'Reinforced Concrete Framework', pct: 0.10, source: 'bank' },
+                            { label: 'Partition Walls', pct: 0.05, source: 'bank' },
+                            { label: 'Roofing', pct: 0.05, source: 'bank' },
+                            { label: 'Windows, Doors, Plumbing & Drains', pct: 0.05, source: 'bank' },
+                            { label: 'Roads & Car Parks', pct: 0.05, source: 'bank' },
+                            { label: 'Vacant Possession (TOP)', pct: 0.25, source: 'bank' },
+                            { label: 'CSC / Legal Completion', pct: 0.10, source: 'bank' },
+                        ]
+                        const buyerTotal = stages.filter(s => s.source !== 'bank').reduce((sum, s) => sum + s.pct, 0)
+                        const bankTotal = stages.filter(s => s.source === 'bank').reduce((sum, s) => sum + s.pct, 0)
+                        const additionalBuyer = Math.max(0, (1 - ltvPct) - (isDps ? 0.20 : 0.25))
+                        const sourceLabel = (s: StageSource) => s === 'cash' ? 'Cash only' : s === 'cashcpf' ? 'Cash / CPF' : 'Bank'
+                        const sourceBadgeCls = (s: StageSource) =>
+                            s === 'bank' ? 'bg-[#03a9e7]/10 text-[#03a9e7]'
+                            : s === 'cash' ? 'bg-amber-50 text-amber-700'
+                            : 'bg-slate-100 text-slate-600'
+                        return (
+                            <Section title={isDps ? 'BUC Progressive Payment — DPS' : 'BUC Progressive Payment — PPS'} icon={<Wallet size={15} />}>
+                                {isDps && effectivePrice !== (data.property_price ?? 0) && (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-1">
+                                        <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                                            <Info size={13} className="shrink-0 text-amber-600" /> DPS — 3% Premium Applied
+                                        </p>
+                                        <p className="text-xs text-amber-700">
+                                            Effective price: <span className="font-bold">{money(effectivePrice)}</span>
+                                            {data.property_price ? <> (base {money(data.property_price)} + {money(effectivePrice - data.property_price)} DPS premium)</> : null}
+                                        </p>
+                                    </div>
+                                )}
+                                <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="bg-slate-50 border-b border-slate-200">
+                                                <th className="px-4 py-2.5 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Stage</th>
+                                                <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider w-12">%</th>
+                                                <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Amount</th>
+                                                <th className="px-3 py-2.5 text-center text-[11px] font-bold text-slate-500 uppercase tracking-wider">Source</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {stages.map((stage, i) => (
+                                                <tr key={i} className={`border-b border-slate-50 last:border-b-0 ${stage.source === 'bank' ? 'bg-sky-50/30' : 'bg-white'}`}>
+                                                    <td className="px-4 py-3">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${stage.source === 'bank' ? 'bg-[#03a9e7]' : 'bg-amber-400'}`} />
+                                                            <span className="text-sm text-slate-700">{stage.label}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-3 py-3 text-right font-semibold text-slate-600">{Math.round(stage.pct * 100)}%</td>
+                                                    <td className="px-3 py-3 text-right font-bold text-[#052d4a]">
+                                                        {effectivePrice > 0 ? money(Math.round(effectivePrice * stage.pct)) : '—'}
+                                                    </td>
+                                                    <td className="px-3 py-3 text-center">
+                                                        <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full ${sourceBadgeCls(stage.source)}`}>
+                                                            {sourceLabel(stage.source)}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="border-t-2 border-slate-200 bg-slate-50/80">
+                                                <td className="px-4 py-3 text-sm font-bold text-slate-600">Total</td>
+                                                <td className="px-3 py-3 text-right text-sm font-bold text-[#052d4a]">100%</td>
+                                                <td className="px-3 py-3 text-right text-sm font-bold text-[#052d4a]">{effectivePrice > 0 ? money(effectivePrice) : '—'}</td>
+                                                <td />
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                                <div className="flex gap-5 flex-wrap">
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                                        <span className="text-xs text-slate-600">Buyer: <span className="font-bold">{Math.round(buyerTotal * 100)}%</span>{effectivePrice > 0 ? <> · {money(Math.round(effectivePrice * buyerTotal))}</> : null}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-[#03a9e7] shrink-0" />
+                                        <span className="text-xs text-slate-600">Bank: <span className="font-bold">{Math.round(bankTotal * 100)}%</span>{effectivePrice > 0 ? <> · {money(Math.round(effectivePrice * bankTotal))}</> : null}</span>
+                                    </div>
+                                </div>
+                                {!isDps && additionalBuyer > 0.001 && (
+                                    <Tip>For this option ({Math.round(ltvPct * 100)}% LTV), buyer pays an additional {Math.round(additionalBuyer * 100)}% ({effectivePrice > 0 ? money(Math.round(effectivePrice * additionalBuyer)) : '—'}) spread across the construction stages alongside the bank.</Tip>
+                                )}
+                                {isDps ? (
+                                    <Tip>DPS: no construction-stage payments — full outstanding balance (bank loan + buyer balance) is settled at TOP.</Tip>
+                                ) : (
+                                    <Tip>PPS: the bank disburses progressively at each milestone; interest is charged only on the amount disbursed — no principal repayment until TOP.</Tip>
+                                )}
+                            </Section>
+                        )
+                    })()}
+
+                    {/* Monthly Instalment — embedded amortisation calculator — non-BUC only */}
+                    {!isBuc && (() => {
                         const selectedOpt = computation.options.find(o => o.key === liquidityOption) ?? computation.options[0]
                         if (!selectedOpt) return null
                         const hasPkg = pkg != null
@@ -785,14 +902,13 @@ export default function PurchaseWorkflowPanel({
                         const activeSchedule: RateScheduleEntry[] = (hasPkg && pkgSchedule?.length)
                             ? pkgSchedule
                             : (data.manual_rate_schedule ?? DEFAULT_RATE_SCHEDULE)
-                        const isBuc = data.property_type === 'new_launch_condo' || data.property_type === 'ec_new_launch'
                         const topYearRaw = data.otp_dates?.top_year ? parseInt(data.otp_dates.top_year) : NaN
                         const bucYears = isBuc && !isNaN(topYearRaw) ? Math.max(1, topYearRaw - new Date().getFullYear()) : null
                         const lockinYears = bucYears ?? (pkg?.lockin_years as number | undefined) ?? data.reference_lockin_years
                         const t1 = data.preferred_tenure ?? selectedOpt.maxTenure
                         const t2 = preferredTenure2 ?? selectedOpt.maxTenure
                         const adjLoan = adjustedLoans[selectedOpt.key]
-                        const fieldPlaceholder = selectedOpt.source === 'ipa' ? selectedOpt.ltvCeiling : selectedOpt.finalLoan
+                        const fieldPlaceholder = selectedOpt.finalLoan
                         const loan = adjLoan ?? fieldPlaceholder
                         const hasThereafter = activeSchedule.some(e => e.thereafter)
 
@@ -1451,9 +1567,9 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
     const fmtPct = (n: number) => `${n % 1 === 0 ? n : n.toFixed(1)}%`
     const minCashPctLabel = fmtPct(minCashPctNum)
 
-    // Default breakdown to full LTV ceiling so client sees the best-case upfront.
-    // For IPA path the ceiling is the max loan (75%/55%); for income path it's the income-eligible loan.
-    const fieldPlaceholder = opt.source === 'ipa' ? opt.ltvCeiling : opt.finalLoan
+    // Default to the bank-approved / income-eligible loan. For IPA this is the IPA amount;
+    // agent can hit Max to bump to the full LTV ceiling.
+    const fieldPlaceholder = opt.finalLoan
     const effectiveLoan = adjustedLoan ?? fieldPlaceholder
     const isAdjusted = adjustedLoan != null && Math.round(adjustedLoan) !== Math.round(fieldPlaceholder)
     const actualLtvPctNum = price > 0
@@ -1692,15 +1808,15 @@ function RateRow({
                 </div>
             ) : (
                 <div className="flex items-center gap-1.5 flex-1 flex-wrap">
-                    <input list={refId} value={entry.reference ?? ''} placeholder="3M SORA"
-                        onChange={e => {
-                            const ref = e.target.value
-                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
-                        }}
-                        className={`${rateRowInp} w-24`} />
-                    <datalist id={refId}>
-                        {AMORT_RATE_REFS.map(r => <option key={r} value={r} />)}
-                    </datalist>
+                    <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                        {AMORT_RATE_REFS.map(r => (
+                            <button key={r} type="button"
+                                onClick={() => onChange(r !== 'Custom' ? { reference: r, rate: undefined } : { reference: r })}
+                                className={`px-2.5 py-1 font-semibold transition-colors ${(entry.reference ?? '3M SORA') === r ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                                {r}
+                            </button>
+                        ))}
+                    </div>
                     {entry.reference === 'Custom' && (
                         <>
                             <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="0.50"

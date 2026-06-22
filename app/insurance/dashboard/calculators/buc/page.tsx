@@ -110,10 +110,9 @@ export default function BUCPage() {
     const [loanAmount,    setLoanAmount]    = useState('750,000')
     const [cpfAmount,     setCpfAmount]     = useState('')
     const [tenure,        setTenure]        = useState('30')
-    const [rateType,      setRateType]      = useState<'fixed' | 'floating'>('floating')
-    const [rateRef,       setRateRef]       = useState<'3M SORA' | '1M SORA'>('3M SORA')
+    const [rateRef,       setRateRef]       = useState<'3M SORA' | '1M SORA' | 'Custom'>('3M SORA')
     const [spread,        setSpread]        = useState('0.20')
-    const [fixedRate,     setFixedRate]     = useState('')
+    const [customRate,    setCustomRate]    = useState('')
     const [sora,          setSora]          = useState<SoraRates | null>(null)
 
     useEffect(() => {
@@ -131,9 +130,9 @@ export default function BUCPage() {
 
     const comp3m = sora?.comp_sora_3m ?? null
     const comp1m = sora?.comp_sora_1m ?? null
-    const soraValue = rateRef === '3M SORA' ? comp3m : comp1m
-    const rate = rateType === 'fixed'
-        ? (parseFloat(fixedRate) || 0)
+    const soraValue = rateRef === '3M SORA' ? comp3m : rateRef === '1M SORA' ? comp1m : null
+    const rate = rateRef === 'Custom'
+        ? (parseFloat(customRate) || 0)
         : soraValue != null ? +(soraValue + (parseFloat(spread) || 0)).toFixed(4) : 0
 
     // Validation
@@ -147,15 +146,14 @@ export default function BUCPage() {
     const cpfErr   = cpf > 0 && price > 0 && loan > 0 && (cpf + loan) > 0.95 * price
         ? `CPF + Loan cannot exceed 95% of purchase price ($${fmt(0.95 * price)})` : null
     const tenErr   = ten > 0 && (ten < 5 || ten > 35) ? 'Tenure must be 5–35 years' : null
-    const rateErr  = rateType === 'fixed' && rate > 0 && (rate < 0.1 || rate > 10) ? 'Interest rate must be 0.1%–10%' : null
     const cashErr  = price > 0 && (loan > 0 || cpf > 0) && cash < 0.05 * price
         ? `Minimum 5% cash required ($${fmt(0.05 * price)})` : null
 
-    const rateReady = rateType === 'fixed' ? rate >= 0.1 && rate <= 10 : soraValue != null && rate >= 0.01
+    const rateReady = rateRef === 'Custom' ? rate >= 0.01 && rate <= 20 : soraValue != null && rate >= 0.01
     const canCompute =
         price >= 100000 && loan >= 100000 && ten >= 5 && ten <= 35 &&
         rateReady &&
-        !priceErr && !loanErr && !cpfErr && !tenErr && !rateErr && !cashErr
+        !priceErr && !loanErr && !cpfErr && !tenErr && !cashErr
 
     const result = useMemo(
         () => canCompute ? computeBUC(price, loan, cpf, ten, rate) : null,
@@ -304,39 +302,35 @@ export default function BUCPage() {
                                 Interest Rate (% p.a.)
                             </label>
                             <div className="flex items-center gap-2 flex-wrap">
-                                {/* Fixed / Floating toggle */}
+                                {/* 3M SORA / 1M SORA / Custom toggle */}
                                 <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
-                                    {(['fixed', 'floating'] as const).map(t => (
+                                    {(['3M SORA', '1M SORA', 'Custom'] as const).map(ref => (
                                         <button
-                                            key={t}
+                                            key={ref}
                                             type="button"
-                                            onClick={() => setRateType(t)}
-                                            className={`px-3 py-1.5 font-semibold capitalize transition-colors ${
-                                                rateType === t ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                                            onClick={() => setRateRef(ref)}
+                                            className={`px-3 py-1.5 font-semibold transition-colors ${
+                                                rateRef === ref ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
                                             }`}
                                         >
-                                            {t}
+                                            {ref}
                                         </button>
                                     ))}
                                 </div>
-
-                                {rateType === 'floating' ? (
+                                {rateRef === 'Custom' ? (
                                     <>
-                                        {/* 3M / 1M SORA toggle */}
-                                        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
-                                            {(['3M SORA', '1M SORA'] as const).map(ref => (
-                                                <button
-                                                    key={ref}
-                                                    type="button"
-                                                    onClick={() => setRateRef(ref)}
-                                                    className={`px-3 py-1.5 font-semibold transition-colors ${
-                                                        rateRef === ref ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
-                                                    }`}
-                                                >
-                                                    {ref}
-                                                </button>
-                                            ))}
-                                        </div>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={customRate}
+                                            onChange={e => setCustomRate(e.target.value)}
+                                            placeholder="2.00"
+                                            className={`${inp} w-24`}
+                                        />
+                                        <span className="text-xs font-medium text-slate-400">% p.a.</span>
+                                    </>
+                                ) : (
+                                    <>
                                         <span className="text-xs font-medium text-slate-400">+</span>
                                         <input
                                             type="number"
@@ -353,21 +347,8 @@ export default function BUCPage() {
                                             </span>
                                         )}
                                     </>
-                                ) : (
-                                    <>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            value={fixedRate}
-                                            onChange={e => setFixedRate(e.target.value)}
-                                            placeholder="2.00"
-                                            className={`${inp} w-32`}
-                                        />
-                                        <span className="text-xs font-medium text-slate-400">%</span>
-                                    </>
                                 )}
                             </div>
-                            {rateErr && <p className="text-xs text-red-500 mt-1">{rateErr}</p>}
                         </div>
 
                         {cashErr && (

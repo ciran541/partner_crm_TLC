@@ -259,6 +259,14 @@ export default function RefinancingWorkflowPanel({
     const subsidyValue = data.subsidy_return_amount
     const t = computation.tenure
 
+    // Estimated subsidy the NEW bank will provide, based on loan size and property type.
+    // Include undisbursed for BUC types where disbursed may be 0.
+    const loanForSubsidy = (data.outstanding_disbursed ?? 0) + (data.outstanding_undisbursed ?? 0)
+    const estimatedSubsidy: number | null = data.property_type == null ? null
+        : meta?.isPrivate === false
+            ? loanForSubsidy >= 250_000 ? 2000 : 0                                        // HDB
+            : loanForSubsidy >= 1_000_000 ? 2500 : loanForSubsidy >= 500_000 ? 2000 : 0  // Private
+
     return (
         <div className="space-y-5">
             {/* Header */}
@@ -353,6 +361,32 @@ export default function RefinancingWorkflowPanel({
                             </p>
                         )
                     })()}
+
+                    {/* Estimated subsidy from new bank */}
+                    {estimatedSubsidy !== null && (
+                        <div className="flex items-start gap-2 rounded-lg border border-[#03a9e7]/25 bg-sky-50/60 px-3 py-2.5">
+                            <Info size={13} className="text-[#03a9e7] shrink-0 mt-0.5" />
+                            <div>
+                                <p className="text-xs font-semibold text-[#052d4a]">
+                                    Estimated Subsidy Provided:{' '}
+                                    <span className={estimatedSubsidy > 0 ? 'text-emerald-700' : 'text-slate-500'}>
+                                        {estimatedSubsidy > 0 ? money(estimatedSubsidy) : '$0'}
+                                    </span>
+                                </p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                    {meta?.isPrivate === false
+                                        ? loanForSubsidy >= 250_000
+                                            ? `HDB loan ≥ $250k → $2,000`
+                                            : `HDB loan < $250k → $0`
+                                        : loanForSubsidy >= 1_000_000
+                                            ? `Private loan ≥ $1M → $2,500`
+                                            : loanForSubsidy >= 500_000
+                                                ? `Private loan ≥ $500k → $2,000`
+                                                : `Private loan < $500k → $0`}
+                                </p>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <Question label={!meta?.isPrivate ? 'Current Financier' : 'Current Bank'}>
@@ -2241,15 +2275,15 @@ function RefiAmortRateRow({
                 </div>
             ) : (
                 <div className="flex items-center gap-1.5 flex-1 flex-wrap">
-                    <input list={refId} value={entry.reference ?? ''} placeholder="3M SORA"
-                        onChange={e => {
-                            const ref = e.target.value
-                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
-                        }}
-                        className={`${refiRateRowInp} w-24`} />
-                    <datalist id={refId}>
-                        {REFI_AMORT_RATE_REFS.map(r => <option key={r} value={r} />)}
-                    </datalist>
+                    <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                        {REFI_AMORT_RATE_REFS.map(r => (
+                            <button key={r} type="button"
+                                onClick={() => onChange(r !== 'Custom' ? { reference: r, rate: undefined } : { reference: r })}
+                                className={`px-2.5 py-1 font-semibold transition-colors ${(entry.reference ?? '3M SORA') === r ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                                {r}
+                            </button>
+                        ))}
+                    </div>
                     {entry.reference === 'Custom' && (
                         <>
                             <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="0.50"

@@ -81,8 +81,11 @@ function costRemarks(cost?: RefiCost): string[] {
     ]
     if (cost.estSubsidy != null) {
         out.push(cost.estSubsidy > 0
-            ? `Estimated Subsidy: ${money(cost.estSubsidy)} cash`
-            : 'Estimated Subsidy: $0 (outstanding loan below $250k)')
+            ? `Estimated Subsidy (from new bank): ${money(cost.estSubsidy)} cash`
+            : 'Estimated Subsidy (from new bank): $0 (loan below threshold)')
+    }
+    if (cost.subsidyClawback > 0) {
+        out.push(`Subsidy Clawback (to current bank): ${money(cost.subsidyClawback)}`)
     }
     return out
 }

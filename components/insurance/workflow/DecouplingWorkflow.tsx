@@ -2161,15 +2161,15 @@ function AmortRateRow({
                 </div>
             ) : (
                 <div className="flex items-center gap-1.5 flex-1 flex-wrap">
-                    <input list={refId} value={entry.reference ?? ''} placeholder="3M SORA"
-                        onChange={e => {
-                            const ref = e.target.value
-                            onChange(ref !== 'Custom' ? { reference: ref, rate: undefined } : { reference: ref })
-                        }}
-                        className={`${rateRowInp} w-24`} />
-                    <datalist id={refId}>
-                        {AMORT_RATE_REFS.map(r => <option key={r} value={r} />)}
-                    </datalist>
+                    <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                        {AMORT_RATE_REFS.map(r => (
+                            <button key={r} type="button"
+                                onClick={() => onChange(r !== 'Custom' ? { reference: r, rate: undefined } : { reference: r })}
+                                className={`px-2.5 py-1 font-semibold transition-colors ${(entry.reference ?? '3M SORA') === r ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                                {r}
+                            </button>
+                        ))}
+                    </div>
                     {entry.reference === 'Custom' && (
                         <>
                             <input type="number" step="0.01" value={entry.rate ?? ''} placeholder="0.50"

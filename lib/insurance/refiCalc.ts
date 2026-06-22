@@ -179,7 +179,8 @@ export interface RefiCost {
     legalNote: string
     valuationDisplay: string
     valuationFee: number | null       // numeric only for HDB ($200)
-    estSubsidy: number | null         // HDB only
+    estSubsidy: number | null         // estimated subsidy FROM new bank
+    subsidyClawback: number           // amount TO RETURN to current bank
 }
 
 export function refinancingCost(args: {
@@ -187,9 +188,11 @@ export function refinancingCost(args: {
     totalOutstanding: number
     decoupleNow?: boolean   // client is decoupling NOW → $6k; false/undefined = standard refi fee
     equityLoan?: boolean
+    subsidyReturn?: number  // amount agent entered for subsidy to return to current bank
 }): RefiCost | undefined {
     const meta = refiPropertyMeta(args.propertyType)
     if (!meta) return undefined
+    const subsidyClawback = args.subsidyReturn ?? 0
 
     if (!meta.isPrivate) {
         // HDB
@@ -198,7 +201,8 @@ export function refinancingCost(args: {
             legalNote: 'nett cash/CPF',
             valuationDisplay: '$200 est cash',
             valuationFee: 200,
-            estSubsidy: args.totalOutstanding > HDB_SMALL_LOAN ? 2000 : 0,
+            estSubsidy: args.totalOutstanding >= HDB_SMALL_LOAN ? 2000 : 0,
+            subsidyClawback,
         }
     }
     // Private — decoupling now supersedes everything, then equity loan, else standard.
@@ -206,12 +210,15 @@ export function refinancingCost(args: {
     const legalNote = args.decoupleNow ? 'est cash/CPF (decoupling)'
         : args.equityLoan ? 'est cash/CPF (equity loan)'
         : 'nett cash/CPF'
+    const estSubsidy = args.totalOutstanding >= 1_000_000 ? 2500
+        : args.totalOutstanding >= PRIVATE_SMALL_LOAN ? 2000 : 0
     return {
         legalFee,
         legalNote,
         valuationDisplay: '$400–$1,000 cash est. (refer to valuation table)',
         valuationFee: null,
-        estSubsidy: null,
+        estSubsidy,
+        subsidyClawback,
     }
 }
 
@@ -261,6 +268,7 @@ export function computeRefi(inputs: RefiInputs): RefiComputation {
         totalOutstanding,
         decoupleNow: inputs.decoupleNow,
         equityLoan: inputs.considerations?.equity_loan,
+        subsidyReturn: inputs.subsidyReturn,
     }) : undefined
 
     const smallLoanNoSubsidy = !!meta && totalOutstanding > 0 && (
