@@ -26,7 +26,7 @@ import RefiPresentation from './RefiPresentation'
 import {
     Building2, CheckCircle2, AlertTriangle, Info, Lightbulb, Save, Wallet, Receipt,
     ArrowRight, ClipboardList, CalendarClock, CalendarRange, Copy, Printer, Circle,
-    Presentation, MessageSquare, Percent, Lock, Plus, Trash2,
+    Presentation, MessageSquare, Percent, Lock, Plus, Trash2, Mail,
 } from 'lucide-react'
 
 const pct = (frac: number, dp = 1) => `${(frac * 100).toFixed(dp)}%`
@@ -35,6 +35,8 @@ interface Props {
     data: RefinancingWorkflow
     onChange: (updated: RefinancingWorkflow) => void
     clientName?: string
+    clientEmail?: string
+    caseId?: string
     embedded?: boolean
     saving?: boolean
     saved?: boolean
@@ -64,13 +66,34 @@ const money = (n: number) => `$${Math.floor(n).toLocaleString()}`
 const num = (v: string) => (v.trim() === '' ? undefined : parseFloat(v.replace(/,/g, '')))
 
 export default function RefinancingWorkflowPanel({
-    data, onChange, clientName, embedded, saving, saved,
+    data, onChange, clientName, clientEmail, caseId, embedded, saving, saved,
     currentStage, onStageAdvance, onSetFollowUp, followUpDate,
     hasClientName, onContinue,
 }: Props) {
     const update = (patch: Partial<RefinancingWorkflow>) => onChange({ ...data, ...patch })
     const [proposalOpen, setProposalOpen] = useState(false)
     const [presentationOpen, setPresentationOpen] = useState(false)
+    const [sendingReport, setSendingReport] = useState(false)
+    const [reportSent, setReportSent] = useState(false)
+    const [reportError, setReportError] = useState<string | null>(null)
+
+    const handleSendReport = async () => {
+        if (!caseId) return
+        setSendingReport(true)
+        setReportError(null)
+        try {
+            const res = await fetch(`/api/insurance/cases/${caseId}/send-report`, { method: 'POST' })
+            const body = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(body.error ?? 'Failed to send report')
+            setReportSent(true)
+            setTimeout(() => setReportSent(false), 4000)
+        } catch (e) {
+            setReportError(e instanceof Error ? e.message : 'Failed to send report')
+            setTimeout(() => setReportError(null), 5000)
+        } finally {
+            setSendingReport(false)
+        }
+    }
     const [customSubsidy, setCustomSubsidy] = useState(
         data.subsidy_return_amount != null && !SUBSIDY_PRESETS.includes(String(data.subsidy_return_amount)),
     )
@@ -120,18 +143,19 @@ export default function RefinancingWorkflowPanel({
 
     const setPropertyType = (type: RefiPropertyType) => {
         const patch: Partial<RefinancingWorkflow> = { property_type: type }
-        // Undisbursed only applies to the incompleted (BUC) type — clear otherwise.
-        if (!refiPropertyMeta(type)?.buc) patch.outstanding_undisbursed = undefined
-        // Equity loan fields only apply to private property types.
-        if (!refiPropertyMeta(type)?.isPrivate) {
+        const newMeta = refiPropertyMeta(type)
+        // Undisbursed only applies to BUC types
+        if (!newMeta?.buc) patch.outstanding_undisbursed = undefined
+        // Equity loan fields only where canEquityLoan
+        if (!newMeta?.canEquityLoan) {
             patch.outstanding_equity_loan = undefined
             patch.current_equity_loan_tenure = undefined
-            patch.decouple_now = undefined
-            patch.cpf_used = undefined
             patch.equity_loan_amount = undefined
             patch.preferred_tenure_equity = undefined
             patch.preferred_tenure_equity_outstanding = undefined
         }
+        // Decouple only where canDecouple
+        if (!newMeta?.canDecouple) patch.decouple_now = undefined
         update(patch)
     }
 
@@ -289,7 +313,7 @@ export default function RefinancingWorkflowPanel({
             {/* ── Current loan ── */}
             {data.property_type && (
                 <Section title="Current Loan" icon={<Wallet size={15} />}>
-                    {meta?.isPrivate ? (
+                    {meta?.canEquityLoan ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <Question label="Outstanding Home Loan" required>
                                 <FieldInput commas prefix="$" value={data.outstanding_disbursed ?? ''} placeholder="e.g. 800,000"
@@ -331,11 +355,26 @@ export default function RefinancingWorkflowPanel({
                     })()}
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <Question label={data.property_type === 'hdb' ? 'Current Financier' : 'Current Bank'}>
-                            <InsuranceBankDropdown value={data.current_bank ?? ''} onChange={v => update({ current_bank: v })} showHdb={data.property_type === 'hdb'} />
+                        <Question label={!meta?.isPrivate ? 'Current Financier' : 'Current Bank'}>
+                            <InsuranceBankDropdown value={data.current_bank ?? ''} onChange={v => update({ current_bank: v })} showHdb={!meta?.isPrivate} />
                         </Question>
                         <Question label="Lock-in end date">
-                            <FieldInput type="date" value={data.lockin_end_date ?? ''} onChange={v => update({ lockin_end_date: v })} />
+                            <div className="flex items-center gap-2">
+                                <div className="flex-1">
+                                    <FieldInput type="date" value={data.lockin_end_date ?? ''} onChange={v => update({ lockin_end_date: v })} />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => update({ lockin_end_date: undefined })}
+                                    className={`shrink-0 px-2.5 py-2 text-[11px] font-bold rounded-lg border transition-colors ${
+                                        !data.lockin_end_date
+                                            ? 'bg-slate-700 border-slate-700 text-white'
+                                            : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400 hover:text-slate-700'
+                                    }`}
+                                >
+                                    N/A
+                                </button>
+                            </div>
                         </Question>
                     </div>
                     <Question label="Current interest rate">
@@ -390,7 +429,7 @@ export default function RefinancingWorkflowPanel({
                                 )
                             })()}
                         </Question>
-                        {meta?.isPrivate && (data.outstanding_equity_loan ?? 0) > 0 && (
+                        {meta?.canEquityLoan && (data.outstanding_equity_loan ?? 0) > 0 && (
                             <Question label="Current Equity Loan Tenure (remaining years)">
                                 <FieldInput type="number" value={data.current_equity_loan_tenure ?? ''} placeholder="e.g. 10"
                                     onChange={v => update({ current_equity_loan_tenure: num(v) })}
@@ -417,13 +456,33 @@ export default function RefinancingWorkflowPanel({
                         <div className="space-y-2">
                             <CheckRow label="Sell" checked={!!data.considerations?.sell} onToggle={() => toggleConsideration('sell')} />
                             <CheckRow label="Partial Pay" checked={!!data.considerations?.partial_pay} onToggle={() => toggleConsideration('partial_pay')} />
-                            <CheckRow label="Decouple" hint="Not applicable for HDB or EC within MOP" checked={!!data.considerations?.decouple} onToggle={() => toggleConsideration('decouple')} />
-                            <CheckRow label="Equity Loan" hint="Not applicable for HDB or EC within MOP" checked={!!data.considerations?.equity_loan} onToggle={() => toggleConsideration('equity_loan')} />
+                            <div className={!meta?.canDecouple ? 'opacity-40 pointer-events-none select-none' : ''}>
+                                <CheckRow
+                                    label="Decouple"
+                                    hint={!meta?.canDecouple
+                                        ? 'Not applicable for HDB / EC within MOP'
+                                        : data.property_type === 'incomplete_condo'
+                                            ? 'Not applicable for certain banks (Incomplete Condo without TOP)'
+                                            : undefined}
+                                    checked={!!data.considerations?.decouple}
+                                    onToggle={() => toggleConsideration('decouple')}
+                                />
+                            </div>
+                            <div className={!meta?.canEquityLoan ? 'opacity-40 pointer-events-none select-none' : ''}>
+                                <CheckRow
+                                    label="Equity Loan"
+                                    hint={!meta?.canEquityLoan
+                                        ? 'Not applicable for HDB / EC within MOP / Incomplete Condo or EC without CSC'
+                                        : undefined}
+                                    checked={!!data.considerations?.equity_loan}
+                                    onToggle={() => toggleConsideration('equity_loan')}
+                                />
+                            </div>
                         </div>
                     </Question>
 
                     {/* Decouple now? */}
-                    {data.considerations?.decouple && meta?.isPrivate && (
+                    {data.considerations?.decouple && meta?.canDecouple && (
                         <div className="pl-1 space-y-3">
                             <Question label="Do you plan to decouple now?">
                                 <YesNo value={data.decouple_now} onChange={v => update({ decouple_now: v })} />
@@ -442,8 +501,8 @@ export default function RefinancingWorkflowPanel({
                 </Section>
             )}
 
-            {/* ── Loan Structure & Available Equity ── (private properties only) */}
-            {data.property_type && meta?.isPrivate && (() => {
+            {/* ── Loan Structure & Available Equity ── */}
+            {data.property_type && (() => {
                 const totalLoan = (data.outstanding_disbursed ?? 0) + (data.outstanding_equity_loan ?? 0)
                 const valuation = data.market_price ?? 0
                 const cpfUsed = data.cpf_used ?? 0
@@ -464,6 +523,7 @@ export default function RefinancingWorkflowPanel({
 
                         {hasInputs ? (
                             <>
+                                {/* Purple — Property Ownership Structure (all property types) */}
                                 <div className="rounded-xl border border-[#03a9e7]/30 overflow-hidden">
                                     <div className="px-4 py-3 bg-sky-50/70 border-b border-[#03a9e7]/15">
                                         <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Property Ownership Structure</p>
@@ -483,44 +543,47 @@ export default function RefinancingWorkflowPanel({
                                     </div>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
-                                    <p className="text-sm text-slate-600">
-                                        75% − {pct(loanPct)} (loan) − {pct(cpfPct)} (CPF)
-                                        {' '}= <span className={`font-bold ${equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPct)}</span>
-                                    </p>
-                                    {equityPct <= 0 ? (
-                                        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
-                                            <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
-                                            <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
-                                        </div>
-                                    ) : !equityEligible ? (
-                                        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-                                            <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
-                                            <p className="text-[12px] text-amber-800">
-                                                Available equity {money(equityAmt)} — below $50,000 minimum for an equity loan.
-                                            </p>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
-                                                <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
-                                                <p className="text-[12px] text-emerald-800 font-semibold">
-                                                    Available Equity: {money(equityAmt)} — eligible for an equity loan.
+                                {/* Orange — Available Equity + loan offer (only for eligible types) */}
+                                {meta?.canEquityLoan && (
+                                    <div className="space-y-2">
+                                        <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
+                                        <p className="text-sm text-slate-600">
+                                            75% − {pct(loanPct)} (loan) − {pct(cpfPct)} (CPF)
+                                            {' '}= <span className={`font-bold ${equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPct)}</span>
+                                        </p>
+                                        {equityPct <= 0 ? (
+                                            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+                                                <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
+                                                <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
+                                            </div>
+                                        ) : !equityEligible ? (
+                                            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                                                <AlertTriangle size={13} className="text-amber-600 shrink-0 mt-0.5" />
+                                                <p className="text-[12px] text-amber-800">
+                                                    Available equity {money(equityAmt)} — below $50,000 minimum for an equity loan.
                                                 </p>
                                             </div>
-                                            <Question label="Would you like to take up an equity loan?">
-                                                <FieldInput commas prefix="$"
-                                                    value={data.equity_loan_amount ?? ''}
-                                                    placeholder={`max ${money(equityAmt)}`}
-                                                    onChange={v => {
-                                                        const n = num(v)
-                                                        update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
-                                                    }} />
-                                            </Question>
-                                        </div>
-                                    )}
-                                </div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                                                    <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
+                                                    <p className="text-[12px] text-emerald-800 font-semibold">
+                                                        Available Equity: {money(equityAmt)} — eligible for an equity loan.
+                                                    </p>
+                                                </div>
+                                                <Question label="Would you like to take up an equity loan?">
+                                                    <FieldInput commas prefix="$"
+                                                        value={data.equity_loan_amount ?? ''}
+                                                        placeholder={`max ${money(equityAmt)}`}
+                                                        onChange={v => {
+                                                            const n = num(v)
+                                                            update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
+                                                        }} />
+                                                </Question>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </>
                         ) : (
                             <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
@@ -541,7 +604,7 @@ export default function RefinancingWorkflowPanel({
                                     <label className="text-[11px] text-slate-500">Borrower {i + 1}</label>
                                     <FieldInput type="number" value={b.age ?? ''} placeholder="0"
                                         onChange={v => updateBorrower(i, { age: num(v) })}
-                                        onBlur={() => { if (b.age != null && b.age > 0 && b.age < 21) updateBorrower(i, { age: 21 }) }} />
+                                        onBlur={() => { if (b.age != null && b.age > 0) { if (b.age < 21) updateBorrower(i, { age: 21 }); else if (b.age > 75) updateBorrower(i, { age: 75 }) } }} />
                                 </div>
                             ))}
                         </div>
@@ -611,12 +674,14 @@ export default function RefinancingWorkflowPanel({
             {/* ── TDSR Assessment ── */}
             {data.property_type && grossForTdsr != null && grossForTdsr > 0 && (() => {
                 const availableTdsr = Math.max(grossForTdsr * 0.55 - debtsForTdsr, 0)
+                const msrCap = meta?.useMsr ? grossForTdsr * 0.30 : null
+                const effectiveAvailForHomeLoan = msrCap != null ? Math.min(availableTdsr, msrCap) : availableTdsr
 
-                // Est. Loan Eligibility
+                // Est. Loan Eligibility (binding = min of TDSR and MSR for home loan)
                 const estEligMax = meta?.tenureCap ?? 35
                 const effectiveEstEligTenure = estEligTenure ?? estEligMax
-                const estEligLoan = availableTdsr > 0 && effectiveEstEligTenure > 0
-                    ? maxLoanFromPayment(availableTdsr, STRESS_TEST_RATE * 100, effectiveEstEligTenure)
+                const estEligLoan = effectiveAvailForHomeLoan > 0 && effectiveEstEligTenure > 0
+                    ? maxLoanFromPayment(effectiveAvailForHomeLoan, STRESS_TEST_RATE * 100, effectiveEstEligTenure)
                     : 0
 
                 // Refinancing TDSR: each loan as its own block
@@ -629,10 +694,12 @@ export default function RefinancingWorkflowPanel({
                 const refiStress = refiLoan > 0 && refiTenure > 0
                     ? monthlyInstallment(refiLoan, STRESS_TEST_RATE * 100, refiTenure)
                     : 0
-                const refiPass = refiStress > 0 ? refiStress <= availableTdsr : null
+                const refiPassTdsr = refiStress <= availableTdsr
+                const refiPassMsr = msrCap != null ? refiStress <= msrCap : true
+                const refiPass = refiStress > 0 ? (refiPassTdsr && refiPassMsr) : null
 
                 // Outstanding equity loan — separate card
-                const equityOutstandingLoan = meta?.isPrivate ? (data.outstanding_equity_loan ?? 0) : 0
+                const equityOutstandingLoan = meta?.canEquityLoan ? (data.outstanding_equity_loan ?? 0) : 0
                 const equityMaxTenureByAge = computation.ageForTenure != null
                     ? Math.max(5, Math.min(35, Math.floor(75 - computation.ageForTenure)))
                     : 35
@@ -708,10 +775,13 @@ export default function RefinancingWorkflowPanel({
                                 </div>
                             </div>
                             <div className="text-right shrink-0">
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Available TDSR</p>
-                                <p className="text-xl font-bold text-[#052d4a]">{money(availableTdsr)}</p>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+                                    Available TDSR{msrCap != null && msrCap < availableTdsr ? <span className="ml-1.5 text-amber-600">· MSR binding</span> : ''}
+                                </p>
+                                <p className="text-xl font-bold text-[#052d4a]">{money(effectiveAvailForHomeLoan)}</p>
                                 <p className="text-[11px] text-slate-400 mt-0.5">
                                     {money(grossForTdsr)} × 55%{debtsForTdsr > 0 ? ` − ${money(debtsForTdsr)} commitments` : ''}
+                                    {msrCap != null ? ` · MSR cap ${money(msrCap)} (30%)` : ''}
                                     {computation.usingIwaa && computation.iwaa != null ? ` · IWAA ${Math.ceil(computation.iwaa)} yrs` : computation.averageAge != null ? ` · Age ${Math.ceil(computation.averageAge)} yrs` : ''}
                                 </p>
                             </div>
@@ -764,9 +834,14 @@ export default function RefinancingWorkflowPanel({
                                 {refiPass !== null && (
                                     <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${refiPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
                                         {refiPass
-                                            ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR Pass</span></>
-                                            : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span>
-                                                <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(refiStress - availableTdsr)}</span></>
+                                            ? <><CheckCircle2 size={14} className="text-emerald-600" /><span className="text-sm font-bold text-emerald-700">TDSR{msrCap != null ? ' / MSR' : ''} Pass</span></>
+                                            : <><AlertTriangle size={14} className="text-red-500" />
+                                                <span className="text-sm font-bold text-red-600">
+                                                    {!refiPassTdsr ? 'TDSR Fail' : 'MSR Fail'}
+                                                </span>
+                                                <span className="ml-auto text-[11px] font-semibold text-red-600">
+                                                    shortfall: {money(refiStress - effectiveAvailForHomeLoan)}
+                                                </span></>
                                         }
                                     </div>
                                 )}
@@ -774,9 +849,11 @@ export default function RefinancingWorkflowPanel({
                                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
                                         <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
                                         <p className="text-[12px] text-amber-700 leading-relaxed">
-                                            {data.property_use === 'investment'
-                                                ? 'Bank will require client to pay down 3% of outstanding loan and/or show some funds to prove repayment ability.'
-                                                : 'Client may qualify for TDSR Waiver with most banks — to double check with banker.'}
+                                            {!refiPassMsr
+                                                ? 'MSR cap of 30% binding — income needs to increase or loan needs to be paid down to qualify.'
+                                                : data.property_use === 'investment'
+                                                    ? 'Bank will require client to pay down 3% of outstanding loan and/or show some funds to prove repayment ability.'
+                                                    : 'Client may qualify for TDSR Waiver with most banks — to double check with banker.'}
                                         </p>
                                         {refiPledge && (
                                             <p className="text-[12px] text-amber-900">
@@ -1094,43 +1171,96 @@ export default function RefinancingWorkflowPanel({
                             lv1: number | null, lv2: number | null,
                             iv1: number | null, iv2: number | null,
                             ta: number, tb: number,
-                        ) => (
-                            <div className="rounded-xl border border-slate-200 overflow-hidden">
-                                <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100 bg-slate-50/60`}>
-                                    <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
-                                    <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({ta} yrs)</div>
-                                    {showCompare && <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({tb} yrs)</div>}
+                            rows1: ReturnType<typeof computeAmortization>,
+                            rows2: ReturnType<typeof computeAmortization>,
+                        ) => {
+                            const lockin = breakdownYears
+                            const ti1 = lv1 != null ? lv1 * lockin * 12 : null
+                            const ti2 = lv2 != null ? lv2 * lockin * 12 : null
+                            const ol1 = rows1.find(r => r.year === lockin)?.balance ?? null
+                            const ol2 = rows2.find(r => r.year === lockin)?.balance ?? null
+                            const dc = (d: number) => d > 0 ? 'text-red-500' : d < 0 ? 'text-emerald-600' : 'text-slate-400'
+                            const ds = (d: number) => d >= 0 ? '+' : '−'
+                            const f = fmt2
+                            const diffCols: { v1: number | null; v2: number | null; sfx: string }[] = [
+                                { v1: lv1, v2: lv2, sfx: ' /mth' },
+                                { v1: ti1, v2: ti2, sfx: '' },
+                                { v1: ol1, v2: ol2, sfx: '' },
+                                { v1: iv1, v2: iv2, sfx: '' },
+                            ]
+                            return (
+                                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="bg-slate-50 border-b border-slate-200">
+                                                <th className="px-3 py-2.5 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Tenure (Yrs)</th>
+                                                <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Monthly Instalment</th>
+                                                <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                    Total Instalment<br />
+                                                    <span className="font-normal normal-case tracking-normal text-slate-400">Paid over {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                                </th>
+                                                <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                    Outstanding Loan<br />
+                                                    <span className="font-normal normal-case tracking-normal text-slate-400">After {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                                </th>
+                                                <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                    Total Interest<br />
+                                                    <span className="font-normal normal-case tracking-normal text-slate-400">Paid over {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr className="border-b border-slate-100 bg-sky-50/30">
+                                                <td className="px-3 py-3">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="w-1.5 h-4 rounded-full bg-[#03a9e7] shrink-0" />
+                                                        <span className="font-bold text-[#052d4a]">{ta}</span>
+                                                        <span className="text-xs text-slate-400 ml-0.5">yrs</span>
+                                                        <span className="text-[10px] font-bold text-[#03a9e7] bg-sky-100 px-1.5 py-0.5 rounded-full ml-1">Primary</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{lv1 != null ? f(lv1) : '—'}</td>
+                                                <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{ti1 != null ? f(ti1) : '—'}</td>
+                                                <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{ol1 != null ? f(ol1) : '—'}</td>
+                                                <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{iv1 != null ? f(iv1) : '—'}</td>
+                                            </tr>
+                                            {showCompare && (
+                                                <tr className="border-b border-slate-100">
+                                                    <td className="px-3 py-3">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="w-1.5 h-4 rounded-full bg-slate-300 shrink-0" />
+                                                            <span className="font-bold text-slate-700">{tb}</span>
+                                                            <span className="text-xs text-slate-400 ml-0.5">yrs</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-3 py-3 text-right font-semibold text-slate-700">{lv2 != null ? f(lv2) : '—'}</td>
+                                                    <td className="px-3 py-3 text-right font-semibold text-slate-700">{ti2 != null ? f(ti2) : '—'}</td>
+                                                    <td className="px-3 py-3 text-right font-semibold text-slate-700">{ol2 != null ? f(ol2) : '—'}</td>
+                                                    <td className="px-3 py-3 text-right font-semibold text-slate-700">{iv2 != null ? f(iv2) : '—'}</td>
+                                                </tr>
+                                            )}
+                                            {showCompare && lv1 != null && lv2 != null && (
+                                                <tr className="bg-slate-50/60 border-t-2 border-slate-200">
+                                                    <td className="px-3 py-2.5"><span className="text-xs font-black text-slate-500 uppercase tracking-wider">Difference</span></td>
+                                                    {diffCols.map((col, idx) => (
+                                                        <td key={idx} className="px-3 py-2.5 text-right">
+                                                            {col.v1 != null && col.v2 != null ? (() => {
+                                                                const diff = col.v2 - col.v1
+                                                                return (
+                                                                    <span className={`font-bold ${dc(diff)}`}>
+                                                                        {ds(diff)}{f(Math.abs(diff)).slice(1)}{col.sfx && <span className="text-[11px] font-medium">{col.sfx}</span>}
+                                                                    </span>
+                                                                )
+                                                            })() : <span className="text-slate-300 text-xs">—</span>}
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
                                 </div>
-                                <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100`}>
-                                    <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
-                                    <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
-                                        {lv1 != null ? money2(lv1) : <span className="text-slate-300">—</span>}
-                                    </div>
-                                    {showCompare && (
-                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                            {lv1 != null && lv2 != null ? (
-                                                <>{money2(lv2)}<span className={`ml-1.5 text-[11px] font-bold ${lv2 > lv1 ? 'text-red-500' : 'text-emerald-600'}`}>{lv2 > lv1 ? '+' : ''}{money2(lv2 - lv1)}</span></>
-                                            ) : <span className="text-slate-300">—</span>}
-                                        </div>
-                                    )}
-                                </div>
-                                <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                                    <div className="px-3 py-2.5 text-slate-600 text-sm">
-                                        {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
-                                    </div>
-                                    <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
-                                        {iv1 != null ? money2(iv1) : <span className="text-slate-300">—</span>}
-                                    </div>
-                                    {showCompare && (
-                                        <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                            {iv1 != null && iv2 != null ? (
-                                                <>{money2(iv2)}<span className={`ml-1.5 text-[11px] font-bold ${iv2 > iv1 ? 'text-red-500' : 'text-emerald-600'}`}>{iv2 > iv1 ? '+' : ''}{money2(iv2 - iv1)}</span></>
-                                            ) : <span className="text-slate-300">—</span>}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )
+                            )
+                        }
 
                         const renderAmortTables = (rows1: ReturnType<typeof computeAmortization>, rows2: ReturnType<typeof computeAmortization>, ta: number, tb: number) => (
                             <>
@@ -1373,7 +1503,7 @@ export default function RefinancingWorkflowPanel({
                                                         )}
                                                     </div>
                                                 </div>
-                                                {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2)}
+                                                {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2, homeAmort1, homeAmort2)}
                                                 {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2)}
                                             </div>
                                         </div>
@@ -1434,7 +1564,7 @@ export default function RefinancingWorkflowPanel({
                                                         )}
                                                     </div>
                                                 </div>
-                                                {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2)}
+                                                {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2, equityAmort1, equityAmort2)}
                                                 {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
                                             </div>
                                         </div>
@@ -1494,7 +1624,7 @@ export default function RefinancingWorkflowPanel({
                                         </div>
 
                                         {/* Comparison table */}
-                                        {renderComparisonTable(m1, m2, i1, i2, t1, t2)}
+                                        {renderComparisonTable(m1, m2, i1, i2, t1, t2, singleAmort1, singleAmort2)}
 
                                         {/* Year-by-year breakdown — both tenures */}
                                         {renderAmortTables(singleAmort1, singleAmort2, t1, t2)}
@@ -1543,6 +1673,11 @@ export default function RefinancingWorkflowPanel({
                         onSetFollowUp={onSetFollowUp}
                         onPresent={() => setPresentationOpen(true)}
                         onOpenProposal={() => setProposalOpen(true)}
+                        clientEmail={clientEmail}
+                        onSendReport={handleSendReport}
+                        sendingReport={sendingReport}
+                        reportSent={reportSent}
+                        reportError={reportError}
                     />
                 </>
             ) : (
@@ -1690,11 +1825,17 @@ interface NextStepProps {
     onSetFollowUp?: (date: string) => void
     onPresent: () => void
     onOpenProposal: () => void
+    clientEmail?: string
+    onSendReport: () => void
+    sendingReport: boolean
+    reportSent: boolean
+    reportError: string | null
 }
 
 function NextStepCard({
     embedded, currentStage, suggestedStage, onStageAdvance,
     actions, actionsDone, onToggleAction, followUpDate, onSetFollowUp, onPresent, onOpenProposal,
+    clientEmail, onSendReport, sendingReport, reportSent, reportError,
 }: NextStepProps) {
     const [follow, setFollow] = useState(followUpDate ?? '')
     return (
@@ -1711,6 +1852,22 @@ function NextStepCard({
                     className="text-sm px-4 py-2 rounded-lg border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 flex items-center gap-2">
                     <MessageSquare size={15} /> Chat summary
                 </button>
+                <button
+                    type="button"
+                    onClick={onSendReport}
+                    disabled={!clientEmail || sendingReport}
+                    title={!clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
+                    className={`text-sm px-4 py-2 rounded-lg border font-semibold flex items-center gap-2 transition-colors ${
+                        reportSent
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : !clientEmail
+                                ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-white'
+                                : 'border-slate-200 text-slate-600 hover:bg-slate-50 bg-white'
+                    }`}
+                >
+                    <Mail size={15} />
+                    {sendingReport ? 'Sending…' : reportSent ? 'Sent!' : 'Email to client'}
+                </button>
                 {embedded && suggestedStage && onStageAdvance && (
                     <button type="button" onClick={() => onStageAdvance(suggestedStage)}
                         className="text-sm px-4 py-2 rounded-lg border border-[#03a9e7] text-[#03a9e7] font-semibold hover:bg-sky-50 flex items-center gap-2">
@@ -1718,6 +1875,9 @@ function NextStepCard({
                     </button>
                 )}
             </div>
+            {reportError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
+            )}
             {embedded && currentStage && (
                 <p className="text-[11px] text-slate-400">Current stage: <span className="font-medium text-slate-600">{currentStage}</span></p>
             )}

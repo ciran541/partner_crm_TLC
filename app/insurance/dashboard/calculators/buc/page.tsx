@@ -110,18 +110,16 @@ export default function BUCPage() {
     const [loanAmount,    setLoanAmount]    = useState('750,000')
     const [cpfAmount,     setCpfAmount]     = useState('')
     const [tenure,        setTenure]        = useState('30')
-    const [interest,      setInterest]      = useState('4.00')
+    const [rateType,      setRateType]      = useState<'fixed' | 'floating'>('floating')
+    const [rateRef,       setRateRef]       = useState<'3M SORA' | '1M SORA'>('3M SORA')
+    const [spread,        setSpread]        = useState('0.20')
+    const [fixedRate,     setFixedRate]     = useState('')
     const [sora,          setSora]          = useState<SoraRates | null>(null)
 
     useEffect(() => {
         fetch('/api/insurance/rates')
             .then(r => r.json())
-            .then(d => {
-                if (d.sora?.comp_sora_3m) {
-                    setSora(d.sora)
-                    setInterest((d.sora.comp_sora_3m + 0.28).toFixed(2))
-                }
-            })
+            .then(d => { if (d.sora) setSora(d.sora) })
             .catch(() => {})
     }, [])
 
@@ -129,8 +127,14 @@ export default function BUCPage() {
     const loan  = parseFloat(loanAmount.replace(/,/g, ''))   || 0
     const cpf   = parseFloat(cpfAmount.replace(/,/g, ''))    || 0
     const ten   = parseInt(tenure)  || 0
-    const rate  = parseFloat(interest) || 0
     const cash  = price - cpf - loan
+
+    const comp3m = sora?.comp_sora_3m ?? null
+    const comp1m = sora?.comp_sora_1m ?? null
+    const soraValue = rateRef === '3M SORA' ? comp3m : comp1m
+    const rate = rateType === 'fixed'
+        ? (parseFloat(fixedRate) || 0)
+        : soraValue != null ? +(soraValue + (parseFloat(spread) || 0)).toFixed(4) : 0
 
     // Validation
     const priceErr = price > 0 && price < 100000
@@ -143,13 +147,14 @@ export default function BUCPage() {
     const cpfErr   = cpf > 0 && price > 0 && loan > 0 && (cpf + loan) > 0.95 * price
         ? `CPF + Loan cannot exceed 95% of purchase price ($${fmt(0.95 * price)})` : null
     const tenErr   = ten > 0 && (ten < 5 || ten > 35) ? 'Tenure must be 5–35 years' : null
-    const rateErr  = rate > 0 && (rate < 0.1 || rate > 10) ? 'Interest rate must be 0.1%–10%' : null
+    const rateErr  = rateType === 'fixed' && rate > 0 && (rate < 0.1 || rate > 10) ? 'Interest rate must be 0.1%–10%' : null
     const cashErr  = price > 0 && (loan > 0 || cpf > 0) && cash < 0.05 * price
         ? `Minimum 5% cash required ($${fmt(0.05 * price)})` : null
 
+    const rateReady = rateType === 'fixed' ? rate >= 0.1 && rate <= 10 : soraValue != null && rate >= 0.01
     const canCompute =
         price >= 100000 && loan >= 100000 && ten >= 5 && ten <= 35 &&
-        rate >= 0.1 && rate <= 10 &&
+        rateReady &&
         !priceErr && !loanErr && !cpfErr && !tenErr && !rateErr && !cashErr
 
     const result = useMemo(
@@ -158,7 +163,6 @@ export default function BUCPage() {
     )
 
     const finalEMI = result?.milestones.filter(m => m.emi != null).at(-1)?.emi ?? null
-    const comp3m   = sora?.comp_sora_3m
 
     return (
         <div className="max-w-5xl mx-auto space-y-6">
@@ -187,8 +191,30 @@ export default function BUCPage() {
 
                 {/* Inputs */}
                 <div className="lg:col-span-2 card overflow-hidden">
-                    <div className="px-6 py-4 border-b border-slate-100">
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4 flex-wrap">
                         <h3 className="section-label mb-0">Property Details</h3>
+                        {(comp3m != null || comp1m != null) && (
+                            <div className="flex items-center gap-3">
+                                {comp3m != null && (
+                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+                                        <div>
+                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">3M SORA</p>
+                                            <p className="text-base font-black text-emerald-700 leading-none">{comp3m.toFixed(4)}%</p>
+                                        </div>
+                                    </div>
+                                )}
+                                {comp1m != null && (
+                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                                        <div>
+                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">1M SORA</p>
+                                            <p className="text-base font-black text-emerald-700 leading-none">{comp1m.toFixed(4)}%</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                     <div className="p-6 space-y-5">
 
@@ -277,22 +303,70 @@ export default function BUCPage() {
                             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                                 Interest Rate (% p.a.)
                             </label>
-                            <div className="relative max-w-xs">
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    value={interest}
-                                    onChange={e => setInterest(e.target.value)}
-                                    className={`${inp} pr-7`}
-                                    placeholder="4.00"
-                                />
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">%</span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                {/* Fixed / Floating toggle */}
+                                <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                                    {(['fixed', 'floating'] as const).map(t => (
+                                        <button
+                                            key={t}
+                                            type="button"
+                                            onClick={() => setRateType(t)}
+                                            className={`px-3 py-1.5 font-semibold capitalize transition-colors ${
+                                                rateType === t ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            {t}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {rateType === 'floating' ? (
+                                    <>
+                                        {/* 3M / 1M SORA toggle */}
+                                        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
+                                            {(['3M SORA', '1M SORA'] as const).map(ref => (
+                                                <button
+                                                    key={ref}
+                                                    type="button"
+                                                    onClick={() => setRateRef(ref)}
+                                                    className={`px-3 py-1.5 font-semibold transition-colors ${
+                                                        rateRef === ref ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                                                    }`}
+                                                >
+                                                    {ref}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <span className="text-xs font-medium text-slate-400">+</span>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={spread}
+                                            onChange={e => setSpread(e.target.value)}
+                                            placeholder="0.20"
+                                            className={`${inp} w-24`}
+                                        />
+                                        <span className="text-xs font-medium text-slate-400">%</span>
+                                        {soraValue != null && (
+                                            <span className="text-xs text-slate-400">
+                                                = {rate.toFixed(4)}% p.a.
+                                            </span>
+                                        )}
+                                    </>
+                                ) : (
+                                    <>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={fixedRate}
+                                            onChange={e => setFixedRate(e.target.value)}
+                                            placeholder="2.00"
+                                            className={`${inp} w-32`}
+                                        />
+                                        <span className="text-xs font-medium text-slate-400">%</span>
+                                    </>
+                                )}
                             </div>
-                            {comp3m != null && (
-                                <p className="text-xs text-slate-400 mt-1.5">
-                                    Live 3M SORA: {comp3m.toFixed(4)}% · Pre-filled at SORA + 0.28%
-                                </p>
-                            )}
                             {rateErr && <p className="text-xs text-red-500 mt-1">{rateErr}</p>}
                         </div>
 

@@ -10,6 +10,7 @@ import PurchaseWorkflowPanel from '@/components/insurance/workflow/PurchaseWorkf
 import DecouplingWorkflowPanel from '@/components/insurance/workflow/DecouplingWorkflow'
 import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
 import RefiOverview from '@/components/insurance/workflow/RefiOverview'
+import DecoupleOverview from '@/components/insurance/workflow/DecoupleOverview'
 import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
 import {
     Save, Edit2, X, User, Home, Pencil,
@@ -473,8 +474,8 @@ export default function CaseDetailPage() {
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
                     ) : caseData.case_type === 'Decouple' ? (
-                        <RefiOverview
-                            workflow={{}}
+                        <DecoupleOverview
+                            workflow={workflowData as DecoupleWorkflow}
                             stage={caseData.stage}
                             followUpDate={caseData.follow_up_date}
                             onOpenWorkflow={() => setActiveTab('workflow')}
@@ -519,6 +520,8 @@ export default function CaseDetailPage() {
                         data={workflowData as RefinancingWorkflowData}
                         onChange={handleWorkflowChange}
                         clientName={caseData.client_name}
+                        clientEmail={caseData.client_email}
+                        caseId={caseId}
                         embedded
                         saving={workflowSaving}
                         saved={workflowSaved}
@@ -540,6 +543,8 @@ export default function CaseDetailPage() {
                         data={workflowData as PurchaseWorkflow}
                         onChange={handleWorkflowChange}
                         clientName={caseData.client_name}
+                        clientEmail={caseData.client_email}
+                        caseId={caseId}
                         embedded
                         saving={workflowSaving}
                         saved={workflowSaved}
@@ -557,6 +562,8 @@ export default function CaseDetailPage() {
                         data={workflowData as DecoupleWorkflow}
                         onChange={handleWorkflowChange}
                         clientName={caseData.client_name}
+                        clientEmail={caseData.client_email}
+                        caseId={caseId}
                         embedded
                         saving={workflowSaving}
                         saved={workflowSaved}

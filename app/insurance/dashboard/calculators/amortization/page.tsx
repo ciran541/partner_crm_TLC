@@ -519,8 +519,8 @@ export default function AmortizationPage() {
                                                 <span className="text-slate-400 font-normal normal-case tracking-normal">After {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
                                             </th>
                                             <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                                                Total Interest Paid<br />
-                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Over {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
+                                                Total Interest<br />
+                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Paid over {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
                                             </th>
                                         </>)}
                                     </tr>

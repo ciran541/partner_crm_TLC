@@ -41,7 +41,7 @@ export interface RefiBorrower {
 }
 
 export interface RefinancingWorkflow {
-    property_type?: 'hdb' | 'completed_condo_ec' | 'incompleted_condo_ec' | 'landed'
+    property_type?: 'hdb' | 'landed' | 'completed_condo' | 'incomplete_condo' | 'completed_ec_mop' | 'completed_ec_no_mop' | 'incomplete_ec' | 'completed_condo_ec' | 'incompleted_condo_ec'
     outstanding_disbursed?: number
     outstanding_undisbursed?: number                // only for Incompleted Condo/EC (no CSC)
     current_bank?: string

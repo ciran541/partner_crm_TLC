@@ -24,13 +24,15 @@ import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save,
     ArrowRight, ExternalLink, Users, Building2, Percent,
-    Wallet, CalendarRange, Lock, Plus, Trash2,
+    Wallet, CalendarRange, Lock, Plus, Trash2, Mail,
 } from 'lucide-react'
 
 interface Props {
     data: DecoupleWorkflow
     onChange: (updated: DecoupleWorkflow) => void
     clientName?: string
+    clientEmail?: string
+    caseId?: string
     embedded?: boolean
     saving?: boolean
     saved?: boolean
@@ -51,9 +53,30 @@ const num = (v: string | number) => {
 }
 
 export default function DecouplingWorkflowPanel({
-    data, onChange, clientName, embedded, saving, saved, hasClientName, onContinue,
+    data, onChange, clientName, clientEmail, caseId, embedded, saving, saved, hasClientName, onContinue,
 }: Props) {
     const update = (patch: Partial<DecoupleWorkflow>) => onChange({ ...data, ...patch })
+    const [sendingReport, setSendingReport] = React.useState(false)
+    const [reportSent, setReportSent] = React.useState(false)
+    const [reportError, setReportError] = React.useState<string | null>(null)
+
+    const handleSendReport = async () => {
+        if (!caseId) return
+        setSendingReport(true)
+        setReportError(null)
+        try {
+            const res = await fetch(`/api/insurance/cases/${caseId}/send-report`, { method: 'POST' })
+            const body = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(body.error ?? 'Failed to send report')
+            setReportSent(true)
+            setTimeout(() => setReportSent(false), 4000)
+        } catch (e) {
+            setReportError(e instanceof Error ? e.message : 'Failed to send report')
+            setTimeout(() => setReportError(null), 5000)
+        } finally {
+            setSendingReport(false)
+        }
+    }
     const [customSubsidy, setCustomSubsidy] = useState(
         data.subsidy_return_amount != null && !SUBSIDY_PRESETS.includes(String(data.subsidy_return_amount)),
     )
@@ -317,7 +340,7 @@ export default function DecouplingWorkflowPanel({
                                 <FieldInput commas prefix="$" value={data.outstanding_home_loan ?? ''}
                                     onChange={v => update({ outstanding_home_loan: num(v) })} />
                             </Question>
-                            <Question label="Outstanding Equity Loan">
+                            <Question label="Refinancing Outstanding Equity Loan Liability">
                                 <FieldInput commas prefix="$" value={data.outstanding_equity_loan ?? ''}
                                     onChange={v => update({ outstanding_equity_loan: num(v) })} />
                             </Question>
@@ -379,8 +402,23 @@ export default function DecouplingWorkflowPanel({
                                 </Question>
                             )}
                             <Question label="Lock-in End Date">
-                                <FieldInput type="date" value={data.lockin_end_date ?? ''}
-                                    onChange={v => update({ lockin_end_date: v })} />
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-1">
+                                        <FieldInput type="date" value={data.lockin_end_date ?? ''}
+                                            onChange={v => update({ lockin_end_date: v })} />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => update({ lockin_end_date: undefined })}
+                                        className={`shrink-0 px-2.5 py-2 text-[11px] font-bold rounded-lg border transition-colors ${
+                                            !data.lockin_end_date
+                                                ? 'bg-slate-700 border-slate-700 text-white'
+                                                : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400 hover:text-slate-700'
+                                        }`}
+                                    >
+                                        N/A
+                                    </button>
+                                </div>
                             </Question>
                             <Question label="Current Interest Rate (% p.a.)">
                                 <FieldInput type="number" suffix="%" value={data.current_rate ?? ''}
@@ -655,7 +693,7 @@ export default function DecouplingWorkflowPanel({
                                 <Question label="Age">
                                     <FieldInput type="number" value={b.age ?? ''}
                                         onChange={v => updateBorrower({ age: num(v) })}
-                                        onBlur={() => { if (b.age != null && b.age > 0 && b.age < 21) updateBorrower({ age: 21 }) }} />
+                                        onBlur={() => { if (b.age != null && b.age > 0) { if (b.age < 21) updateBorrower({ age: 21 }); else if (b.age > 75) updateBorrower({ age: 75 }) } }} />
                                 </Question>
                                 <Question label="Monthly Commitments (excl. property)">
                                     <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="car, credit cards…"
@@ -734,7 +772,7 @@ export default function DecouplingWorkflowPanel({
                             {(data.outstanding_equity_loan ?? 0) > 0 && (
                                 <>
                                     <LoanBreakdownCard
-                                        title="Outstanding Equity Loan"
+                                        title="Refinancing Outstanding Equity Loan Liability"
                                         subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of equity loan`}
                                         amount={(data.outstanding_equity_loan ?? 0) * computation.buyerShareFrac}
                                         tenureMin={MIN_TENURE}
@@ -759,7 +797,7 @@ export default function DecouplingWorkflowPanel({
                     {scenario === 'S2' && (
                         <>
                             <LoanBreakdownCard
-                                title="New Purchase Loan (75%)"
+                                title="New Purchase Loan"
                                 amount={computation.bankLoan75}
                                 tenureMin={computation.purchaseTenureMin}
                                 tenureMax={computation.purchaseTenureMax}
@@ -800,7 +838,7 @@ export default function DecouplingWorkflowPanel({
                             {(data.outstanding_equity_loan ?? 0) > 0 && (
                                 <>
                                     <LoanBreakdownCard
-                                        title="Outstanding Equity Loan"
+                                        title="Refinancing Outstanding Equity Loan Liability"
                                         subtitle={`Buyer's ${Math.round(computation.buyerShareFrac * 100)}% share of equity loan`}
                                         amount={(data.outstanding_equity_loan ?? 0) * computation.buyerShareFrac}
                                         tenureMin={MIN_TENURE}
@@ -820,7 +858,7 @@ export default function DecouplingWorkflowPanel({
                             )}
 
                             <LoanBreakdownCard
-                                title="New Purchase Loan (75%)"
+                                title="New Purchase Loan"
                                 amount={computation.bankLoan75}
                                 tenureMin={computation.purchaseTenureMin}
                                 tenureMax={computation.purchaseTenureMax}
@@ -989,8 +1027,18 @@ export default function DecouplingWorkflowPanel({
 
             {/* ── 12. MONTHLY INSTALMENT ── */}
             {computation.ready && scenario !== null && scenario !== 'S4' && pkgLoan > 0 && (() => {
-                const equityAmt = data.equity_loan_amount ?? 0
-                const isMix = equityAmt > 0
+                // Compute total loan amounts the buyer is responsible for post-decoupling
+                const homeLoanBuyerShare = (data.outstanding_home_loan ?? 0) * computation.buyerShareFrac
+                const equityLoanBuyerShare = (data.outstanding_equity_loan ?? 0) * computation.buyerShareFrac
+                const newEquityAmt = data.equity_loan_amount ?? 0
+                // S1: refi existing home loan only; S2: new purchase loan only (fully paid); S3: both combined
+                const homeLoanForAmort =
+                    scenario === 'S1' ? homeLoanBuyerShare
+                    : scenario === 'S2' ? computation.bankLoan75
+                    : homeLoanBuyerShare + computation.bankLoan75
+                // Equity: buyer's share of existing EL + any new equity loan requested
+                const equityAmt = equityLoanBuyerShare + newEquityAmt
+                const isMix = newEquityAmt > 0
 
                 // Home/refi loan tenure range
                 const homeClamp = (v: number) => Math.min(Math.max(v, pkgTenureMin), pkgTenure)
@@ -1009,9 +1057,9 @@ export default function DecouplingWorkflowPanel({
                 const t1 = homeT1
                 const t2 = homeT2
 
-                // Amortization rows
-                const homeAmort1 = computeAmortization(pkgLoan, homeT1, activeSchedule, soraForAmort)
-                const homeAmort2 = computeAmortization(pkgLoan, homeT2, activeSchedule, soraForAmort)
+                // Amortization rows — use total amounts so installments reflect the buyer's full obligation
+                const homeAmort1 = computeAmortization(homeLoanForAmort, homeT1, activeSchedule, soraForAmort)
+                const homeAmort2 = computeAmortization(homeLoanForAmort, homeT2, activeSchedule, soraForAmort)
                 const equityAmort1 = equityAmt > 0 ? computeAmortization(equityAmt, equityT1, activeSchedule, soraForAmort) : []
                 const equityAmort2 = equityAmt > 0 ? computeAmortization(equityAmt, equityT2, activeSchedule, soraForAmort) : []
 
@@ -1071,43 +1119,96 @@ export default function DecouplingWorkflowPanel({
                     lv1: number | null, lv2: number | null,
                     iv1: number | null, iv2: number | null,
                     ta: number, tb: number,
-                ) => (
-                    <div className="rounded-xl border border-slate-200 overflow-hidden">
-                        <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100 bg-slate-50/60`}>
-                            <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Option</div>
-                            <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 1 ({ta} yrs)</div>
-                            {showCompare && <div className="px-3 py-2 text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-l border-slate-100 text-right">Tenure 2 ({tb} yrs)</div>}
+                    rows1: ReturnType<typeof computeAmortization>,
+                    rows2: ReturnType<typeof computeAmortization>,
+                ) => {
+                    const lockin = breakdownYears
+                    const ti1 = lv1 != null ? lv1 * lockin * 12 : null
+                    const ti2 = lv2 != null ? lv2 * lockin * 12 : null
+                    const ol1 = rows1.find(r => r.year === lockin)?.balance ?? null
+                    const ol2 = rows2.find(r => r.year === lockin)?.balance ?? null
+                    const dc = (d: number) => d > 0 ? 'text-red-500' : d < 0 ? 'text-emerald-600' : 'text-slate-400'
+                    const ds = (d: number) => d >= 0 ? '+' : '−'
+                    const f = fmt2
+                    const diffCols: { v1: number | null; v2: number | null; sfx: string }[] = [
+                        { v1: lv1, v2: lv2, sfx: ' /mth' },
+                        { v1: ti1, v2: ti2, sfx: '' },
+                        { v1: ol1, v2: ol2, sfx: '' },
+                        { v1: iv1, v2: iv2, sfx: '' },
+                    ]
+                    return (
+                        <div className="rounded-xl border border-slate-200 overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="bg-slate-50 border-b border-slate-200">
+                                        <th className="px-3 py-2.5 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Tenure (Yrs)</th>
+                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Monthly Instalment</th>
+                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                            Total Instalment<br />
+                                            <span className="font-normal normal-case tracking-normal text-slate-400">Paid over {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                        </th>
+                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                            Outstanding Loan<br />
+                                            <span className="font-normal normal-case tracking-normal text-slate-400">After {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                        </th>
+                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                            Total Interest<br />
+                                            <span className="font-normal normal-case tracking-normal text-slate-400">Paid over {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr className="border-b border-slate-100 bg-sky-50/30">
+                                        <td className="px-3 py-3">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="w-1.5 h-4 rounded-full bg-[#03a9e7] shrink-0" />
+                                                <span className="font-bold text-[#052d4a]">{ta}</span>
+                                                <span className="text-xs text-slate-400 ml-0.5">yrs</span>
+                                                <span className="text-[10px] font-bold text-[#03a9e7] bg-sky-100 px-1.5 py-0.5 rounded-full ml-1">Primary</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{lv1 != null ? f(lv1) : '—'}</td>
+                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{ti1 != null ? f(ti1) : '—'}</td>
+                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{ol1 != null ? f(ol1) : '—'}</td>
+                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{iv1 != null ? f(iv1) : '—'}</td>
+                                    </tr>
+                                    {showCompare && (
+                                        <tr className="border-b border-slate-100">
+                                            <td className="px-3 py-3">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="w-1.5 h-4 rounded-full bg-slate-300 shrink-0" />
+                                                    <span className="font-bold text-slate-700">{tb}</span>
+                                                    <span className="text-xs text-slate-400 ml-0.5">yrs</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{lv2 != null ? f(lv2) : '—'}</td>
+                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{ti2 != null ? f(ti2) : '—'}</td>
+                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{ol2 != null ? f(ol2) : '—'}</td>
+                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{iv2 != null ? f(iv2) : '—'}</td>
+                                        </tr>
+                                    )}
+                                    {showCompare && lv1 != null && lv2 != null && (
+                                        <tr className="bg-slate-50/60 border-t-2 border-slate-200">
+                                            <td className="px-3 py-2.5"><span className="text-xs font-black text-slate-500 uppercase tracking-wider">Difference</span></td>
+                                            {diffCols.map((col, idx) => (
+                                                <td key={idx} className="px-3 py-2.5 text-right">
+                                                    {col.v1 != null && col.v2 != null ? (() => {
+                                                        const diff = col.v2 - col.v1
+                                                        return (
+                                                            <span className={`font-bold ${dc(diff)}`}>
+                                                                {ds(diff)}{f(Math.abs(diff)).slice(1)}{col.sfx && <span className="text-[11px] font-medium">{col.sfx}</span>}
+                                                            </span>
+                                                        )
+                                                    })() : <span className="text-slate-300 text-xs">—</span>}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
                         </div>
-                        <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100`}>
-                            <div className="px-3 py-2.5 text-slate-600 text-sm">Monthly Instalment</div>
-                            <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100 text-sm">
-                                {lv1 != null ? money(lv1) : <span className="text-slate-300">—</span>}
-                            </div>
-                            {showCompare && (
-                                <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                    {lv1 != null && lv2 != null ? (
-                                        <>{money(lv2)}<span className={`ml-1.5 text-[11px] font-bold ${lv2 > lv1 ? 'text-red-500' : 'text-emerald-600'}`}>{lv2 > lv1 ? '+' : ''}{money(lv2 - lv1)}</span></>
-                                    ) : <span className="text-slate-300">—</span>}
-                                </div>
-                            )}
-                        </div>
-                        <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                            <div className="px-3 py-2.5 text-slate-600 text-sm">
-                                {effectiveLockin != null ? `Interest (${effectiveLockin}-yr lock-in)` : 'Lock-in Interest'}
-                            </div>
-                            <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100 text-sm">
-                                {iv1 != null ? money(iv1) : <span className="text-slate-300">—</span>}
-                            </div>
-                            {showCompare && (
-                                <div className="px-3 py-2.5 text-right font-semibold border-l border-slate-100 text-sm">
-                                    {iv1 != null && iv2 != null ? (
-                                        <>{money(iv2)}<span className={`ml-1.5 text-[11px] font-bold ${iv2 > iv1 ? 'text-red-500' : 'text-emerald-600'}`}>{iv2 > iv1 ? '+' : ''}{money(iv2 - iv1)}</span></>
-                                    ) : <span className="text-slate-300">—</span>}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )
+                    )
+                }
 
                 const renderAmortTables = (rows1: ReturnType<typeof computeAmortization>, rows2: ReturnType<typeof computeAmortization>, ta: number, tb: number) => (
                     <>
@@ -1297,7 +1398,7 @@ export default function DecouplingWorkflowPanel({
                                 <div className="rounded-xl border border-sky-200 overflow-hidden">
                                     <div className="bg-sky-50 border-b border-sky-100 px-4 py-3">
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Home Loan Tenure Planner</p>
-                                        <p className="text-lg font-black text-[#052d4a]">Home Loan — {money(pkgLoan)}</p>
+                                        <p className="text-lg font-black text-[#052d4a]">Home Loan — {money(homeLoanForAmort)}</p>
                                     </div>
                                     <div className="p-4 space-y-3">
                                         {homeLockInCards.length > 0 && (
@@ -1350,7 +1451,7 @@ export default function DecouplingWorkflowPanel({
                                                 )}
                                             </div>
                                         </div>
-                                        {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2)}
+                                        {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, homeT1, homeT2, homeAmort1, homeAmort2)}
                                         {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2)}
                                     </div>
                                 </div>
@@ -1411,7 +1512,7 @@ export default function DecouplingWorkflowPanel({
                                                 )}
                                             </div>
                                         </div>
-                                        {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2)}
+                                        {renderComparisonTable(equityM1, equityM2, equityI1, equityI2, equityT1, equityT2, equityAmort1, equityAmort2)}
                                         {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
                                     </div>
                                 </div>
@@ -1467,7 +1568,7 @@ export default function DecouplingWorkflowPanel({
                                         )}
                                     </div>
                                 </div>
-                                {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, t1, t2)}
+                                {renderComparisonTable(homeM1, homeM2, homeI1, homeI2, t1, t2, homeAmort1, homeAmort2)}
                                 {renderAmortTables(homeAmort1, homeAmort2, t1, t2)}
                             </>
                         )}
@@ -1492,6 +1593,34 @@ export default function DecouplingWorkflowPanel({
                 All figures are estimates for discussion purposes only.
                 Stamp duties follow prevailing IRAS rates — verify before committing.
             </p>
+
+            {/* Email to client */}
+            <div className="rounded-xl border-2 border-[#052d4a]/15 bg-gradient-to-b from-slate-50 to-white p-5 space-y-3">
+                <p className="text-sm font-bold text-[#052d4a] flex items-center gap-2">
+                    <ArrowRight size={16} className="text-[#03a9e7]" /> Next step
+                </p>
+                <div className="flex flex-wrap gap-2.5">
+                    <button
+                        type="button"
+                        onClick={handleSendReport}
+                        disabled={!clientEmail || sendingReport}
+                        title={!clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
+                        className={`text-sm px-4 py-2 rounded-lg border font-semibold flex items-center gap-2 transition-colors ${
+                            reportSent
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : !clientEmail
+                                    ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-white'
+                                    : 'border-slate-200 text-slate-600 hover:bg-slate-50 bg-white'
+                        }`}
+                    >
+                        <Mail size={15} />
+                        {sendingReport ? 'Sending…' : reportSent ? 'Sent!' : 'Email to client'}
+                    </button>
+                </div>
+                {reportError && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
+                )}
+            </div>
 
             {/* Hand-off */}
             {embedded && onContinue && (

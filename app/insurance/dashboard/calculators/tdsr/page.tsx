@@ -189,12 +189,15 @@ function BorrowerCard({ index, data, onChange }: {
                         onChange={e => onChange({ ...data, age: e.target.value })}
                         onBlur={e => {
                             const v = parseInt(e.target.value)
-                            if (!isNaN(v) && v > 0 && v < 21) onChange({ ...data, age: '21' })
+                            if (!isNaN(v) && v > 0) {
+                                if (v < 21) onChange({ ...data, age: '21' })
+                                else if (v > 75) onChange({ ...data, age: '75' })
+                            }
                         }}
                         className={inp}
                         placeholder="35"
                         min={21}
-                        max={80}
+                        max={75}
                     />
                 </div>
 
@@ -221,7 +224,7 @@ function BorrowerCard({ index, data, onChange }: {
 // ── Loan option card ──────────────────────────────────────────────────────────
 
 function LoanOptionCard({
-    label, maxAge, maxTen, loan, tenure, onTenureChange, bindingLabel, payment, na,
+    label, maxAge, maxTen, loan, tenure, onTenureChange, bindingLabel, payment, na, cashNote,
 }: {
     label: string
     maxAge: number
@@ -232,6 +235,7 @@ function LoanOptionCard({
     bindingLabel: string
     payment: number
     na: boolean
+    cashNote: string
 }) {
     return (
         <div className={`card overflow-hidden transition-opacity ${na ? 'opacity-40 pointer-events-none' : ''}`}>
@@ -239,6 +243,7 @@ function LoanOptionCard({
                 <div>
                     <p className="text-xs font-black text-[#052d4a] uppercase tracking-wider">{label}</p>
                     <p className="text-[11px] text-slate-400 mt-0.5">Max age {maxAge} · Up to {maxTen} yrs</p>
+                    <p className="text-[11px] font-semibold text-amber-600 mt-0.5">{cashNote}</p>
                 </div>
                 {na && (
                     <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
@@ -494,6 +499,7 @@ export default function TDSRPage() {
                             bindingLabel={bindingLabel}
                             payment={binding}
                             na={maxTen1 <= 0}
+                            cashNote="Min 5% Cash Downpayment"
                         />
                         <LoanOptionCard
                             label="Option 2"
@@ -505,6 +511,7 @@ export default function TDSRPage() {
                             bindingLabel={bindingLabel}
                             payment={binding}
                             na={maxTen2 <= 0}
+                            cashNote="Min 10% Cash Downpayment"
                         />
                     </div>
                 </div>

@@ -19,28 +19,47 @@ import type { RefinancingWorkflow } from '@/lib/types/workflow'
 
 export type RefiPropertyType =
     | 'hdb'
-    | 'completed_condo_ec'      // Completed Condo or EC (CSC obtained)
-    | 'incompleted_condo_ec'    // Incompleted Condo or EC (No CSC) — BUC, has undisbursed
     | 'landed'
+    | 'completed_condo'          // Completed Condo (CSC obtained)
+    | 'incomplete_condo'         // Incomplete Condo (No CSC) — BUC
+    | 'completed_ec_mop'         // Completed EC (CSC & MOP obtained)
+    | 'completed_ec_no_mop'      // Completed EC (CSC obtained / MOP not obtained)
+    | 'incomplete_ec'            // Incomplete EC (No CSC) — BUC, MSR applies
+    // Legacy values kept for backward compatibility
+    | 'completed_condo_ec'
+    | 'incompleted_condo_ec'
 
 export interface RefiPropertyMeta {
     value: RefiPropertyType
     label: string
     isPrivate: boolean          // false only for HDB
-    buc: boolean                // building-under-construction (incompleted, no CSC)
+    buc: boolean                // building-under-construction (no CSC) — has undisbursed field
     tenureCap: number           // 30 for HDB, 35 for private
-    ratesType: 'hdb' | 'private_condo' | 'landed'   // maps to the rates engine vocabulary
+    ratesType: 'hdb' | 'private_condo' | 'landed'
+    useMsr: boolean             // MSR (30%) applies to home loan payment
+    canDecouple: boolean        // decoupling is available for this type
+    canEquityLoan: boolean      // equity loan is available for this type
 }
 
+// The 7 types shown in the UI
 export const REFI_PROPERTY_TYPES: RefiPropertyMeta[] = [
-    { value: 'hdb', label: 'HDB', isPrivate: false, buc: false, tenureCap: 30, ratesType: 'hdb' },
-    { value: 'completed_condo_ec', label: 'Completed Condo or EC (CSC obtained)', isPrivate: true, buc: false, tenureCap: 35, ratesType: 'private_condo' },
-    { value: 'incompleted_condo_ec', label: 'Incompleted Condo or EC (No CSC)', isPrivate: true, buc: true, tenureCap: 35, ratesType: 'private_condo' },
-    { value: 'landed', label: 'Landed', isPrivate: true, buc: false, tenureCap: 35, ratesType: 'landed' },
+    { value: 'hdb',                 label: 'HDB',                                               isPrivate: false, buc: false, tenureCap: 30, ratesType: 'hdb',          useMsr: true,  canDecouple: false, canEquityLoan: false },
+    { value: 'landed',              label: 'Landed',                                            isPrivate: true,  buc: false, tenureCap: 35, ratesType: 'landed',        useMsr: false, canDecouple: true,  canEquityLoan: true  },
+    { value: 'completed_condo',     label: 'Completed Condo (CSC obtained)',                    isPrivate: true,  buc: false, tenureCap: 35, ratesType: 'private_condo', useMsr: false, canDecouple: true,  canEquityLoan: true  },
+    { value: 'incomplete_condo',    label: 'Incomplete Condo (No CSC)',                         isPrivate: true,  buc: true,  tenureCap: 35, ratesType: 'private_condo', useMsr: false, canDecouple: true,  canEquityLoan: false },
+    { value: 'completed_ec_mop',    label: 'Completed EC (CSC & MOP obtained)',                 isPrivate: true,  buc: false, tenureCap: 35, ratesType: 'private_condo', useMsr: false, canDecouple: true,  canEquityLoan: true  },
+    { value: 'completed_ec_no_mop', label: 'Completed EC (CSC obtained / MOP not obtained)',    isPrivate: true,  buc: false, tenureCap: 35, ratesType: 'private_condo', useMsr: true,  canDecouple: false, canEquityLoan: false },
+    { value: 'incomplete_ec',       label: 'Incomplete EC (No CSC)',                            isPrivate: true,  buc: true,  tenureCap: 35, ratesType: 'private_condo', useMsr: true,  canDecouple: false, canEquityLoan: false },
+]
+
+// Legacy type metas kept for backward compat — not shown in the UI picker
+const REFI_LEGACY_METAS: RefiPropertyMeta[] = [
+    { value: 'completed_condo_ec',   label: 'Completed Condo or EC (CSC obtained)',  isPrivate: true, buc: false, tenureCap: 35, ratesType: 'private_condo', useMsr: false, canDecouple: true,  canEquityLoan: true  },
+    { value: 'incompleted_condo_ec', label: 'Incompleted Condo or EC (No CSC)',       isPrivate: true, buc: true,  tenureCap: 35, ratesType: 'private_condo', useMsr: false, canDecouple: true,  canEquityLoan: false },
 ]
 
 export function refiPropertyMeta(type?: RefiPropertyType | null): RefiPropertyMeta | undefined {
-    return REFI_PROPERTY_TYPES.find(p => p.value === type)
+    return [...REFI_PROPERTY_TYPES, ...REFI_LEGACY_METAS].find(p => p.value === type)
 }
 
 export function ratesPropertyType(type?: RefiPropertyType | null): 'hdb' | 'private_condo' | 'landed' | undefined {

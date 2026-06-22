@@ -35,7 +35,7 @@ import PurchasePresentation from './PurchasePresentation'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save, FileText, Wallet, XCircle,
     ArrowRight, ClipboardList, Copy, Printer, Circle, Lock, Plus, Trash2,
-    Presentation, MessageSquare, Users,
+    Presentation, MessageSquare, Users, Mail,
 } from 'lucide-react'
 
 const DEFAULT_RATE_SCHEDULE: RateScheduleEntry[] = [{ year: 1, type: 'fixed' }]
@@ -45,6 +45,8 @@ interface Props {
     data: PurchaseWorkflow
     onChange: (updated: PurchaseWorkflow) => void
     clientName?: string
+    clientEmail?: string
+    caseId?: string
     embedded?: boolean
     saving?: boolean
     saved?: boolean
@@ -62,11 +64,32 @@ const pct = (frac: number) => {
 const num = (v: string) => (v.trim() === '' ? undefined : parseFloat(v.replace(/,/g, '')))
 
 export default function PurchaseWorkflowPanel({
-    data, onChange, clientName, embedded, saving, saved, hasClientName, onContinue,
+    data, onChange, clientName, clientEmail, caseId, embedded, saving, saved, hasClientName, onContinue,
 }: Props) {
     const update = (patch: Partial<PurchaseWorkflow>) => onChange({ ...data, ...patch })
     const [proposalOpen, setProposalOpen] = useState(false)
     const [presentationOpen, setPresentationOpen] = useState(false)
+    const [sendingReport, setSendingReport] = useState(false)
+    const [reportSent, setReportSent] = useState(false)
+    const [reportError, setReportError] = useState<string | null>(null)
+
+    const handleSendReport = async () => {
+        if (!caseId) return
+        setSendingReport(true)
+        setReportError(null)
+        try {
+            const res = await fetch(`/api/insurance/cases/${caseId}/send-report`, { method: 'POST' })
+            const body = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(body.error ?? 'Failed to send report')
+            setReportSent(true)
+            setTimeout(() => setReportSent(false), 4000)
+        } catch (e) {
+            setReportError(e instanceof Error ? e.message : 'Failed to send report')
+            setTimeout(() => setReportError(null), 5000)
+        } finally {
+            setSendingReport(false)
+        }
+    }
     const [rawPrefTenure, setRawPrefTenure] = useState('')
     const [liquidityOption, setLiquidityOption] = useState<'1' | '2'>('1')
     const [preferredTenure2, setPreferredTenure2] = useState<number | undefined>()
@@ -589,7 +612,7 @@ export default function PurchaseWorkflowPanel({
                                 <Question label="Age">
                                     <FieldInput type="number" value={b.age ?? ''}
                                         onChange={v => updateBorrower(i, { age: num(v) })}
-                                        onBlur={() => { if (b.age != null && b.age > 0 && b.age < 21) updateBorrower(i, { age: 21 }) }} />
+                                        onBlur={() => { if (b.age != null && b.age > 0) { if (b.age < 21) updateBorrower(i, { age: 21 }); else if (b.age > 75) updateBorrower(i, { age: 75 }) } }} />
                                 </Question>
                                 {b.employment !== 'self_employed' && (
                                     <Question label="Monthly Basic Salary">
@@ -1008,49 +1031,94 @@ export default function PurchaseWorkflowPanel({
                                 </div>
 
                                 {/* Comparison table */}
-                                <div className="rounded-lg border border-slate-200 overflow-hidden text-sm">
-                                    <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} text-[11px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50 border-b border-slate-200`}>
-                                        <div className="px-3 py-2">Option {selectedOpt.key}</div>
-                                        <div className="px-3 py-2 text-right border-l border-slate-200">Tenure 1 ({t1} yrs)</div>
-                                        {showCompare && <div className="px-3 py-2 text-right border-l border-slate-200">Tenure 2 ({t2} yrs)</div>}
-                                    </div>
-                                    <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'} border-b border-slate-100`}>
-                                        <div className="px-3 py-2.5 text-slate-500">Monthly Instalment</div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
-                                            {m1 != null ? money(m1) : <span className="text-slate-300">—</span>}
+                                {(() => {
+                                    const lockin = lockinYears ?? 0
+                                    const f = (n: number | null) => n != null ? `$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
+                                    const ti1 = m1 != null && lockin > 0 ? m1 * lockin * 12 : null
+                                    const ti2 = m2 != null && lockin > 0 ? m2 * lockin * 12 : null
+                                    const ol1 = lockin > 0 ? (amortRows1.find(r => r.year === lockin)?.balance ?? null) : null
+                                    const ol2 = lockin > 0 ? (amortRows2.find(r => r.year === lockin)?.balance ?? null) : null
+                                    const dc = (d: number) => d > 0 ? 'text-red-500' : d < 0 ? 'text-emerald-600' : 'text-slate-400'
+                                    const ds = (d: number) => d >= 0 ? '+' : '−'
+                                    const diffCols: { v1: number | null; v2: number | null; sfx: string }[] = [
+                                        { v1: m1, v2: m2, sfx: ' /mth' },
+                                        { v1: ti1, v2: ti2, sfx: '' },
+                                        { v1: ol1, v2: ol2, sfx: '' },
+                                        { v1: i1, v2: i2, sfx: '' },
+                                    ]
+                                    return (
+                                        <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                            <table className="w-full text-sm">
+                                                <thead>
+                                                    <tr className="bg-slate-50 border-b border-slate-200">
+                                                        <th className="px-3 py-2.5 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Tenure (Yrs)</th>
+                                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Monthly Instalment</th>
+                                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                            Total Instalment<br />
+                                                            <span className="font-normal normal-case tracking-normal text-slate-400">Paid over {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                                        </th>
+                                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                            Outstanding Loan<br />
+                                                            <span className="font-normal normal-case tracking-normal text-slate-400">After {lockin} yr{lockin > 1 ? 's' : ''}</span>
+                                                        </th>
+                                                        <th className="px-3 py-2.5 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                                            Total Interest<br />
+                                                            <span className="font-normal normal-case tracking-normal text-slate-400">{isBuc ? `Pre-TOP ${lockin} yr${lockin > 1 ? 's' : ''}` : `Paid over ${lockin} yr${lockin > 1 ? 's' : ''}`}</span>
+                                                        </th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr className="border-b border-slate-100 bg-sky-50/30">
+                                                        <td className="px-3 py-3">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="w-1.5 h-4 rounded-full bg-[#03a9e7] shrink-0" />
+                                                                <span className="font-bold text-[#052d4a]">{t1}</span>
+                                                                <span className="text-xs text-slate-400 ml-0.5">yrs</span>
+                                                                <span className="text-[10px] font-bold text-[#03a9e7] bg-sky-100 px-1.5 py-0.5 rounded-full ml-1">Primary</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{m1 != null ? f(m1) : '—'}</td>
+                                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{ti1 != null ? f(ti1) : '—'}</td>
+                                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{ol1 != null ? f(ol1) : '—'}</td>
+                                                        <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{i1 != null ? f(i1) : '—'}</td>
+                                                    </tr>
+                                                    {showCompare && (
+                                                        <tr className="border-b border-slate-100">
+                                                            <td className="px-3 py-3">
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="w-1.5 h-4 rounded-full bg-slate-300 shrink-0" />
+                                                                    <span className="font-bold text-slate-700">{t2}</span>
+                                                                    <span className="text-xs text-slate-400 ml-0.5">yrs</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{m2 != null ? f(m2) : '—'}</td>
+                                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{ti2 != null ? f(ti2) : '—'}</td>
+                                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{ol2 != null ? f(ol2) : '—'}</td>
+                                                            <td className="px-3 py-3 text-right font-semibold text-slate-700">{i2 != null ? f(i2) : '—'}</td>
+                                                        </tr>
+                                                    )}
+                                                    {showCompare && m1 != null && m2 != null && (
+                                                        <tr className="bg-slate-50/60 border-t-2 border-slate-200">
+                                                            <td className="px-3 py-2.5"><span className="text-xs font-black text-slate-500 uppercase tracking-wider">Difference</span></td>
+                                                            {diffCols.map((col, idx) => (
+                                                                <td key={idx} className="px-3 py-2.5 text-right">
+                                                                    {col.v1 != null && col.v2 != null ? (() => {
+                                                                        const diff = col.v2 - col.v1
+                                                                        return (
+                                                                            <span className={`font-bold ${dc(diff)}`}>
+                                                                                {ds(diff)}{f(Math.abs(diff)).slice(1)}{col.sfx && <span className="text-[11px] font-medium">{col.sfx}</span>}
+                                                                            </span>
+                                                                        )
+                                                                    })() : <span className="text-slate-300 text-xs">—</span>}
+                                                                </td>
+                                                            ))}
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                        {showCompare && (
-                                            <div className="px-3 py-2.5 text-right font-semibold text-[#052d4a] border-l border-slate-100">
-                                                {m2 != null ? (
-                                                    <>
-                                                        {money(m2)}
-                                                        {t1 !== t2 && m1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${m2 < m1 ? 'text-emerald-600' : 'text-red-500'}`}>{m2 < m1 ? '↓' : '↑'}{money(Math.abs(m2 - m1))}</span>}
-                                                    </>
-                                                ) : <span className="text-slate-300">—</span>}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className={`grid ${showCompare ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                                        <div className="px-3 py-2.5 text-slate-500">
-                                            {lockinYears != null
-                                                ? isBuc ? `Interest (${lockinYears} yrs to TOP)` : `Interest (${lockinYears}-yr lock-in)`
-                                                : 'Lock-in Interest'}
-                                        </div>
-                                        <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
-                                            {i1 != null ? money(i1) : <span className="text-slate-300">—</span>}
-                                        </div>
-                                        {showCompare && (
-                                            <div className="px-3 py-2.5 text-right font-semibold text-slate-700 border-l border-slate-100">
-                                                {i2 != null ? (
-                                                    <>
-                                                        {money(i2)}
-                                                        {t1 !== t2 && i1 != null && <span className={`ml-1.5 text-[11px] font-semibold ${i2 < i1 ? 'text-emerald-600' : 'text-red-500'}`}>{i2 < i1 ? '↓' : '↑'}{money(Math.abs(i2 - i1))}</span>}
-                                                    </>
-                                                ) : <span className="text-slate-300">—</span>}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                    )
+                                })()}
 
                                 {/* Year-by-Year Breakdown — lock-in period, both tenures */}
                                 {lockinYears != null && [
@@ -1126,6 +1194,11 @@ export default function PurchaseWorkflowPanel({
                         onToggleAction={toggleAction}
                         onPresent={() => setPresentationOpen(true)}
                         onOpenProposal={() => setProposalOpen(true)}
+                        clientEmail={clientEmail}
+                        onSendReport={handleSendReport}
+                        sendingReport={sendingReport}
+                        reportSent={reportSent}
+                        reportError={reportError}
                     />
                 </>
             ) : (
@@ -1523,6 +1596,13 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                                 disabled={blocked}
                                 className="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all disabled:opacity-50"
                             />
+                            {Math.round(effectiveLoan) < Math.round(opt.ltvCeiling) && !blocked && (
+                                <button type="button"
+                                    onClick={() => { onAdjustLoan?.(Math.round(opt.ltvCeiling)); setRawLoan('') }}
+                                    className="text-[11px] font-semibold text-[#03a9e7] hover:text-[#0290c5] bg-sky-50 hover:bg-sky-100 px-2 py-1 rounded-md shrink-0 transition-colors">
+                                    Max
+                                </button>
+                            )}
                             {isAdjusted && (
                                 <button type="button"
                                     onClick={() => { onAdjustLoan?.(undefined); setRawLoan('') }}
@@ -1690,10 +1770,16 @@ interface NextStepProps {
     onToggleAction: (a: string) => void
     onPresent: () => void
     onOpenProposal: () => void
+    clientEmail?: string
+    onSendReport: () => void
+    sendingReport: boolean
+    reportSent: boolean
+    reportError: string | null
 }
 
 function NextStepCard({
     actions, actionsDone, onToggleAction, onPresent, onOpenProposal,
+    clientEmail, onSendReport, sendingReport, reportSent, reportError,
 }: NextStepProps) {
     return (
         <div className="rounded-xl border-2 border-[#052d4a]/15 bg-gradient-to-b from-slate-50 to-white p-5 space-y-4">
@@ -1711,7 +1797,26 @@ function NextStepCard({
                     className="text-sm px-4 py-2 rounded-lg border border-slate-200 text-slate-600 font-semibold hover:bg-slate-50 flex items-center gap-2">
                     <MessageSquare size={15} /> Chat summary
                 </button>
+                <button
+                    type="button"
+                    onClick={onSendReport}
+                    disabled={!clientEmail || sendingReport}
+                    title={!clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
+                    className={`text-sm px-4 py-2 rounded-lg border font-semibold flex items-center gap-2 transition-colors ${
+                        reportSent
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : !clientEmail
+                                ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-white'
+                                : 'border-slate-200 text-slate-600 hover:bg-slate-50 bg-white'
+                    }`}
+                >
+                    <Mail size={15} />
+                    {sendingReport ? 'Sending…' : reportSent ? 'Sent!' : 'Email to client'}
+                </button>
             </div>
+            {reportError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
+            )}
 
             {/* Checklist — what the CLIENT should do next */}
             {actions.length > 0 && (

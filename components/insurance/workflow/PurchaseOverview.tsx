@@ -69,13 +69,29 @@ export default function PurchaseOverview({ workflow, stage, followUpDate, onOpen
                     {/* Row 2 — Purchase context */}
                     <Field label="Outstanding Housing Loans" value={OUTSTANDING_LABEL[workflow.outstanding_housing_loans ?? '0']} />
                     <Field label="OTP Obtained" value={workflow.otp_obtained === undefined ? '—' : workflow.otp_obtained ? `Yes${otpDateText ? ` · ${otpDateText}` : ''}` : 'No'} />
+                    {!workflow.otp_obtained && workflow.intended_buy_date && (
+                        <Field label="Intended Buy Date" value={workflow.intended_buy_date} />
+                    )}
                     <Field label="Prior IPA" value={workflow.ipa_done ? ipaSummary(workflow) : workflow.ipa_done === false ? 'No' : '—'} />
 
                     {/* Row 3 — Borrowers (income path only) */}
                     {!workflow.ipa_done && borrowers.length > 0 && (
                         <Field label="Borrowers" value={`${borrowers.length} · ${borrowers.map(b => residencyLabel(b.residency)).join(', ')}`} />
                     )}
+                    {workflow.married && (
+                        <Field label="Married Couple" value="Yes" />
+                    )}
                     {workflow.selling_existing && <Field label="Selling Existing" value="Yes" />}
+                    {workflow.selling_existing && workflow.bridging_loan != null && (
+                        <Field label="Bridging Loan" value={workflow.bridging_loan ? 'Yes' : 'No'} />
+                    )}
+                    {workflow.sell_at_top && <Field label="Sell at TOP" value="Yes" />}
+                    {workflow.ec_payment_scheme && (
+                        <Field label="EC Payment Scheme" value={workflow.ec_payment_scheme === 'pps' ? 'PPS (Progressive)' : 'DPS (Deferred)'} />
+                    )}
+                    {workflow.rate_preference && (
+                        <Field label="Rate Preference" value={workflow.rate_preference === 'fixed' ? 'Fixed' : workflow.rate_preference === 'floating' ? 'Floating' : 'Either'} />
+                    )}
 
                     {/* Row 4 — Computed outputs (highlighted) */}
                     {comp.weightedAge != null && comp.weightedAge > 0 && (

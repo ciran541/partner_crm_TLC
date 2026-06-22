@@ -8,6 +8,7 @@ import { monthlyInstallment } from '@/lib/insurance/loanCalc'
 import {
     Home, RefreshCw, Sparkles, FileText,
     CalendarClock, ClipboardList, ArrowRight, Briefcase, AlertTriangle,
+    Banknote, TrendingDown,
 } from 'lucide-react'
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
 
 const money = (n?: number | null) => (n && n > 0 ? `$${Math.floor(n).toLocaleString()}` : '—')
 const PROPERTY_USE_LABEL: Record<string, string> = { own_stay: 'Own-Stay', investment: 'Investment' }
+const RATE_PREF_LABEL: Record<string, string> = { fixed: 'Fixed', floating: 'Floating', both: 'Both / No preference' }
 
 export default function RefiOverview({ workflow, stage, followUpDate, onOpenWorkflow }: Props) {
     const meta = refiPropertyMeta(workflow.property_type)
@@ -61,12 +63,27 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
         comp.cancellationFee > 0
     )
 
+    // Considerations flags
+    const cons = workflow.considerations ?? {}
+    const considerationTags: string[] = [
+        cons.sell ? 'Plans to sell' : '',
+        cons.partial_pay ? 'Partial repayment' : '',
+        cons.decouple ? 'Decoupling' : '',
+        cons.equity_loan ? 'Equity loan' : '',
+    ].filter(Boolean)
+
+    // Equity loan details
+    const hasEquityLoan = meta?.isPrivate && (
+        (workflow.outstanding_equity_loan && workflow.outstanding_equity_loan > 0) ||
+        (workflow.equity_loan_amount && workflow.equity_loan_amount > 0)
+    )
+
     return (
         <div className="space-y-5">
             {/* ── Refinancing Snapshot ─────────────────────────────────── */}
             <Card title="Refinancing Snapshot" icon={<Home size={16} />}>
-                {/* Row 1 — Property */}
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                    {/* Row 1 — Property */}
                     <Field label="Property Type" value={meta?.label} />
                     <Field label="Property Use" value={workflow.property_use ? PROPERTY_USE_LABEL[workflow.property_use] : undefined} />
                     <Field label="Market Price" value={money(workflow.market_price)} />
@@ -76,12 +93,19 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                     <Field label="Lock-in End Date" value={workflow.lockin_end_date ? new Date(workflow.lockin_end_date).toLocaleDateString('en-SG') : undefined} />
                     <Field label="Current Rate" value={workflow.current_rate ? `${workflow.current_rate}% p.a.` : undefined} />
 
-                    {/* Row 3 — Loan + tenure inputs */}
-                    <Field label="Outstanding Loan" value={money(comp.totalOutstanding > 0 ? comp.totalOutstanding : undefined)} />
+                    {/* Row 3 — Loan details */}
+                    <Field label="Outstanding (Disbursed)" value={money(workflow.outstanding_disbursed)} />
+                    {meta?.buc && (
+                        <Field label="Outstanding (Undisbursed)" value={money(workflow.outstanding_undisbursed)} warn={!!workflow.outstanding_undisbursed} />
+                    )}
+                    <Field label="Subsidy Return" value={workflow.subsidy_return_amount != null && workflow.subsidy_return_amount > 0 ? money(workflow.subsidy_return_amount) : workflow.subsidy_return_amount === 0 ? '$0 (none)' : undefined} />
+
+                    {/* Row 4 — Tenure inputs */}
                     <Field label="Year of Purchase" value={workflow.year_of_purchase ? String(workflow.year_of_purchase) : undefined} />
                     <Field label="Current Tenure" value={workflow.current_tenure != null ? `${workflow.current_tenure} yrs remaining` : undefined} />
+                    <Field label="Rate Preference" value={workflow.rate_preference ? RATE_PREF_LABEL[workflow.rate_preference] : undefined} />
 
-                    {/* Row 4 — Computed outputs */}
+                    {/* Row 5 — Computed outputs */}
                     {comp.ready && comp.tenure && (
                         <Field label="Refinancing Tenure Range" value={`${comp.tenure.min} – ${comp.tenure.max} yrs`} highlight />
                     )}
@@ -97,14 +121,26 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                     )}
                 </div>
 
-                {/* Cost summary strip — only if there's something to show */}
+                {/* Considerations tags */}
+                {considerationTags.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Client Considerations</p>
+                        <div className="flex flex-wrap gap-1.5">
+                            {considerationTags.map(tag => (
+                                <span key={tag} className="text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-0.5">{tag}</span>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Cost summary strip */}
                 {hasCosts && (
                     <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3">
                         {comp.cost?.legalFee != null && comp.cost.legalFee > 0 && (
                             <Field label="Est. Legal Fee" value={`${money(comp.cost.legalFee)}${comp.cost.legalNote ? ` ${comp.cost.legalNote}` : ''}`} />
                         )}
                         {comp.cost?.estSubsidy != null && comp.cost.estSubsidy > 0 && (
-                            <Field label="Est. Subsidy" value={money(comp.cost.estSubsidy)} />
+                            <Field label="Est. New Subsidy" value={money(comp.cost.estSubsidy)} />
                         )}
                         {comp.subsidyClawback > 0 && (
                             <Field label="Subsidy Clawback" value={money(comp.subsidyClawback)} warn />
@@ -115,6 +151,26 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                     </div>
                 )}
             </Card>
+
+            {/* ── Equity Loan ──────────────────────────────────────────── */}
+            {hasEquityLoan && (
+                <Card title="Equity Loan" icon={<Banknote size={16} />}>
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
+                        {workflow.outstanding_equity_loan != null && workflow.outstanding_equity_loan > 0 && (
+                            <Field label="Existing Equity Loan" value={money(workflow.outstanding_equity_loan)} />
+                        )}
+                        {workflow.current_equity_loan_tenure != null && (
+                            <Field label="Existing Equity Tenure" value={`${workflow.current_equity_loan_tenure} yrs remaining`} />
+                        )}
+                        {workflow.equity_loan_amount != null && workflow.equity_loan_amount > 0 && (
+                            <Field label="New Equity Loan Requested" value={money(workflow.equity_loan_amount)} highlight />
+                        )}
+                        {workflow.cpf_used != null && workflow.cpf_used > 0 && (
+                            <Field label="CPF Accrued (all owners)" value={money(workflow.cpf_used)} />
+                        )}
+                    </div>
+                </Card>
+            )}
 
             {/* ── Selected Package ─────────────────────────────────────── */}
             {pkg?.bank ? (
@@ -134,7 +190,9 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                                 <p className="text-sm font-semibold text-[#052d4a] mt-0.5">{money(Number(pkg.projected_monthly))}</p>
                             )}
                             {pkg.monthly_saving != null && Number(pkg.monthly_saving) > 0 && (
-                                <p className="text-[11px] text-emerald-600 mt-0.5">saves {money(Number(pkg.monthly_saving))}</p>
+                                <p className="text-[11px] text-emerald-600 mt-0.5 flex items-center gap-1 justify-end">
+                                    <TrendingDown size={11} /> saves {money(Number(pkg.monthly_saving))}/mo
+                                </p>
                             )}
                         </div>
                     </div>
@@ -161,6 +219,12 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                             value={`${actionsDone} / ${actionsTotal} done`}
                             icon={<ClipboardList size={13} />}
                         />
+                    )}
+                    {workflow.priority_client && (
+                        <Field label="Priority Client" value="Yes" />
+                    )}
+                    {workflow.priority_banks && workflow.priority_banks.length > 0 && (
+                        <Field label="Priority Banks" value={workflow.priority_banks.join(', ')} />
                     )}
                 </div>
                 <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
