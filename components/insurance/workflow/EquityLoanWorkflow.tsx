@@ -57,6 +57,7 @@ export default function EquityLoanWorkflowPanel({
     )
     const [soraForAmort, setSoraForAmort] = useState<SoraRates | null>(null)
     const [rawRefiTenure, setRawRefiTenure] = useState('')
+    const [rawExistingEquityTenure, setRawExistingEquityTenure] = useState('')
     const [rawEquityNewTenure, setRawEquityNewTenure] = useState('')
     const [rawEquityAmortT1, setRawEquityAmortT1] = useState('')
     const [rawEquityAmortT2, setRawEquityAmortT2] = useState('')
@@ -85,8 +86,22 @@ export default function EquityLoanWorkflowPanel({
         ? agedBorrowers.reduce((s, { b }) => s + (b.age ?? 0), 0) / agedBorrowers.length
         : null
 
-    // Equity loan tenure cap (by age)
-    const equityTenureMax = averageAge != null ? Math.max(5, Math.min(35, Math.floor(75 - averageAge))) : 35
+    // IWAA: income-weighted average age — uses effective monthly income per borrower
+    const grossPerBorrower = agedBorrowers.map(({ b }) => effectiveMonthlyIncome({
+        basicMonthlySalary: b.basic_salary,
+        annualVariableIncome: b.annual_variable,
+        isSelfEmployed: b.employment === 'self_employed',
+    }))
+    const totalIncomeForIwaa = grossPerBorrower.reduce((s, g) => s + g, 0)
+    const iwaa = totalIncomeForIwaa > 0 && agedBorrowers.length > 0
+        ? agedBorrowers.reduce((s, { b }, i) => s + (b.age ?? 0) * grossPerBorrower[i], 0) / totalIncomeForIwaa
+        : null
+    // When income is captured and IWAA differs from simple average, use IWAA for tenure
+    const ageForTenure = iwaa ?? averageAge
+    const usingIwaa = iwaa != null && averageAge != null && Math.abs(iwaa - averageAge) > 0.01
+
+    // Equity loan tenure cap (by age, prefer IWAA when income is captured)
+    const equityTenureMax = ageForTenure != null ? Math.max(5, Math.min(35, Math.floor(75 - ageForTenure))) : 35
     const equityTenureMin = 5
 
     // ── Income for TDSR ──
@@ -467,10 +482,19 @@ export default function EquityLoanWorkflowPanel({
                             ))}
                         </div>
                         {averageAge != null && (
-                            <p className="text-[12px] text-slate-500 mt-2">
-                                Average age: <span className="font-semibold text-[#052d4a]">{Math.ceil(averageAge)}</span>
-                                {' '}· Max equity loan tenure: <span className="font-semibold text-[#052d4a]">{equityTenureMax} yrs</span>
-                            </p>
+                            <div className="mt-2 space-y-0.5">
+                                <p className="text-[12px] text-slate-500">
+                                    Average age: <span className="font-semibold text-[#052d4a]">{Math.ceil(averageAge)}</span>
+                                </p>
+                                {usingIwaa && iwaa != null && (
+                                    <p className="text-[12px] text-slate-500">
+                                        Income-Weighted Average Age (IWAA): <span className="font-semibold text-[#03a9e7]">{Math.ceil(iwaa)}</span> <span className="text-slate-400">(used for tenure)</span>
+                                    </p>
+                                )}
+                                <p className="text-[12px] text-slate-500">
+                                    Max equity loan tenure: <span className="font-semibold text-[#052d4a]">{equityTenureMax} yrs</span>
+                                </p>
+                            </div>
                         )}
                     </Question>
 
@@ -542,7 +566,9 @@ export default function EquityLoanWorkflowPanel({
                 const existingEquityLoan = notFullyPaid ? (data.outstanding_equity_loan ?? 0) : 0
                 const existingEquityTenureMax = equityTenureMax
                 const existingEquityTenureMin = 5
-                const existingEquityTenure = existingEquityTenureMax
+                const existingEquityTenure = data.preferred_tenure_equity_outstanding != null
+                    ? Math.max(existingEquityTenureMin, Math.min(existingEquityTenureMax, data.preferred_tenure_equity_outstanding))
+                    : existingEquityTenureMax
                 const existingEquityStress = existingEquityLoan > 0 && existingEquityTenure > 0
                     ? monthlyInstallment(existingEquityLoan, STRESS_TEST_RATE * 100, existingEquityTenure)
                     : 0
@@ -571,6 +597,9 @@ export default function EquityLoanWorkflowPanel({
                 }
                 const homePledge = homePass === false
                     ? pledgeFromShortfall(Math.max(0, homeLoan - maxLoanFromPayment(availableTdsr, STRESS_TEST_RATE * 100, homeTenure)), homeTenure)
+                    : null
+                const existingEquityPledge = existingEquityPass === false
+                    ? pledgeFromShortfall(Math.max(0, existingEquityLoan - maxLoanFromPayment(Math.max(0, balanceAfterHome), STRESS_TEST_RATE * 100, existingEquityTenure)), existingEquityTenure)
                     : null
                 const equityNewPledge = equityPass === false
                     ? pledgeFromShortfall(Math.max(0, newEquityLoan - maxLoanFromPayment(Math.max(0, balanceAfterExisting), STRESS_TEST_RATE * 100, preferredEquityTenure)), preferredEquityTenure)
@@ -606,7 +635,7 @@ export default function EquityLoanWorkflowPanel({
                                 <p className="text-xl font-bold text-[#052d4a]">{money(availableTdsr)}</p>
                                 <p className="text-[11px] text-slate-400 mt-0.5">
                                     {money(grossForTdsr)} × 55%{debtsForTdsr > 0 ? ` − ${money(debtsForTdsr)} commitments` : ''}
-                                    {averageAge != null ? ` · Age ${Math.ceil(averageAge)} yrs` : ''}
+                                    {usingIwaa && iwaa != null ? ` · IWAA ${Math.ceil(iwaa)} yrs` : ageForTenure != null ? ` · Age ${Math.ceil(ageForTenure)} yrs` : ''}
                                 </p>
                             </div>
                         </div>
@@ -691,6 +720,26 @@ export default function EquityLoanWorkflowPanel({
                                         <p className="text-[11px] text-slate-400">at {existingEquityTenure} yrs, 4% stress</p>
                                     </div>
                                 </div>
+                                <div className="space-y-1.5">
+                                    <p className="text-[11px] text-slate-400">
+                                        Tenure range: {existingEquityTenureMin} – {existingEquityTenureMax} yrs
+                                    </p>
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="number"
+                                            value={rawExistingEquityTenure !== '' ? rawExistingEquityTenure : (data.preferred_tenure_equity_outstanding != null ? String(data.preferred_tenure_equity_outstanding) : '')}
+                                            placeholder={String(existingEquityTenureMax)}
+                                            onChange={e => setRawExistingEquityTenure(e.target.value)}
+                                            onBlur={() => {
+                                                const v = parseInt(rawExistingEquityTenure, 10)
+                                                setRawExistingEquityTenure('')
+                                                update({ preferred_tenure_equity_outstanding: isNaN(v) ? undefined : Math.max(existingEquityTenureMin, Math.min(existingEquityTenureMax, v)) })
+                                            }}
+                                            className="w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
+                                        />
+                                        <span className="text-xs text-slate-500">years — adjust to explore TDSR required</span>
+                                    </div>
+                                </div>
                                 {existingEquityPass !== null && (
                                     <div className={`rounded-lg border px-3 py-2.5 flex items-center gap-2 ${existingEquityPass ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
                                         {existingEquityPass
@@ -698,6 +747,18 @@ export default function EquityLoanWorkflowPanel({
                                             : <><AlertTriangle size={14} className="text-red-500" /><span className="text-sm font-bold text-red-600">TDSR Fail</span>
                                                 <span className="ml-auto text-[11px] font-semibold text-red-600">shortfall: {money(existingEquityStress - balanceAfterHome)}</span></>
                                         }
+                                    </div>
+                                )}
+                                {existingEquityPass === false && (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+                                        <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
+                                        <p className="text-[12px] text-amber-700 leading-relaxed">Pledge or show funds required to pass TDSR for the outstanding equity loan.</p>
+                                        {existingEquityPledge && (
+                                            <p className="text-[12px] text-amber-900">
+                                                <span className="font-semibold">Pledge {money(existingEquityPledge.pledgeFund)}</span> (locked 4 yrs)
+                                                {' '}or <span className="font-semibold">Show {money(existingEquityPledge.showFund)}</span> in funds.
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -768,8 +829,9 @@ export default function EquityLoanWorkflowPanel({
                         {/* Summary pledge/show */}
                         {(() => {
                             const entries = [
-                                { label: 'Home Loan',      pledge: homePledge },
-                                { label: 'New Equity Loan', pledge: equityNewPledge },
+                                { label: 'Home Loan',              pledge: homePledge },
+                                { label: 'Outstanding Equity Loan', pledge: existingEquityPledge },
+                                { label: 'New Equity Loan',         pledge: equityNewPledge },
                             ].filter((e): e is { label: string; pledge: { pledgeFund: number; showFund: number } } => e.pledge != null)
                             if (!entries.length) return null
                             const totalPledge = entries.reduce((s, e) => s + e.pledge.pledgeFund, 0)

@@ -275,6 +275,7 @@ export interface EquityLoanWorkflow {
 
     // TDSR exploration tenures
     preferred_tenure_refi?: number                  // home loan tenure (not-fully-paid path)
+    preferred_tenure_equity_outstanding?: number    // outstanding equity loan tenure exploration
 
     // Rate preference + package
     rate_preference?: 'fixed' | 'floating' | 'both'
