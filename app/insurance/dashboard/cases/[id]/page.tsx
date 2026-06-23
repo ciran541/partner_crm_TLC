@@ -4,13 +4,15 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Case, PipelineStage } from '@/lib/types'
-import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow, PurchaseWorkflow, getPurchaseWorkflow, DecoupleWorkflow, getDecoupleWorkflow } from '@/lib/types/workflow'
+import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow, PurchaseWorkflow, getPurchaseWorkflow, DecoupleWorkflow, getDecoupleWorkflow, EquityLoanWorkflow, getEquityLoanWorkflow } from '@/lib/types/workflow'
 import RefinancingWorkflowPanel from '@/components/insurance/workflow/RefinancingWorkflow'
 import PurchaseWorkflowPanel from '@/components/insurance/workflow/PurchaseWorkflow'
 import DecouplingWorkflowPanel from '@/components/insurance/workflow/DecouplingWorkflow'
+import EquityLoanWorkflowPanel from '@/components/insurance/workflow/EquityLoanWorkflow'
 import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
 import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import DecoupleOverview from '@/components/insurance/workflow/DecoupleOverview'
+import EquityLoanOverview from '@/components/insurance/workflow/EquityLoanOverview'
 import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
 import {
     Save, Edit2, X, User, Home, Pencil,
@@ -65,7 +67,7 @@ export default function CaseDetailPage() {
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
     // Workflow state (shape depends on case_type)
-    const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow>({})
+    const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow>({})
     const [workflowSaving, setWorkflowSaving] = useState(false)
     const [workflowSaved, setWorkflowSaved] = useState(false)
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -133,7 +135,9 @@ export default function CaseDetailPage() {
                     ? getPurchaseWorkflow(data.workflow_data)
                     : data.case_type === 'Decouple'
                         ? getDecoupleWorkflow(data.workflow_data)
-                        : getRefinancingWorkflow(data.workflow_data)
+                        : data.case_type === 'Equity Loan'
+                            ? getEquityLoanWorkflow(data.workflow_data)
+                            : getRefinancingWorkflow(data.workflow_data)
             )
         }
         setLoading(false)
@@ -175,7 +179,7 @@ export default function CaseDetailPage() {
     }
 
     // Extract case-column values from workflow data so Overview stays in sync
-    const extractCaseFields = (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow): Partial<Case> => {
+    const extractCaseFields = (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow): Partial<Case> => {
         const updates: Partial<Case> = {}
 
         if (caseTypeRef.current === 'Purchase') {
@@ -209,6 +213,22 @@ export default function CaseDetailPage() {
             return updates
         }
 
+        if (caseTypeRef.current === 'Equity Loan') {
+            const e = wf as EquityLoanWorkflow
+            if (e.current_bank) updates.current_bank = e.current_bank
+            if (e.market_price) updates.property_price = e.market_price
+            const totalOutstanding = (e.outstanding_disbursed ?? 0) + (e.outstanding_equity_loan ?? 0)
+            if (totalOutstanding > 0) updates.existing_loan_amount = totalOutstanding
+            if (e.equity_loan_amount) updates.loan_size = e.equity_loan_amount
+            if (e.property_type) {
+                const map: Record<string, string> = {
+                    landed: 'Landed', completed_condo: 'Private Condo', completed_ec_mop: 'Private Condo',
+                }
+                updates.property_type = map[e.property_type] ?? e.property_type
+            }
+            return updates
+        }
+
         const r = wf as RefinancingWorkflowData
 
         if (r.current_bank) updates.current_bank = r.current_bank
@@ -226,7 +246,7 @@ export default function CaseDetailPage() {
         return updates
     }
 
-    const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow) => {
+    const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow) => {
         setWorkflowSaving(true)
         setWorkflowSaved(false)
         const caseFields = extractCaseFields(wf)
@@ -237,7 +257,7 @@ export default function CaseDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [persistCaseUpdate])
 
-    const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow) => {
+    const handleWorkflowChange = useCallback((updated: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow) => {
         setWorkflowData(updated)
         // Immediately update caseData state so Overview reflects workflow changes without waiting for DB save
         const caseFields = extractCaseFields(updated)
@@ -480,6 +500,13 @@ export default function CaseDetailPage() {
                             followUpDate={caseData.follow_up_date}
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
+                    ) : caseData.case_type === 'Equity Loan' ? (
+                        <EquityLoanOverview
+                            workflow={workflowData as EquityLoanWorkflow}
+                            stage={caseData.stage}
+                            followUpDate={caseData.follow_up_date}
+                            onOpenWorkflow={() => setActiveTab('workflow')}
+                        />
                     ) : (
                         <RefiOverview
                             workflow={workflowData as RefinancingWorkflowData}
@@ -563,6 +590,24 @@ export default function CaseDetailPage() {
                         onChange={handleWorkflowChange}
                         clientName={caseData.client_name}
                         clientEmail={caseData.client_email}
+                        caseId={caseId}
+                        embedded
+                        saving={workflowSaving}
+                        saved={workflowSaved}
+                        hasClientName={!!caseData.client_name?.trim()}
+                        onContinue={() => {
+                            if (!caseData.client_name?.trim()) {
+                                wantScrollToClientRef.current = true
+                                setIsEditing(true)
+                            }
+                            setActiveTab('overview')
+                        }}
+                    />
+                ) : caseData.case_type === 'Equity Loan' ? (
+                    <EquityLoanWorkflowPanel
+                        data={workflowData as EquityLoanWorkflow}
+                        onChange={handleWorkflowChange}
+                        clientName={caseData.client_name}
                         caseId={caseId}
                         embedded
                         saving={workflowSaving}

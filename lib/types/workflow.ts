@@ -231,9 +231,74 @@ export function getDecoupleWorkflow(data: unknown): DecoupleWorkflow {
     return data as DecoupleWorkflow
 }
 
+// ─── Equity Loan workflow ──────────────────────────────────────────────────────
+// Stored in cases.workflow_data when case_type === 'Equity Loan'.
+// Property types: private only — Landed, Completed Condo, Completed EC (MOP).
+// Fully-paid path skips the current-loan section entirely.
+
+export type ELPropertyType = 'landed' | 'completed_condo' | 'completed_ec_mop'
+
+export interface ELConsiderations {
+    sell?: boolean
+    partial_pay?: boolean
+    decouple?: boolean
+}
+
+export interface EquityLoanWorkflow {
+    // Property
+    property_type?: ELPropertyType
+    fully_paid?: boolean                            // Yes → skip current loan section
+    market_price?: number
+    year_of_purchase?: number
+    cpf_used?: number                               // total CPF accrued by all owners
+    property_use?: 'own_stay' | 'investment'
+
+    // Current loan (only when fully_paid === false)
+    outstanding_disbursed?: number
+    outstanding_equity_loan?: number
+    current_bank?: string
+    lockin_end_date?: string
+    current_rate?: number
+    subsidy_return_amount?: number
+    current_tenure?: number                         // remaining home loan tenure (years)
+    current_equity_loan_tenure?: number             // remaining equity loan tenure (years)
+
+    // Plans (next 1–3 years) — no equity_loan option (this IS an equity loan case)
+    considerations?: ELConsiderations
+
+    // Equity loan amount (the focus of this workflow)
+    equity_loan_amount?: number
+    preferred_tenure_equity?: number                // equity loan tenure for TDSR
+
+    // Borrowers & income
+    borrowers?: RefiBorrower[]
+
+    // TDSR exploration tenures
+    preferred_tenure_refi?: number                  // home loan tenure (not-fully-paid path)
+
+    // Rate preference + package
+    rate_preference?: 'fixed' | 'floating' | 'both'
+    reference_lockin_years?: number
+    manual_rate_schedule?: import('@/lib/types/rates').RateScheduleEntry[]
+    selected_package_snapshot?: Record<string, unknown>
+
+    // Amortization comparison
+    preferred_tenure_1?: number
+    preferred_equity_amort_tenure_1?: number
+
+    next_actions_done?: string[]
+    completed_steps?: string[]
+    flags?: WorkflowFlags
+}
+
+export function getEquityLoanWorkflow(data: unknown): EquityLoanWorkflow {
+    if (!data || typeof data !== 'object') return {}
+    return data as EquityLoanWorkflow
+}
+
 // ─── Other case type placeholders (to be built out later) ─────────────────────
 
-export interface EquityLoanWorkflow { completed_steps?: string[]; flags?: WorkflowFlags }
 export interface DivorceWorkflow { completed_steps?: string[]; flags?: WorkflowFlags }
 
 export type WorkflowData = RefinancingWorkflow | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow | DivorceWorkflow
+
