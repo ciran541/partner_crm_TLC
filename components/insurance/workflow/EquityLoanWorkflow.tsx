@@ -96,9 +96,9 @@ export default function EquityLoanWorkflowPanel({
     const iwaa = totalIncomeForIwaa > 0 && agedBorrowers.length > 0
         ? agedBorrowers.reduce((s, { b }, i) => s + (b.age ?? 0) * grossPerBorrower[i], 0) / totalIncomeForIwaa
         : null
-    // When income is captured and IWAA differs from simple average, use IWAA for tenure
+    // When income is captured use IWAA for tenure (mirrors refiCalc: usingIwaa = weighted != null)
     const ageForTenure = iwaa ?? averageAge
-    const usingIwaa = iwaa != null && averageAge != null && Math.abs(iwaa - averageAge) > 0.01
+    const usingIwaa = iwaa != null
 
     // Equity loan tenure cap (by age, prefer IWAA when income is captured)
     const equityTenureMax = ageForTenure != null ? Math.max(5, Math.min(35, Math.floor(75 - ageForTenure))) : 35
@@ -898,7 +898,8 @@ export default function EquityLoanWorkflowPanel({
             {/* ── Amortization ── */}
             {(data.equity_loan_amount ?? 0) > 0 && (() => {
                 const homeLoanAmt = notFullyPaid ? (data.outstanding_disbursed ?? 0) : 0
-                const equityLoanAmt = data.equity_loan_amount ?? 0
+                // Outstanding equity + new equity are refinanced together at the new bank
+                const equityLoanAmt = (notFullyPaid ? (data.outstanding_equity_loan ?? 0) : 0) + (data.equity_loan_amount ?? 0)
                 const isMix = homeLoanAmt > 0 && equityLoanAmt > 0
 
                 const equityClamp = (v: number) => Math.min(Math.max(v, equityTenureMin), equityTenureMax)
