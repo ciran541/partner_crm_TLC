@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
@@ -13,7 +13,7 @@ const REASON_MESSAGES: Record<string, string> = {
     kicked: 'You were signed out because your account was accessed from another device.',
 }
 
-export default function InsuranceLogin() {
+function InsuranceLoginInner() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const [email, setEmail] = useState('')
@@ -206,4 +206,8 @@ export default function InsuranceLogin() {
             </div>
         </div>
     )
+}
+
+export default function InsuranceLogin() {
+    return <Suspense><InsuranceLoginInner /></Suspense>
 }
