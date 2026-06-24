@@ -23,8 +23,8 @@ STRICT RULES — follow exactly:
 1. Answer ONLY using the reference articles provided in the user message. Do NOT use any outside knowledge, training data, or assumptions.
 2. If the provided articles do not contain the answer, reply exactly: "I don't have guidance on that in our knowledge base — please check with your admin." Do not attempt a partial or guessed answer.
 3. Never invent figures, rates, rules, dates, or policies. Only state what the articles say.
-4. Be concise and direct — 2 to 4 sentences. Write for a busy agent, plain and practical.
-5. Do not mention "the articles" or "the reference" in your answer — just give the guidance naturally.`
+4. Synthesise a direct, natural answer — do NOT copy or restructure the article content. Aim for 3–5 sentences. If the question has a clear numerical answer, lead with the number. Only use a short bullet list when there are genuinely distinct scenarios the agent needs to choose between (e.g. HDB vs private). Never list every detail from the article — pick what directly answers the question.
+5. Do not mention "the articles", "Article 1", "Article 4", or any reference to the source in your answer — give the guidance as if you know it naturally.`
 
 // Fallback chain. Primary first, then lighter / less-loaded models. If one is
 // overloaded (503) or has no free quota (429), we try the next. Override the
@@ -50,7 +50,7 @@ export async function composeAnswer(question: string, articles: SourceArticle[])
     const body = JSON.stringify({
         system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
         contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 500 },
+        generationConfig: { temperature: 0, maxOutputTokens: 1200 },
     })
 
     // Try each model in the chain until one returns a usable answer.
