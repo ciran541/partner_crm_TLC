@@ -71,11 +71,11 @@ interface ColumnDef {
 }
 
 const COLUMN_DEFS: ColumnDef[] = [
-    { key: '1Y',       label: '1 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && p.lockin_years === 1 },
-    { key: '2Y',       label: '2 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && p.lockin_years === 2 },
-    { key: '3Y',       label: '3 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && p.lockin_years === 3 },
-    { key: '5Y',       label: '5 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && p.lockin_years === 5 },
-    { key: 'OTHFIX',   label: 'Other Fixed',    accentClass: 'bg-slate-500',  accentHex: '#64748b', match: p => p.category === 'Fixed' && ![1,2,3,5].includes(p.lockin_years) },
+    { key: '1Y',       label: '1 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 1 },
+    { key: '2Y',       label: '2 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 2 },
+    { key: '3Y',       label: '3 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 3 },
+    { key: '5Y',       label: '5 Year Fixed',   accentClass: 'bg-[#052d4a]', accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 5 },
+    { key: 'OTHFIX',   label: 'Other Fixed',    accentClass: 'bg-slate-500',  accentHex: '#64748b', match: p => p.category === 'Fixed' && ![1,2,3,5].includes(fixedRateYears(p)) },
     { key: 'FLOAT',    label: 'Floating',       accentClass: 'bg-[#03a9e7]', accentHex: '#03a9e7', match: p => p.category === 'Floating (Completed)' },
     { key: 'BUC',      label: 'BUC / BTO',      accentClass: 'bg-amber-500',  accentHex: '#f59e0b', match: p => p.category === 'BUC' },
 ]
@@ -83,6 +83,13 @@ const COLUMN_DEFS: ColumnDef[] = [
 type PropTypeFilter = '' | 'hdb' | 'bto' | 'private_completed' | 'private_uc'
 
 // ── Filter logic ──────────────────────────────────────────────────────────
+
+/** Number of fixed-rate years in the schedule (excludes thereafter). Used for
+ *  column assignment and rate-type filtering — a package is "1 Year Fixed" when
+ *  it has exactly 1 fixed entry, regardless of its lock-in period. */
+function fixedRateYears(pkg: MortgagePackage): number {
+    return pkg.rate_schedule.filter(e => e.type === 'fixed' && !e.thereafter).length
+}
 
 function isRateTypeDisabled(key: string, propType: PropTypeFilter) {
     if (key === 'BUC' && (propType === 'hdb' || propType === 'private_completed')) return true
@@ -92,7 +99,7 @@ function isRateTypeDisabled(key: string, propType: PropTypeFilter) {
 
 function matchesRateType(pkg: MortgagePackage, rateTypes: Set<string>) {
     if (rateTypes.size === 0) return true
-    return RATE_TYPE_OPTIONS.some(o => rateTypes.has(o.key) && pkg.category === o.category && (o.lockin === null || pkg.lockin_years === o.lockin))
+    return RATE_TYPE_OPTIONS.some(o => rateTypes.has(o.key) && pkg.category === o.category && (o.lockin === null || fixedRateYears(pkg) === o.lockin))
 }
 
 function matchesPropType(pkg: MortgagePackage, propType: PropTypeFilter) {

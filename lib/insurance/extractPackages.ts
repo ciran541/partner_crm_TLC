@@ -12,13 +12,10 @@
 import type { MortgagePackageInput, RateScheduleEntry } from '@/lib/types/rates'
 import { cleanReference } from '@/lib/insurance/rateSchedule'
 
-// Flash is primary: extraction needs judgment (which section header applies to a
-// package; telling a loan-size THRESHOLD note apart from a package CONDITION like
-// "No min spend") and flash-lite repeatedly got those wrong where flash got them
-// right. flash-lite / 2.0-flash-lite are availability fallbacks for when flash
-// 503s on free tier — the retry chain below + the mandatory human-review screen
-// cover the rest. (Knowledge answer-synthesis uses its own chain — different job.)
-const DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite']
+// Non-thinking free-tier models only. Avoid 2.5-x (thinking mode times out on large
+// inputs). gemini-1.5-flash is deprecated in v1beta (returns 404) — use 8b variant.
+// (Knowledge answer-synthesis uses its own chain — different job.)
+const DEFAULT_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-8b']
 
 function modelChain(): string[] {
     const primary = process.env.GEMINI_MODEL
