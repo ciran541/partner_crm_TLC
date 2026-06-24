@@ -121,7 +121,11 @@ function matchesFeature(pkg: MortgagePackage, features: Set<string>) {
     for (const fk of features) {
         const ok = fk === 'waiver_sale'       ? fl.some(f => f.includes('waiver') && (f.includes('sale') || f.includes('sold')))
                  : fk === 'partial_repayment' ? fl.some(f => f.includes('partial'))
-                 : fk === 'free_conversion'   ? fl.some(f => f.includes('conversion') || f.includes('convert'))
+                 : fk === 'free_conversion'   ? fl.some(f => {
+                       if (!f.includes('conversion') && !f.includes('convert')) return false
+                       const m = f.match(/(\d+)\s*months?/i)
+                       return !m || parseInt(m[1]) <= 12
+                   })
                  : false
         if (!ok) return false
     }

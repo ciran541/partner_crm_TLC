@@ -290,18 +290,6 @@ export default function AffordabilityPage() {
             {/* ── Output tables ── */}
             {result && (
                 <div className="space-y-4">
-                    {/* Private Property */}
-                    <IncomeTable
-                        title="Private Property (55% TDSR)"
-                        subtitle="Borrower will need to pass TDSR."
-                        tenureNote="Tenure range 5 – 35 years"
-                        accentColor="#03a9e7"
-                        accentBg="#f0f9ff"
-                        data={result.private}
-                        hasLiability={hasLiab}
-                        ltvRemark={showLtvPrivate}
-                    />
-
                     {/* HDB */}
                     <div className={`transition-opacity duration-200 ${hdbBlurred ? 'opacity-40 pointer-events-none' : ''}`}>
                         {hdbBlurred && (
@@ -320,6 +308,18 @@ export default function AffordabilityPage() {
                             ltvRemark={showLtvHdb}
                         />
                     </div>
+
+                    {/* Private Property */}
+                    <IncomeTable
+                        title="Private Property (55% TDSR)"
+                        subtitle="Borrower will need to pass TDSR."
+                        tenureNote="Tenure range 5 – 35 years"
+                        accentColor="#03a9e7"
+                        accentBg="#f0f9ff"
+                        data={result.private}
+                        hasLiability={hasLiab}
+                        ltvRemark={showLtvPrivate}
+                    />
 
                     {/* EC New Launch */}
                     <IncomeTable

@@ -12,15 +12,23 @@
 import type { MortgagePackageInput, RateScheduleEntry } from '@/lib/types/rates'
 import { cleanReference } from '@/lib/insurance/rateSchedule'
 
-// Non-thinking free-tier models only. Avoid 2.5-x (thinking mode times out on large
-// inputs). gemini-1.5-flash is deprecated in v1beta (returns 404) — use 8b variant.
-// (Knowledge answer-synthesis uses its own chain — different job.)
-const DEFAULT_MODELS = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-8b']
+// gemini-3.0-flash is primary: free tier with separate quota (5 RPM / 20 RPD),
+// non-thinking so it stays well within the 25s timeout.
+// 2.5-flash / 2.5-flash-lite are fallbacks with thinkingBudget:0 to disable
+// thinking mode — without it they time out on large bank dumps.
+// 2.0-flash / 2.0-flash-lite have 0 quota on AI Studio free keys — skip them.
+interface ModelDef { id: string; genExtra?: Record<string, unknown> }
 
-function modelChain(): string[] {
+const DEFAULT_MODELS: ModelDef[] = [
+    { id: 'gemini-3.0-flash' },
+    { id: 'gemini-2.5-flash',      genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
+    { id: 'gemini-2.5-flash-lite', genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
+]
+
+function modelChain(): ModelDef[] {
     const primary = process.env.GEMINI_MODEL
-    const chain = primary ? [primary, ...DEFAULT_MODELS] : DEFAULT_MODELS
-    return [...new Set(chain)]
+    if (!primary) return DEFAULT_MODELS
+    return [{ id: primary }, ...DEFAULT_MODELS.filter(m => m.id !== primary)]
 }
 
 const SYSTEM_INSTRUCTION = `You convert a pasted Singapore mortgage rate block (from a broker's working sheet or a banker's message) into STRUCTURED package data.
@@ -105,7 +113,7 @@ export async function extractPackages(text: string, bank: string): Promise<Mortg
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey || !text.trim() || !bank.trim()) return null
 
-    const body = JSON.stringify({
+    const basePayload = {
         system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
         contents: [{ role: 'user', parts: [{ text: `Bank: ${bank}\n\nPaste:\n${text.trim()}` }] }],
         generationConfig: {
@@ -114,9 +122,13 @@ export async function extractPackages(text: string, bank: string): Promise<Mortg
             responseMimeType: 'application/json',
             responseSchema: RESPONSE_SCHEMA,
         },
-    })
+    }
 
-    for (const model of modelChain()) {
+    for (const { id: model, genExtra } of modelChain()) {
+        const body = JSON.stringify(genExtra
+            ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }
+            : basePayload
+        )
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
         try {
             // One retry on transient 503/429 before moving on. Each call is capped
