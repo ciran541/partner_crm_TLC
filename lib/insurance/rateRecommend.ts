@@ -15,10 +15,16 @@ export function effectiveRate(entry: RateScheduleEntry, sora: SoraRates | null):
     const ref = (entry.reference || '').toLowerCase()
 
     // Bank-set benchmarks (FHR / FDR / FD / board rates) are NOT published by MAS —
-    // each bank sets them. We have no value for them, so we never guess. Show the
-    // formula, no resolved number, until an admin provides the value (future).
+    // each bank sets them. Resolve from admin-maintained bank_benchmarks table if available.
     if (/fhr|fdr|\bfd\b|board|fixed deposit/.test(ref)) {
-        return { rate: null, note: `${entry.reference} is a bank-set rate — not auto-priced` }
+        if (sora?.benchmarks) {
+            const match = Object.keys(sora.benchmarks).find(k => ref.includes(k.toLowerCase()))
+            if (match != null) {
+                const base = sora.benchmarks[match]
+                return { rate: base + entry.spread, note: `${match} ${base.toFixed(4)}%` }
+            }
+        }
+        return { rate: null, note: `${entry.reference} — rate not set (update in Rates page)` }
     }
     if (!sora) return { rate: null }
 

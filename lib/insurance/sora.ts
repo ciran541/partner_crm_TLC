@@ -18,6 +18,15 @@ export interface SoraRates {
     comp_sora_6m: number | null
     published_date: string | null
     fetched_at?: string
+    // Bank-set benchmarks from bank_benchmarks table (e.g. { FHR6: 0.8 })
+    benchmarks?: Record<string, number>
+}
+
+export interface BankBenchmark {
+    key: string
+    label: string
+    value: number
+    updated_at: string
 }
 
 interface MasRow {
@@ -170,17 +179,38 @@ export async function getAllSoraFromDb(): Promise<Pick<SoraRates, 'value_date' |
     return data
 }
 
+/** Read all stored bank benchmarks (FHR6, FHR8, etc.) as a key→value map. */
+export async function getCurrentBenchmarks(): Promise<Record<string, number>> {
+    const admin = createAdminClient()
+    const { data } = await admin.from('bank_benchmarks').select('key, value')
+    if (!data) return {}
+    return Object.fromEntries(data.map(r => [r.key as string, Number(r.value)]))
+}
+
+/** Read all benchmark rows (for admin display). */
+export async function getAllBenchmarks(): Promise<BankBenchmark[]> {
+    const admin = createAdminClient()
+    const { data } = await admin.from('bank_benchmarks').select('*').order('key')
+    return (data ?? []) as BankBenchmark[]
+}
+
+/** Upsert a single benchmark value. Returns true on success. */
+export async function setBenchmark(key: string, value: number): Promise<boolean> {
+    const admin = createAdminClient()
+    const { error } = await admin.from('bank_benchmarks')
+        .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+    return !error
+}
+
 /** Read the most recent stored SORA values (no network). Returns null if none stored yet. */
 export async function getCurrentSora(): Promise<SoraRates | null> {
     const admin = createAdminClient()
-    const { data, error } = await admin
-        .from('sora_rates')
-        .select('*')
-        .order('value_date', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+    const [{ data, error }, benchmarks] = await Promise.all([
+        admin.from('sora_rates').select('*').order('value_date', { ascending: false }).limit(1).maybeSingle(),
+        getCurrentBenchmarks(),
+    ])
     if (error || !data) return null
-    return data as SoraRates
+    return { ...(data as SoraRates), benchmarks }
 }
 
 function num(v: unknown): number | null {

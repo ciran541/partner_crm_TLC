@@ -18,7 +18,20 @@ function headlineRate(schedule: RateScheduleEntry[], sora: SoraRates | null) {
     const first = schedule?.[0]
     if (!first) return { big: '—', sub: '' }
     const { rate } = effectiveRate(first, sora)
-    const sub = first.type === 'fixed' ? 'Year 1 · Fixed' : `Year 1 · ${first.reference || 'Floating'}`
+
+    if (first.type === 'fixed') {
+        const fixedYrs = schedule.filter(e => e.type === 'fixed' && !e.thereafter)
+        const n = fixedYrs.length
+        const allSame = fixedYrs.every(e => e.rate === first.rate)
+        // "Yrs 1–3 · Fixed" when uniform; "Yr 1 · Entry rate" when rates step up
+        const label = n <= 1 ? 'Yr 1 · Fixed'
+            : allSame     ? `Yrs 1–${n} · Fixed`
+            :               'Yr 1 · Entry rate'
+        return { big: rate != null ? `${rate.toFixed(2)}%` : '—', sub: label }
+    }
+
+    // Floating
+    const sub = `Yr 1 · ${first.reference || 'Floating'}`
     if (rate != null) return { big: `${rate.toFixed(2)}%`, sub }
     return { big: first.spread != null ? `+${first.spread.toFixed(2)}%` : (first.reference || '—'), sub }
 }
@@ -91,6 +104,24 @@ function fixedRateYears(pkg: MortgagePackage): number {
     return pkg.rate_schedule.filter(e => e.type === 'fixed' && !e.thereafter).length
 }
 
+/** Remove the bank name prefix from a package name (it's already shown as the card title). */
+function stripBankPrefix(name: string, bank: string): string {
+    if (!name.toLowerCase().startsWith(bank.toLowerCase())) return name
+    return name.slice(bank.length).replace(/^\s*[-–—:,*]\s*/, '').trim()
+}
+
+/** Flexi = free conversion available before lock-in ends. Traditional = no early conversion. */
+function packageStyle(pkg: MortgagePackage): 'flexi' | 'traditional' | null {
+    if (pkg.lockin_years === 0) return null
+    const lockinMonths = pkg.lockin_years * 12
+    const convEntry = pkg.features.map(f => f.toLowerCase())
+        .find(f => f.includes('conversion') || f.includes('convert'))
+    if (!convEntry) return 'traditional'
+    const m = convEntry.match(/(\d+)\s*months?/i)
+    if (!m) return 'flexi'  // conversion with no stated timeframe = anytime
+    return parseInt(m[1]) < lockinMonths ? 'flexi' : 'traditional'
+}
+
 function isRateTypeDisabled(key: string, propType: PropTypeFilter) {
     if (key === 'BUC' && (propType === 'hdb' || propType === 'private_completed')) return true
     if (key !== 'BUC' && (propType === 'bto' || propType === 'private_uc')) return true
@@ -132,7 +163,23 @@ function matchesFeature(pkg: MortgagePackage, features: Set<string>) {
     return true
 }
 
-function applyLoanSizeFilter(pkgs: MortgagePackage[], loan: number): { pkg: MortgagePackage; appeal: boolean }[] {
+/** Parse a priority customer minimum loan size from min_loan_note.
+ *  Looks for patterns like "Priority Banking: min $300K" or "Priority: min $500K". */
+function parsePriorityMin(note: string | null | undefined): number | null {
+    if (!note) return null
+    const lower = note.toLowerCase()
+    if (!lower.includes('priority') && !lower.includes('privilege') && !lower.includes('premier')) return null
+    const m = note.match(/\$?([\d.]+)\s*([KkMm])?/)
+    if (!m) return null
+    let n = parseFloat(m[1])
+    if (!Number.isFinite(n)) return null
+    const suffix = (m[2] || '').toLowerCase()
+    if (suffix === 'k') n *= 1_000
+    else if (suffix === 'm') n *= 1_000_000
+    return n
+}
+
+function applyLoanSizeFilter(pkgs: MortgagePackage[], loan: number, priorityBanks: Set<string> = new Set()): { pkg: MortgagePackage; appeal: boolean }[] {
     const groups = new Map<string, MortgagePackage[]>()
     for (const pkg of pkgs) {
         const key = `${pkg.bank}|${pkg.category}|${pkg.property_type}|${pkg.lockin_years}`
@@ -141,14 +188,23 @@ function applyLoanSizeFilter(pkgs: MortgagePackage[], loan: number): { pkg: Mort
     }
     const result: { pkg: MortgagePackage; appeal: boolean }[] = []
     for (const [, group] of groups) {
-        const strict = group.filter(p => p.min_loan_size <= loan)
+        // For priority banking clients, use the lower threshold from min_loan_note if the
+        // bank is one where the client has priority status.
+        const effectiveMin = (pkg: MortgagePackage): number => {
+            if (priorityBanks.has(pkg.bank)) {
+                const pm = parsePriorityMin(pkg.min_loan_note)
+                if (pm != null && pm < pkg.min_loan_size) return pm
+            }
+            return pkg.min_loan_size
+        }
+        const strict = group.filter(p => effectiveMin(p) <= loan)
         if (strict.length > 0) {
-            const maxTier = Math.max(...strict.map(p => p.min_loan_size))
-            strict.filter(p => p.min_loan_size === maxTier).forEach(p => result.push({ pkg: p, appeal: false }))
+            const maxTier = Math.max(...strict.map(p => effectiveMin(p)))
+            strict.filter(p => effectiveMin(p) === maxTier).forEach(p => result.push({ pkg: p, appeal: false }))
         }
         // Within 10% above the loan → bank may approve on appeal.
         const VARIANCE = 1 / 0.9
-        group.filter(p => p.min_loan_size > loan && p.min_loan_size <= loan * VARIANCE)
+        group.filter(p => effectiveMin(p) > loan && effectiveMin(p) <= loan * VARIANCE)
             .forEach(p => result.push({ pkg: p, appeal: true }))
     }
     return result
@@ -161,6 +217,9 @@ export default function RatesPage() {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
     const [refreshingSora, setRefreshingSora] = useState(false)
+    const [editingBenchmark, setEditingBenchmark] = useState<string | null>(null)
+    const [benchmarkInput, setBenchmarkInput] = useState('')
+    const [savingBenchmark, setSavingBenchmark] = useState(false)
     const [loading, setLoading] = useState(true)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
@@ -169,6 +228,7 @@ export default function RatesPage() {
     const [propType, setPropType]     = useState<PropTypeFilter>('')
     const [rateTypes, setRateTypes]   = useState<Set<string>>(new Set())
     const [features, setFeatures]     = useState<Set<string>>(new Set())
+    const [priorityBanks, setPriorityBanks] = useState<Set<string>>(new Set())
     const [q, setQ]                   = useState('')
 
     const [editorOpen, setEditorOpen] = useState(false)
@@ -200,17 +260,17 @@ export default function RatesPage() {
         else if (v === 'hdb' || v === 'private_completed') setRateTypes(prev => { const n = new Set(prev); n.delete('BUC'); return n })
     }
 
-    const hasFilters = !!(loanSize || currentBank || propType || rateTypes.size || features.size || q.trim())
+    const hasFilters = !!(loanSize || currentBank || propType || rateTypes.size || features.size || priorityBanks.size || q.trim())
 
     const clearFilters = () => {
         setLoanSize(''); setCurrentBank(''); setPropType('')
-        setRateTypes(new Set()); setFeatures(new Set()); setQ('')
+        setRateTypes(new Set()); setFeatures(new Set()); setPriorityBanks(new Set()); setQ('')
     }
 
     const filteredPackages = useMemo(() => {
         if (!hasFilters) return []
         let items: { pkg: MortgagePackage; appeal: boolean }[] = parsedLoan
-            ? applyLoanSizeFilter(packages, parsedLoan)
+            ? applyLoanSizeFilter(packages, parsedLoan, priorityBanks)
             : packages.map(p => ({ pkg: p, appeal: false }))
         if (currentBank)      items = items.filter(({ pkg }) => pkg.bank !== currentBank)
         if (propType)         items = items.filter(({ pkg }) => matchesPropType(pkg, propType))
@@ -221,7 +281,7 @@ export default function RatesPage() {
             items = items.filter(({ pkg }) => pkg.package_name.toLowerCase().includes(ql) || pkg.bank.toLowerCase().includes(ql))
         }
         return items
-    }, [packages, parsedLoan, currentBank, propType, rateTypes, features, q, hasFilters])
+    }, [packages, parsedLoan, currentBank, propType, rateTypes, features, priorityBanks, q, hasFilters])
 
     const columns = useMemo(() =>
         COLUMN_DEFS
@@ -291,6 +351,23 @@ export default function RatesPage() {
         finally { setBusyId(null) }
     }
 
+    const handleSaveBenchmark = async (key: string) => {
+        const v = parseFloat(benchmarkInput)
+        if (!Number.isFinite(v) || v < 0 || v > 20) {
+            setAlert({ type: 'error', message: 'Enter a valid rate (0–20%)' }); return
+        }
+        setSavingBenchmark(true)
+        try {
+            const res  = await fetch('/api/admin/rates/sora', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: v }) })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error || 'Save failed')
+            setSora(prev => prev ? { ...prev, benchmarks: { ...prev.benchmarks, [key]: v } } : prev)
+            setAlert({ type: 'success', message: `${key} updated to ${v.toFixed(4)}%` })
+            setEditingBenchmark(null)
+        } catch (e: any) { setAlert({ type: 'error', message: e.message }) }
+        finally { setSavingBenchmark(false) }
+    }
+
     const handleRefreshSora = async () => {
         setRefreshingSora(true)
         try {
@@ -335,6 +412,41 @@ export default function RatesPage() {
                             </button>
                         )}
                     </div>
+                    {/* Bank benchmark pills (FHR6, etc.) */}
+                    {sora?.benchmarks && Object.entries(sora.benchmarks).map(([key, val]) => (
+                        <div key={key} className="inline-flex items-center gap-2 text-[11px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+                            <span className="font-semibold text-slate-400 uppercase tracking-wide text-[10px]">{key}</span>
+                            {editingBenchmark === key ? (
+                                <>
+                                    <input
+                                        autoFocus
+                                        type="number" step="0.0001" min="0" max="20"
+                                        value={benchmarkInput}
+                                        onChange={e => setBenchmarkInput(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') handleSaveBenchmark(key); if (e.key === 'Escape') setEditingBenchmark(null) }}
+                                        className="w-16 text-[11px] border border-slate-300 rounded px-1 py-0.5 tabular-nums outline-none focus:border-[#03a9e7]"
+                                    />
+                                    <span className="text-slate-400">%</span>
+                                    <button onClick={() => handleSaveBenchmark(key)} disabled={savingBenchmark}
+                                        className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50 font-medium">
+                                        {savingBenchmark ? '…' : 'Save'}
+                                    </button>
+                                    <button onClick={() => setEditingBenchmark(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="text-slate-600 tabular-nums">{val.toFixed(4)}%</span>
+                                    {admin && (
+                                        <button onClick={() => { setBenchmarkInput(String(val)); setEditingBenchmark(key) }}
+                                            title={`Edit ${key}`}
+                                            className="ml-0.5 text-slate-400 hover:text-[#03a9e7] transition-colors">
+                                            <Pencil size={11} />
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    ))}
                     {admin && draftIds.length > 0 && (
                         <button onClick={() => handlePublish(draftIds)}
                             className="px-3 py-2 text-sm flex items-center gap-1.5 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-700 transition-colors">
@@ -453,6 +565,25 @@ export default function RatesPage() {
                     </div>
                 </div>
 
+                {/* Row 3: Priority Banking */}
+                <div className="h-px bg-slate-100" />
+                <div className="bg-white px-4 py-3">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Priority / Privilege Banking
+                        <span className="ml-2 text-[9px] font-normal normal-case text-slate-300">Select banks where client holds priority status — unlocks lower min. loan thresholds</span>
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                        {[...new Set(packages.map(p => p.bank))].sort().filter(bank =>
+                            packages.some(p => p.bank === bank && parsePriorityMin(p.min_loan_note) != null)
+                        ).map(bank => (
+                            <FilterPill key={bank} active={priorityBanks.has(bank)} color="purple"
+                                onClick={() => setPriorityBanks(prev => toggleSet(prev, bank))}>
+                                {bank}
+                            </FilterPill>
+                        ))}
+                    </div>
+                </div>
+
                 {/* Status bar — only when filters are active */}
                 {hasFilters && (
                     <div className="border-t border-slate-100 px-4 py-2.5 flex items-center gap-3 bg-slate-50/60">
@@ -538,6 +669,7 @@ export default function RatesPage() {
                                             busy={busyId === pkg.id}
                                             confirming={confirmDelete === pkg.id}
                                             accentClass={col.accentClass}
+                                            priorityMin={priorityBanks.has(pkg.bank) ? parsePriorityMin(pkg.min_loan_note) : null}
                                             onEdit={() => { setEditing(pkg); setEditorOpen(true) }}
                                             onDuplicate={() => handleDuplicate(pkg.id)}
                                             onPublish={() => handlePublish([pkg.id])}
@@ -572,7 +704,7 @@ export default function RatesPage() {
 // Expanded: rate schedule, features, subsidies revealed below.
 
 function RateCard({
-    pkg, sora, admin, appeal, busy, confirming, accentClass,
+    pkg, sora, admin, appeal, busy, confirming, accentClass, priorityMin,
     onEdit, onDuplicate, onPublish, onAskDelete, onCancelDelete, onConfirmDelete,
 }: {
     pkg: MortgagePackage
@@ -582,6 +714,7 @@ function RateCard({
     busy: boolean
     confirming: boolean
     accentClass: string
+    priorityMin?: number | null
     onEdit: () => void
     onDuplicate: () => void
     onPublish: () => void
@@ -616,9 +749,9 @@ function RateCard({
                     </div>
                 </div>
 
-                {/* Package name — capped at 2 lines so all cards share ~same baseline */}
+                {/* Package name — strip leading bank name since it's already the card title */}
                 <p className="text-[11px] text-slate-400 line-clamp-2 leading-snug min-h-[32px] mb-3">
-                    {pkg.package_name}
+                    {stripBankPrefix(pkg.package_name, pkg.bank)}
                 </p>
 
                 {/* Rate — the hero */}
@@ -631,13 +764,29 @@ function RateCard({
                     </p>
                 </div>
 
-                {/* 3 key chips — abbreviated to stay on one row */}
+                {/* Key chips */}
                 <div className="flex items-center gap-1.5 flex-wrap">
                     <SmallChip icon={Building2}>{shortPropType(pkg.property_type)}</SmallChip>
                     <SmallChip icon={locked ? Lock : LockOpen}>
                         {locked ? `${pkg.lockin_years}Y lock-in` : 'No lock-in'}
                     </SmallChip>
-                    <SmallChip icon={Wallet}>Min {shortLoan(pkg.min_loan_size)}</SmallChip>
+                    <SmallChip icon={Wallet}>
+                        {priorityMin != null && priorityMin < pkg.min_loan_size
+                            ? <><span className="line-through text-slate-300 mr-1">{shortLoan(pkg.min_loan_size)}</span><span className="text-violet-600 font-semibold">Min {shortLoan(priorityMin)}</span></>
+                            : <>Min {shortLoan(pkg.min_loan_size)}</>
+                        }
+                    </SmallChip>
+                    {(() => {
+                        const style = packageStyle(pkg)
+                        if (!style) return null
+                        return style === 'flexi'
+                            ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#03a9e7] bg-sky-50 border border-[#03a9e7]/30 rounded-md px-1.5 py-0.5 whitespace-nowrap">
+                                  <RefreshCcw size={9} className="shrink-0" />Flexi
+                              </span>
+                            : <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5 whitespace-nowrap">
+                                  <Lock size={9} className="text-slate-400 shrink-0" />Traditional
+                              </span>
+                    })()}
                 </div>
 
                 {/* ── Expandable section ─────────────────────────────── */}
@@ -766,12 +915,13 @@ function FilterPill({
     active: boolean
     disabled?: boolean
     onClick: () => void
-    color: 'navy' | 'blue' | 'green'
+    color: 'navy' | 'blue' | 'green' | 'purple'
 }) {
     const activeClass =
-        color === 'navy'  ? 'bg-[#052d4a] text-white border-[#052d4a]' :
-        color === 'blue'  ? 'bg-[#03a9e7] text-white border-[#03a9e7]' :
-                            'bg-emerald-600 text-white border-emerald-600'
+        color === 'navy'   ? 'bg-[#052d4a] text-white border-[#052d4a]' :
+        color === 'blue'   ? 'bg-[#03a9e7] text-white border-[#03a9e7]' :
+        color === 'purple' ? 'bg-violet-600 text-white border-violet-600' :
+                             'bg-emerald-600 text-white border-emerald-600'
     return (
         <button
             onClick={onClick}
