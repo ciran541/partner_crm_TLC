@@ -100,9 +100,25 @@ export default function EquityLoanWorkflowPanel({
     const ageForTenure = iwaa ?? averageAge
     const usingIwaa = iwaa != null
 
-    // Equity loan tenure cap (by age, prefer IWAA when income is captured)
-    const equityTenureMax = ageForTenure != null ? Math.max(5, Math.min(35, Math.floor(75 - ageForTenure))) : 35
+    // Equity loan tenure cap: lower of age-based and loan-age-based (mirrors refiCalc tenureRange)
+    // Formula 1: min(35, 75 − age)
+    // Formula 2: 35 − (currentYear − yearOfPurchase) − 1
+    const EL_TENURE_CAP = 35
+    const _currentYear = new Date().getFullYear()
+    const _ageResult = ageForTenure != null
+        ? Math.min(EL_TENURE_CAP, 75 - Math.ceil(ageForTenure))
+        : EL_TENURE_CAP
+    const _loanAgeResult = data.year_of_purchase
+        ? EL_TENURE_CAP - (_currentYear - data.year_of_purchase) - 1
+        : null
+    const _rawTenureMax = _loanAgeResult != null ? Math.min(_ageResult, _loanAgeResult) : _ageResult
+    const equityTenureMax = Math.max(5, _rawTenureMax)   // home loan: constrained by both age + property purchase year
+    const equityOnlyTenureMax = Math.max(5, _ageResult)  // equity loans: age-only cap (no property purchase year constraint)
     const equityTenureMin = 5
+    const tenureBinding: 1 | 2 | null = _loanAgeResult != null ? (_ageResult <= _loanAgeResult ? 1 : 2) : null
+    const tenureError = (ageForTenure != null && Math.ceil(ageForTenure) >= 71) || _rawTenureMax < 5
+        ? 'Minimum tenure is 5 years and cannot exceed age 75.'
+        : null
 
     // ── Income for TDSR ──
     const grossForTdsr = useMemo(() => {
@@ -492,8 +508,14 @@ export default function EquityLoanWorkflowPanel({
                                     </p>
                                 )}
                                 <p className="text-[12px] text-slate-500">
-                                    Max equity loan tenure: <span className="font-semibold text-[#052d4a]">{equityTenureMax} yrs</span>
+                                    Max equity loan tenure: <span className="font-semibold text-[#052d4a]">{equityOnlyTenureMax} yrs</span>
+                                    {ageForTenure != null && _ageResult < 35 && (
+                                        <span className="text-slate-400"> · capped by age</span>
+                                    )}
                                 </p>
+                                {tenureError && (
+                                    <p className="text-[12px] text-red-500">{tenureError}</p>
+                                )}
                             </div>
                         )}
                     </Question>
@@ -544,7 +566,7 @@ export default function EquityLoanWorkflowPanel({
                 const availableTdsr = Math.max(grossForTdsr * 0.55 - debtsForTdsr, 0)
 
                 // Est. Loan Eligibility
-                const estEligMax = equityTenureMax
+                const estEligMax = 35
                 const effectiveEstEligTenure = estEligTenure ?? estEligMax
                 const estEligLoan = effectiveEstEligTenure > 0
                     ? maxLoanFromPayment(availableTdsr, STRESS_TEST_RATE * 100, effectiveEstEligTenure)
@@ -564,7 +586,7 @@ export default function EquityLoanWorkflowPanel({
 
                 // Outstanding equity loan TDSR block (only if not fully paid + equity outstanding > 0)
                 const existingEquityLoan = notFullyPaid ? (data.outstanding_equity_loan ?? 0) : 0
-                const existingEquityTenureMax = equityTenureMax
+                const existingEquityTenureMax = equityOnlyTenureMax
                 const existingEquityTenureMin = 5
                 const existingEquityTenure = data.preferred_tenure_equity_outstanding != null
                     ? Math.max(existingEquityTenureMin, Math.min(existingEquityTenureMax, data.preferred_tenure_equity_outstanding))
@@ -578,8 +600,8 @@ export default function EquityLoanWorkflowPanel({
                 // New equity loan TDSR block
                 const newEquityLoan = data.equity_loan_amount ?? 0
                 const preferredEquityTenure = data.preferred_tenure_equity != null
-                    ? Math.max(equityTenureMin, Math.min(equityTenureMax, data.preferred_tenure_equity))
-                    : equityTenureMax
+                    ? Math.max(equityTenureMin, Math.min(equityOnlyTenureMax, data.preferred_tenure_equity))
+                    : equityOnlyTenureMax
                 const equityNewStress = newEquityLoan > 0 && preferredEquityTenure > 0
                     ? monthlyInstallment(newEquityLoan, STRESS_TEST_RATE * 100, preferredEquityTenure)
                     : 0
@@ -722,7 +744,7 @@ export default function EquityLoanWorkflowPanel({
                                 </div>
                                 <div className="space-y-1.5">
                                     <p className="text-[11px] text-slate-400">
-                                        Tenure range: {existingEquityTenureMin} – {existingEquityTenureMax} yrs
+                                        Tenure range: {existingEquityTenureMin} – {existingEquityTenureMax} yrs (to age 75)
                                     </p>
                                     <div className="flex items-center gap-3">
                                         <input
@@ -779,17 +801,17 @@ export default function EquityLoanWorkflowPanel({
                                     </div>
                                 </div>
                                 <div className="space-y-1.5">
-                                    <p className="text-[11px] text-slate-400">Tenure range: {equityTenureMin} – {equityTenureMax} yrs</p>
+                                    <p className="text-[11px] text-slate-400">Tenure range: {equityTenureMin} – {equityOnlyTenureMax} yrs (to age 75)</p>
                                     <div className="flex items-center gap-3">
                                         <input
                                             type="number"
                                             value={rawEquityNewTenure !== '' ? rawEquityNewTenure : (data.preferred_tenure_equity != null ? String(data.preferred_tenure_equity) : '')}
-                                            placeholder={String(equityTenureMax)}
+                                            placeholder={String(equityOnlyTenureMax)}
                                             onChange={e => setRawEquityNewTenure(e.target.value)}
                                             onBlur={() => {
                                                 const v = parseInt(rawEquityNewTenure, 10)
                                                 setRawEquityNewTenure('')
-                                                update({ preferred_tenure_equity: isNaN(v) ? undefined : Math.max(equityTenureMin, Math.min(equityTenureMax, v)) })
+                                                update({ preferred_tenure_equity: isNaN(v) ? undefined : Math.max(equityTenureMin, Math.min(equityOnlyTenureMax, v)) })
                                             }}
                                             className="w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
                                         />
@@ -886,7 +908,7 @@ export default function EquityLoanWorkflowPanel({
             {(data.equity_loan_amount ?? 0) > 0 && data.property_type && (
                 <RefiPackages
                     loan={data.equity_loan_amount!}
-                    tenureYears={equityTenureMax}
+                    tenureYears={equityOnlyTenureMax}
                     propertyType={meta?.ratesType}
                     includeBuc={false}
                     preference={data.rate_preference ?? 'both'}
@@ -902,9 +924,9 @@ export default function EquityLoanWorkflowPanel({
                 const equityLoanAmt = (notFullyPaid ? (data.outstanding_equity_loan ?? 0) : 0) + (data.equity_loan_amount ?? 0)
                 const isMix = homeLoanAmt > 0 && equityLoanAmt > 0
 
-                const equityClamp = (v: number) => Math.min(Math.max(v, equityTenureMin), equityTenureMax)
-                const equityT1 = equityClamp(data.preferred_equity_amort_tenure_1 ?? equityTenureMax)
-                const equityT2 = equityClamp(preferredEquityAmortTenure2 ?? equityTenureMax)
+                const equityClamp = (v: number) => Math.min(Math.max(v, equityTenureMin), equityOnlyTenureMax)
+                const equityT1 = equityClamp(data.preferred_equity_amort_tenure_1 ?? equityOnlyTenureMax)
+                const equityT2 = equityClamp(preferredEquityAmortTenure2 ?? equityOnlyTenureMax)
 
                 const homeT1 = data.current_tenure ?? equityTenureMax
 
@@ -1253,15 +1275,15 @@ export default function EquityLoanWorkflowPanel({
                                     <div className="p-4 space-y-3">
                                         {renderLockInCards(equityAmort1)}
                                         <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                                            Tenure Range: {equityTenureMin} – {equityTenureMax} yrs
+                                            Tenure Range: {equityTenureMin} – {equityOnlyTenureMax} yrs
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <div className="space-y-1">
                                                 <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
                                                 <div className="flex items-center gap-2">
-                                                    <input type="number" min={equityTenureMin} max={equityTenureMax}
+                                                    <input type="number" min={equityTenureMin} max={equityOnlyTenureMax}
                                                         value={rawEquityAmortT1 !== '' ? rawEquityAmortT1 : (data.preferred_equity_amort_tenure_1 != null ? String(data.preferred_equity_amort_tenure_1) : '')}
-                                                        placeholder={String(equityTenureMax)}
+                                                        placeholder={String(equityOnlyTenureMax)}
                                                         onChange={e => setRawEquityAmortT1(e.target.value)}
                                                         onBlur={() => {
                                                             const parsed = parseInt(rawEquityAmortT1, 10)
@@ -1281,9 +1303,9 @@ export default function EquityLoanWorkflowPanel({
                                                 </label>
                                                 {showCompare && (
                                                     <div className="flex items-center gap-2">
-                                                        <input type="number" min={equityTenureMin} max={equityTenureMax}
+                                                        <input type="number" min={equityTenureMin} max={equityOnlyTenureMax}
                                                             value={rawEquityAmortT2 !== '' ? rawEquityAmortT2 : (preferredEquityAmortTenure2 != null ? String(preferredEquityAmortTenure2) : '')}
-                                                            placeholder={String(equityTenureMax)}
+                                                            placeholder={String(equityOnlyTenureMax)}
                                                             onChange={e => setRawEquityAmortT2(e.target.value)}
                                                             onBlur={() => {
                                                                 const parsed = parseInt(rawEquityAmortT2, 10)
@@ -1306,15 +1328,15 @@ export default function EquityLoanWorkflowPanel({
                             <>
                                 {renderLockInCards(equityAmort1)}
                                 <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                                    Tenure Range: {equityTenureMin} – {equityTenureMax} yrs
+                                    Tenure Range: {equityTenureMin} – {equityOnlyTenureMax} yrs
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="space-y-1">
                                         <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
                                         <div className="flex items-center gap-2">
-                                            <input type="number" min={equityTenureMin} max={equityTenureMax}
+                                            <input type="number" min={equityTenureMin} max={equityOnlyTenureMax}
                                                 value={rawEquityAmortT1 !== '' ? rawEquityAmortT1 : (data.preferred_equity_amort_tenure_1 != null ? String(data.preferred_equity_amort_tenure_1) : '')}
-                                                placeholder={String(equityTenureMax)}
+                                                placeholder={String(equityOnlyTenureMax)}
                                                 onChange={e => setRawEquityAmortT1(e.target.value)}
                                                 onBlur={() => {
                                                     const parsed = parseInt(rawEquityAmortT1, 10)
@@ -1334,9 +1356,9 @@ export default function EquityLoanWorkflowPanel({
                                         </label>
                                         {showCompare && (
                                             <div className="flex items-center gap-2">
-                                                <input type="number" min={equityTenureMin} max={equityTenureMax}
+                                                <input type="number" min={equityTenureMin} max={equityOnlyTenureMax}
                                                     value={rawEquityAmortT2 !== '' ? rawEquityAmortT2 : (preferredEquityAmortTenure2 != null ? String(preferredEquityAmortTenure2) : '')}
-                                                    placeholder={String(equityTenureMax)}
+                                                    placeholder={String(equityOnlyTenureMax)}
                                                     onChange={e => setRawEquityAmortT2(e.target.value)}
                                                     onBlur={() => {
                                                         const parsed = parseInt(rawEquityAmortT2, 10)

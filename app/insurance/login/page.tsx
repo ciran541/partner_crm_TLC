@@ -1,19 +1,32 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { Lock, Mail, ArrowRight } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 
+const REASON_MESSAGES: Record<string, string> = {
+    suspended: 'Your account is pending activation. Please contact your admin.',
+    kicked: 'You were signed out because your account was accessed from another device.',
+}
+
 export default function InsuranceLogin() {
     const router = useRouter()
+    const searchParams = useSearchParams()
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [error, setError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
+
+    useEffect(() => {
+        const reason = searchParams.get('reason')
+        if (reason && REASON_MESSAGES[reason]) {
+            setError(REASON_MESSAGES[reason])
+        }
+    }, [searchParams])
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -38,8 +51,10 @@ export default function InsuranceLogin() {
 
             if (profile.status === 'disabled') {
                 await supabase.auth.signOut()
-                throw new Error('Your account has been disabled. Please contact support.')
+                throw new Error('Your account is pending activation. Please contact your admin.')
             }
+
+            await fetch('/api/auth/register-session', { method: 'POST' })
 
             router.push('/insurance/dashboard')
         } catch (err: any) {

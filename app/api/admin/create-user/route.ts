@@ -35,13 +35,16 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Failed to create user' }, { status: 500 })
         }
 
+        // Agents start disabled (pending payment confirmation); admins are active immediately
+        const initialStatus = role === 'agent' ? 'disabled' : 'active'
+
         // 2. Create Profile Entry
         const { error: profileError } = await supabaseAdmin.from('profiles').upsert({
             id: authUser.user.id,
             name,
             role,
             app_type: app_type ?? 'insurance', // default to insurance for admin-created users
-            status: 'active',
+            status: initialStatus,
         })
 
         if (profileError) {
@@ -58,7 +61,7 @@ export async function POST(request: Request) {
             cea_registration_no: null,
             agency_name: null,
             app_type: app_type ?? 'insurance',
-            status: 'active',
+            status: initialStatus,
             joined_at: authUser.user.created_at ?? null,
             created_at: authUser.user.created_at ?? null,
         })

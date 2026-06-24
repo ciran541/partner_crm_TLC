@@ -124,7 +124,7 @@ function matchesFeature(pkg: MortgagePackage, features: Set<string>) {
 function applyLoanSizeFilter(pkgs: MortgagePackage[], loan: number): { pkg: MortgagePackage; appeal: boolean }[] {
     const groups = new Map<string, MortgagePackage[]>()
     for (const pkg of pkgs) {
-        const key = `${pkg.bank}|${pkg.category}|${pkg.property_type}`
+        const key = `${pkg.bank}|${pkg.category}|${pkg.property_type}|${pkg.lockin_years}`
         if (!groups.has(key)) groups.set(key, [])
         groups.get(key)!.push(pkg)
     }
@@ -377,7 +377,7 @@ export default function RatesPage() {
                     {/* Current Bank */}
                     <div className="bg-white px-4 py-3">
                         <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                            Current Bank <span className="normal-case font-normal">(will be excluded)</span>
+                            Current Bank
                         </label>
                         <InsuranceBankDropdown value={currentBank} onChange={setCurrentBank} placeholder="N/A — show all banks" />
                         <p className="text-[10px] text-slate-400 mt-1">Client&apos;s existing bank won&apos;t appear</p>

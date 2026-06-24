@@ -916,7 +916,7 @@ export default function RefinancingWorkflowPanel({
                                 </div>
                                 <div className="space-y-1.5">
                                     <p className="text-[11px] text-slate-400">
-                                        Tenure range: {equityOutTenureMin} – {equityOutTenureMax} yrs
+                                        Tenure range: {equityOutTenureMin} – {equityOutTenureMax} yrs (to age 75)
                                     </p>
                                     <div className="flex items-center gap-3">
                                         <input
@@ -973,7 +973,7 @@ export default function RefinancingWorkflowPanel({
                                     </div>
                                 </div>
                                 <div className="space-y-1.5">
-                                    <p className="text-[11px] text-slate-400">Tenure range: {equityTenureMin} – {equityTenureMax} yrs</p>
+                                    <p className="text-[11px] text-slate-400">Tenure range: {equityTenureMin} – {equityTenureMax} yrs (to age 75)</p>
                                     <div className="flex items-center gap-3">
                                         <input
                                             type="number"
