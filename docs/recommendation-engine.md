@@ -35,11 +35,14 @@ The recommendation is only as good as what was entered earlier in the case. It u
 ## 3. How a package gets recommended — three stages
 
 ### Stage A — Filtering (who even qualifies)
-A package is **removed from consideration** unless it passes *all* of these:
+This uses the **exact same logic as the standalone Rates page**, fed automatically from the case instead of typed in by hand. A package is **removed from consideration** unless it passes *all* of these:
 
-1. **Loan size** — the client's loan is **at least** the package's minimum (a "Min $1M" package never shows for an $800k loan).
-2. **Property type** — the package's property type matches the client's (HDB / Private / EC).
-3. **Rate preference** — matches what the client said in Step 3 (fixed / floating). Packages for properties *under construction* (BUC) are excluded, since this is refinancing a completed property.
+1. **Loan size (tiered)** — the client's loan must clear the package's minimum, and where a bank offers the same package at several loan tiers, only the **best (highest) tier the client qualifies for** is shown — not every redundant lower tier. Packages whose minimum is **up to 10% above** the loan are still shown, tagged **"Appeal"** (the bank may approve on appeal), and ranked below the strict matches.
+2. **Priority / privilege banking** — if the client holds priority status with a bank (captured in the workflow), that bank's lower minimum-loan threshold is applied.
+3. **Current bank excluded** — the client's existing bank is hidden (refinancing moves to a new bank).
+4. **Property type** — matches the client's (HDB / Private / EC), including the completed-vs-under-construction distinction.
+5. **Rate type** — the panel offers the same pills as the Rates page: specific Fixed lock-ins (1Y / 2Y / 3Y / 5Y) and Floating. They start pre-set from the client's saved fixed/floating preference and the agent can refine live. Packages for properties *under construction* (BUC) are property-driven, not a manual pill.
+6. **Features** (optional) — Waiver Due to Sale, Partial Repayment, Free Conversion: toggling one keeps only packages that offer it.
 
 ### Stage B — Working out the real numbers
 For each package that survives the filter, the system calculates:

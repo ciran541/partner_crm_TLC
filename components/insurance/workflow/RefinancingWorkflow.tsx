@@ -1086,6 +1086,8 @@ export default function RefinancingWorkflowPanel({
                     currentRatePct={data.current_rate}
                     clawbackAmount={computation.subsidyClawback}
                     preference={data.rate_preference ?? 'both'}
+                    priorityBanks={data.priority_client ? data.priority_banks : undefined}
+                    currentBank={data.current_bank}
                     selectedId={selectedPkgId}
                     onSelect={onSelectPackage}
                 />

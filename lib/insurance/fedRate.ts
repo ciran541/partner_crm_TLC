@@ -16,7 +16,7 @@ export async function fetchFedRateHistory(startDate = '2005-01-01'): Promise<Fed
         const url =
             `https://api.stlouisfed.org/fred/series/observations` +
             `?series_id=FEDFUNDS&api_key=${key}&observation_start=${startDate}&file_type=json`
-        const res = await fetch(url, { cache: 'no-store' })
+        const res = await fetch(url, { next: { revalidate: 86400 } })
         if (!res.ok) {
             console.error('[fredRate] FRED fetch failed:', res.status)
             return []

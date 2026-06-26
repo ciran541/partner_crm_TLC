@@ -5,6 +5,7 @@
 import type { MortgagePackage, RateScheduleEntry } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { monthlyInstallment, computeRefiSavings, tdsrRatioForLoan, TDSR_LIMIT, type RefiSavings } from '@/lib/insurance/loanCalc'
+import { applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 
 // ── Effective rate of a single schedule entry, given live SORA ──
 // Returns { rate, note } where rate is null when it can't be computed (e.g. FD Rate).
@@ -127,7 +128,12 @@ export interface RecommendCriteria {
     currentRatePct?: number
     clawbackAmount?: number
     propertyType?: string                 // workflow ('hdb'|'private_condo'|'landed'|'ec') or display
+    propType?: PropTypeFilter             // Rates-page vocab — preferred; matches the browse page exactly
+    priorityBanks?: string[]              // banks where the client holds priority status (lowers min-loan tier)
+    currentBank?: string                  // client's existing bank — excluded (refinancing moves away)
     preference?: 'fixed' | 'floating' | 'either'
+    rateTypes?: Set<string>               // granular rate-type pills (1Y/2Y/3Y/5Y Fixed, Floating) — Rates-page parity
+    features?: Set<string>                // feature pills (waiver_sale, partial_repayment, free_conversion)
     includeBuc?: boolean                  // refinancing = completed property, so default false
     grossMonthlyIncome?: number
     existingMonthlyDebts?: number
@@ -153,6 +159,7 @@ export interface RecommendedPackage {
     eligible: boolean | null
     fit: Fit                              // suitability vs the client's profile
     reasons: string[]                     // technical notes / caveats
+    appeal: boolean                       // min-loan up to 10% above the client's loan — bank may approve on appeal
 }
 
 // Weighting kept as named deltas so it's easy to tune.
@@ -202,16 +209,6 @@ function assessSuitability(
     return { score, reasons, hardConflict }
 }
 
-export function matchesPropertyType(pkgType: string, clientType?: string): boolean {
-    if (!clientType) return true
-    const p = pkgType.toLowerCase()
-    if (p.includes('hdb / private')) return true
-    const c = clientType.toLowerCase()
-    if (c === 'hdb' || c.includes('hdb')) return p.includes('hdb')
-    if (c === 'ec' || c.includes('executive')) return p.includes('executive')
-    return p.includes('private')          // private_condo / landed / private
-}
-
 export function matchesPreference(category: string, preference?: string, includeBuc = false): boolean {
     if (category === 'BUC' && !includeBuc) return false
     if (!preference || preference === 'either') return true
@@ -228,13 +225,19 @@ export function recommendPackages(
     const { outstandingLoan, remainingTenureYears } = criteria
     const eligibleByCapacity = criteria.grossMonthlyIncome != null
 
-    const candidates = packages.filter(pkg =>
-        pkg.min_loan_size <= outstandingLoan &&
-        matchesPropertyType(pkg.property_type, criteria.propertyType) &&
-        matchesPreference(pkg.category, criteria.preference, criteria.includeBuc)
-    )
+    // Same filtering as the Rates page: loan-size tiering (+ priority thresholds
+    // + ≤10% appeal), exclude the current bank, property type, preference (BUC
+    // boundary), then the granular rate-type and feature pills.
+    const candidates = applyLoanSizeFilter(packages, outstandingLoan, new Set(criteria.priorityBanks ?? []))
+        .filter(({ pkg }) =>
+            (!criteria.currentBank || pkg.bank !== criteria.currentBank) &&
+            matchesPropType(pkg, criteria.propType ?? '') &&
+            matchesPreference(pkg.category, criteria.preference, criteria.includeBuc) &&
+            matchesRateType(pkg, criteria.rateTypes ?? new Set()) &&
+            matchesFeature(pkg, criteria.features ?? new Set())
+        )
 
-    const scored: RecommendedPackage[] = candidates.map(pkg => {
+    const scored: RecommendedPackage[] = candidates.map(({ pkg, appeal }) => {
         const projection = projectPackage(pkg, outstandingLoan, remainingTenureYears, sora)
         const reasons: string[] = [...projection.notes]
 
@@ -264,18 +267,20 @@ export function recommendPackages(
 
         const fit = assessSuitability(pkg, sora, criteria)
 
-        return { pkg, projection, savings, tdsrRatioPct, eligible, fit, reasons }
+        return { pkg, projection, savings, tdsrRatioPct, eligible, fit, reasons, appeal }
     })
 
     // Rank, in order of precedence:
     //  1. packages we can actually price
-    //  2. genuine fit (a hard mismatch — e.g. long lock-in but selling soon — is
+    //  2. strict qualifiers above appeal-eligible (the client may not get appeal ones)
+    //  3. genuine fit (a hard mismatch — e.g. long lock-in but selling soon — is
     //     demoted regardless of price; recommending it would be wrong)
-    //  3. highest monthly saving (money stays the lead factor among suitable options)
-    //  4. better suitability score (breaks near-ties)
-    //  5. lowest lock-in average rate
+    //  4. highest monthly saving (money stays the lead factor among suitable options)
+    //  5. better suitability score (breaks near-ties)
+    //  6. lowest lock-in average rate
     return scored.sort((a, b) => {
         if (a.projection.computable !== b.projection.computable) return a.projection.computable ? -1 : 1
+        if (a.appeal !== b.appeal) return a.appeal ? 1 : -1
         if (a.fit.hardConflict !== b.fit.hardConflict) return a.fit.hardConflict ? 1 : -1
         const sa = a.savings?.monthlySaving ?? -Infinity
         const sb = b.savings?.monthlySaving ?? -Infinity

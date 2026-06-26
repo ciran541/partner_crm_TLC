@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getServerUser } from '@/lib/auth/getUser'
 import { canAccessInsurance, canAccessProperty } from '@/lib/permissions'
-import { fetchDomesticRatesFromMas, FIELD_CONFIG } from '@/lib/insurance/domesticRates'
+import { getDomesticRates, FIELD_CONFIG } from '@/lib/insurance/domesticRates'
 
 // GET /api/insurance/resources/domestic-rates?start=YYYY-MM-DD&end=YYYY-MM-DD
 // Returns daily MAS domestic interest rate rows filtered by date range.
-// The underlying MAS fetch is 24h cached; filtering is per-request.
+// Served from domestic_rates DB table (fast); first call auto-populates from MAS.
 
 export async function GET(req: Request) {
     const { user, profile } = await getServerUser()
@@ -20,18 +20,10 @@ export async function GET(req: Request) {
     const start = searchParams.get('start') ?? '2005-01-01'
     const end   = searchParams.get('end')   ?? new Date().toISOString().slice(0, 10)
 
-    const allRows = await fetchDomesticRatesFromMas()
+    const { rows, sampleRow } = await getDomesticRates(start, end)
 
-    // Filter by date range and sort ascending
-    const rows = allRows
-        .filter(r => {
-            const d = String(r.end_of_day ?? '')
-            return d >= start && d <= end
-        })
-        .sort((a, b) => String(b.end_of_day ?? '').localeCompare(String(a.end_of_day ?? '')))
-
-    // Discover which FIELD_CONFIG keys actually exist in the data (from first row)
-    const firstRow = allRows[0] ?? {}
+    // Discover which FIELD_CONFIG keys exist in the data (using sample row for field names)
+    const firstRow = sampleRow ?? {}
     const availableKeys = FIELD_CONFIG.filter(f => f.key in firstRow).map(f => f.key)
 
     return NextResponse.json({ rows, availableKeys, total: rows.length })

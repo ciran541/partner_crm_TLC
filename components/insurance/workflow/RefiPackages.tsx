@@ -4,9 +4,32 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPackages, type RecommendedPackage } from '@/lib/insurance/rateRecommend'
+import { workflowPropType, seedRateTypesFromPreference, packageStyle, stripBankPrefix, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule } from '@/lib/insurance/rateSchedule'
 import Spinner from '@/components/shared/Spinner'
-import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, TrendingDown } from 'lucide-react'
+import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, TrendingDown, SlidersHorizontal, RefreshCcw } from 'lucide-react'
+
+/** Flexi / Traditional badge — matches the Rates page. */
+function StyleBadge({ style }: { style: 'flexi' | 'traditional' | null }) {
+    if (!style) return null
+    return style === 'flexi'
+        ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#03a9e7] bg-sky-50 border border-[#03a9e7]/30 rounded-full px-1.5 py-0.5 whitespace-nowrap"><RefreshCcw size={9} className="shrink-0" />Flexi</span>
+        : <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-1.5 py-0.5 whitespace-nowrap"><Lock size={9} className="text-slate-400 shrink-0" />Traditional</span>
+}
+
+// Granular Fixed-lock-in + Floating pills (BUC is property-driven, never a manual pill).
+const REFINE_RATE_TYPES = RATE_TYPE_OPTIONS.filter(o => o.key !== 'BUC')
+
+function RefinePill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+    return (
+        <button type="button" onClick={onClick}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all ${
+                active ? 'bg-[#052d4a] text-white border-[#052d4a]'
+                       : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400 hover:text-slate-700'}`}>
+            {children}
+        </button>
+    )
+}
 
 interface Props {
     loan: number
@@ -16,6 +39,8 @@ interface Props {
     currentRatePct?: number
     clawbackAmount?: number
     preference: 'fixed' | 'floating' | 'both'
+    priorityBanks?: string[]        // banks where the client holds priority status (lowers min-loan tier)
+    currentBank?: string            // client's existing bank — excluded (refinancing moves away)
     selectedId?: string
     onSelect: (rec: RecommendedPackage, sora: SoraRates | null) => void
 }
@@ -23,7 +48,7 @@ interface Props {
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 
 export default function RefiPackages({
-    loan, tenureYears, propertyType, includeBuc, currentRatePct, clawbackAmount, preference, selectedId, onSelect,
+    loan, tenureYears, propertyType, includeBuc, currentRatePct, clawbackAmount, preference, priorityBanks, currentBank, selectedId, onSelect,
 }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
@@ -31,6 +56,17 @@ export default function RefiPackages({
     const [error, setError] = useState<string | null>(null)
     const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({})
     const toggleDetails = (id: string) => setOpenDetails(prev => ({ ...prev, [id]: !prev[id] }))
+
+    // Rates-page refine pills (ephemeral). Granular rate type only applies to a
+    // completed property; for a BUC/uncompleted one only BUC packages exist, so the
+    // rate-type row is hidden. Seeded once from the client's saved preference.
+    const showRateTypePills = !includeBuc
+    const [rateTypes, setRateTypes] = useState<Set<string>>(
+        () => showRateTypePills ? seedRateTypesFromPreference(preference) : new Set())
+    const [features, setFeatures] = useState<Set<string>>(() => new Set())
+    const toggle = (set: Set<string>, setter: (s: Set<string>) => void, key: string) => {
+        const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); setter(n)
+    }
 
     useEffect(() => {
         let active = true
@@ -57,10 +93,14 @@ export default function RefiPackages({
         remainingTenureYears: tenureYears,
         currentRatePct,
         clawbackAmount,
-        propertyType,
-        preference: preference === 'both' ? 'either' : preference,
+        propType: workflowPropType(propertyType, !!includeBuc),
+        priorityBanks,
+        currentBank,
+        preference: 'either',          // BUC boundary only; the rate-type pills drive fixed/floating
+        rateTypes,
+        features,
         includeBuc,
-    }), [packages, sora, loan, tenureYears, currentRatePct, clawbackAmount, propertyType, preference, includeBuc])
+    }), [packages, sora, loan, tenureYears, currentRatePct, clawbackAmount, propertyType, includeBuc, priorityBanks, currentBank, rateTypes, features])
 
     const isFloating = (cat: string) => cat === 'Floating (Completed)' || cat === 'BUC'
     const fixed = useMemo(() => ranked.filter(r => r.pkg.category === 'Fixed').slice(0, 3), [ranked])
@@ -80,8 +120,10 @@ export default function RefiPackages({
         </div>
     )
 
-    const showFixed = preference !== 'floating'
-    const showFloating = preference !== 'fixed'
+    const noneSel = rateTypes.size === 0
+    const anyFixedSel = ['1Y_FIXED', '2Y_FIXED', '3Y_FIXED', '5Y_FIXED'].some(k => rateTypes.has(k))
+    const showFixed = noneSel || anyFixedSel
+    const showFloating = noneSel || rateTypes.has('FLOATING_COMPLETED')
 
     const card = (rec: RecommendedPackage, best: boolean) => {
         const isSelected = rec.pkg.id === selectedId
@@ -101,10 +143,12 @@ export default function RefiPackages({
                                 {rec.pkg.bank} · {rec.pkg.category}
                                 {rec.pkg.lockin_years ? ` · ${rec.pkg.lockin_years}Y lock-in` : ' · No lock-in'}
                             </p>
-                            <p className="text-xs text-slate-500 truncate">{rec.pkg.package_name}</p>
+                            <p className="text-xs text-slate-500 truncate">{stripBankPrefix(rec.pkg.package_name, rec.pkg.bank)}</p>
                             <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                {best && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Best match</span>}
+                                {best && !rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Best match</span>}
+                                {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal</span>}
                                 {saving != null && saving > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1"><TrendingDown size={10} /> Save {fmt(saving)}</span>}
+                                <StyleBadge style={packageStyle(rec.pkg)} />
                             </div>
                         </div>
                         <div className="text-right shrink-0">
@@ -124,6 +168,14 @@ export default function RefiPackages({
                             <p className="font-semibold text-slate-500 uppercase tracking-wide text-[10px] mb-1">Rate schedule</p>
                             <ul className="space-y-0.5">{scheduleLines.map((l, i) => <li key={i} className="flex gap-1.5"><span className="text-slate-300">•</span>{l}</li>)}</ul>
                         </div>
+                        {rec.pkg.features?.length > 0 && (
+                            <div>
+                                <p className="font-semibold text-slate-500 uppercase tracking-wide text-[10px] mb-1">Features</p>
+                                <ul className="space-y-0.5">
+                                    {rec.pkg.features.map((f, i) => <li key={i} className="flex gap-1.5"><span className="text-emerald-400">✓</span>{f}</li>)}
+                                </ul>
+                            </div>
+                        )}
                         {rec.pkg.subsidies && <p><span className="font-semibold text-slate-500">Subsidies: </span>{rec.pkg.subsidies}</p>}
                         {rec.pkg.min_loan_note && <p><span className="font-semibold text-slate-500">Min loan: </span>{rec.pkg.min_loan_note}</p>}
                         {rec.savings?.netSaving2yr != null && <p><span className="font-semibold text-slate-500">2-yr net saving: </span>{fmt(rec.savings.netSaving2yr)}</p>}
@@ -154,6 +206,30 @@ export default function RefiPackages({
                     No live SORA yet — floating rates can&apos;t be priced. Ask an admin to hit &ldquo;Refresh SORA&rdquo; on the Rates page. Fixed packages still compute.
                 </div>
             )}
+
+            {/* Refine — granular rate type + features (Rates-page parity) */}
+            <div className="px-4 pt-3 space-y-2">
+                {showRateTypePills && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+                            <SlidersHorizontal size={11} /> Rate type
+                        </span>
+                        {REFINE_RATE_TYPES.map(o => (
+                            <RefinePill key={o.key} active={rateTypes.has(o.key)} onClick={() => toggle(rateTypes, setRateTypes, o.key)}>
+                                {o.label}
+                            </RefinePill>
+                        ))}
+                    </div>
+                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Features</span>
+                    {FEATURE_OPTIONS.map(o => (
+                        <RefinePill key={o.key} active={features.has(o.key)} onClick={() => toggle(features, setFeatures, o.key)}>
+                            {o.label}
+                        </RefinePill>
+                    ))}
+                </div>
+            </div>
 
             <div className="p-3 grid sm:grid-cols-2 gap-4">
                 {showFixed && (

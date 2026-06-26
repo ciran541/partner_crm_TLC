@@ -17,19 +17,26 @@
 
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
-import { projectPackage, matchesPropertyType, type PackageProjection } from '@/lib/insurance/rateRecommend'
+import { projectPackage, type PackageProjection } from '@/lib/insurance/rateRecommend'
+import { applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 
 export interface PurchaseRecommendCriteria {
     loan: number
     tenureYears: number
     propertyType?: string                          // 'hdb' | 'private_condo' | 'landed' | 'ec'
+    propType?: PropTypeFilter                      // Rates-page vocab — matches the browse page exactly
     bucOnly?: boolean                              // uncompleted property → only BUC/floating packages
     preference?: 'fixed' | 'floating' | 'either'
+    rateTypes?: Set<string>                        // granular rate-type pills — Rates-page parity
+    features?: Set<string>                         // feature pills
+    priorityBanks?: string[]                       // banks where the client holds priority status
+    excludeBank?: string                           // omit packages from this bank (e.g. IPA bank)
 }
 
 export interface PurchaseRecommendation {
     pkg: MortgagePackage
     projection: PackageProjection
+    appeal: boolean                                // min-loan up to 10% above the loan — bank may approve on appeal
 }
 
 /**
@@ -56,21 +63,28 @@ export function recommendPurchasePackages(
 ): PurchaseRecommendation[] {
     const { loan, tenureYears } = criteria
 
-    const candidates = packages.filter(pkg =>
-        pkg.min_loan_size <= loan &&
-        matchesPropertyType(pkg.property_type, criteria.propertyType) &&
-        matchesPurchasePreference(pkg.category, criteria.preference, criteria.bucOnly),
-    )
+    // Same filtering as the Rates page: loan-size tiering (+ priority thresholds
+    // + ≤10% appeal), exclude the IPA bank, property type, purchase preference.
+    const candidates = applyLoanSizeFilter(packages, loan, new Set(criteria.priorityBanks ?? []))
+        .filter(({ pkg }) =>
+            (!criteria.excludeBank || pkg.bank !== criteria.excludeBank) &&
+            matchesPropType(pkg, criteria.propType ?? '') &&
+            matchesPurchasePreference(pkg.category, criteria.preference, criteria.bucOnly) &&
+            matchesRateType(pkg, criteria.rateTypes ?? new Set()) &&
+            matchesFeature(pkg, criteria.features ?? new Set()),
+        )
 
-    const scored: PurchaseRecommendation[] = candidates.map(pkg => ({
+    const scored: PurchaseRecommendation[] = candidates.map(({ pkg, appeal }) => ({
         pkg,
         projection: projectPackage(pkg, loan, tenureYears, sora),
+        appeal,
     }))
 
-    // Rank: priceable first → cheapest lock-in average rate → lowest year-1 rate
-    // → shorter lock-in as a final tiebreak.
+    // Rank: priceable first → strict qualifiers above appeal-eligible → cheapest
+    // lock-in average rate → lowest year-1 rate → shorter lock-in as a final tiebreak.
     return scored.sort((a, b) => {
         if (a.projection.computable !== b.projection.computable) return a.projection.computable ? -1 : 1
+        if (a.appeal !== b.appeal) return a.appeal ? 1 : -1
         const ra = a.projection.avgRateLockinPct ?? Infinity
         const rb = b.projection.avgRateLockinPct ?? Infinity
         if (ra !== rb) return ra - rb

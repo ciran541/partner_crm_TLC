@@ -912,6 +912,7 @@ export default function EquityLoanWorkflowPanel({
                     propertyType={meta?.ratesType}
                     includeBuc={false}
                     preference={data.rate_preference ?? 'both'}
+                    currentBank={data.current_bank}
                     selectedId={selectedPkgId}
                     onSelect={onSelectPackage}
                 />

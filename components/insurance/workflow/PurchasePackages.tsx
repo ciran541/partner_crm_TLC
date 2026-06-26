@@ -4,9 +4,32 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPurchasePackages, type PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
+import { workflowPropType, seedRateTypesFromPreference, packageStyle, stripBankPrefix, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule } from '@/lib/insurance/rateSchedule'
 import Spinner from '@/components/shared/Spinner'
-import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen } from 'lucide-react'
+import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, SlidersHorizontal, RefreshCcw } from 'lucide-react'
+
+/** Flexi / Traditional badge — matches the Rates page. */
+function StyleBadge({ style }: { style: 'flexi' | 'traditional' | null }) {
+    if (!style) return null
+    return style === 'flexi'
+        ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#03a9e7] bg-sky-50 border border-[#03a9e7]/30 rounded-full px-1.5 py-0.5 whitespace-nowrap"><RefreshCcw size={9} className="shrink-0" />Flexi</span>
+        : <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-1.5 py-0.5 whitespace-nowrap"><Lock size={9} className="text-slate-400 shrink-0" />Traditional</span>
+}
+
+// Granular Fixed-lock-in + Floating pills (BUC is property-driven, never a manual pill).
+const REFINE_RATE_TYPES = RATE_TYPE_OPTIONS.filter(o => o.key !== 'BUC')
+
+function RefinePill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+    return (
+        <button type="button" onClick={onClick}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-all ${
+                active ? 'bg-[#052d4a] text-white border-[#052d4a]'
+                       : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400 hover:text-slate-700'}`}>
+            {children}
+        </button>
+    )
+}
 
 interface Props {
     loan: number                                   // loan size — filters min loan + prices the package
@@ -14,6 +37,7 @@ interface Props {
     propertyType?: 'hdb' | 'private_condo' | 'landed' | 'ec'
     bucOnly?: boolean                              // uncompleted property → floating/BUC packages only
     preference?: 'fixed' | 'floating' | 'either'   // rate preference
+    priorityBanks?: string[]                       // banks where the client holds priority status
     selectedId?: string
     excludeBank?: string                           // omit packages from this bank (e.g. IPA bank)
     onSelect: (rec: PurchaseRecommendation, sora: SoraRates | null) => void
@@ -24,7 +48,7 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 // New-purchase recommendation deliberately uses only loan size, property type and
 // rate preference — no income/TDSR (precise on paper but unreliable vs the bank's
 // real assessment), no horizon signals.
-export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, preference, selectedId, excludeBank, onSelect }: Props) {
+export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, preference, priorityBanks, selectedId, excludeBank, onSelect }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
     const [loading, setLoading] = useState(true)
@@ -32,6 +56,17 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
     const [expanded, setExpanded] = useState(false)
     const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({})
     const toggleDetails = (id: string) => setOpenDetails(prev => ({ ...prev, [id]: !prev[id] }))
+
+    // Rates-page refine pills (ephemeral). Granular rate type only applies to a
+    // completed purchase; an uncompleted (BUC) one has only BUC packages, so the
+    // rate-type row is hidden. Seeded once from the client's saved preference.
+    const showRateTypePills = !bucOnly
+    const [rateTypes, setRateTypes] = useState<Set<string>>(
+        () => showRateTypePills ? seedRateTypesFromPreference(preference) : new Set())
+    const [features, setFeatures] = useState<Set<string>>(() => new Set())
+    const toggle = (set: Set<string>, setter: (s: Set<string>) => void, key: string) => {
+        const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); setter(n)
+    }
 
     useEffect(() => {
         let active = true
@@ -53,10 +88,13 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
         return () => { active = false }
     }, [])
 
-    const ranked = useMemo(() => {
-        const all = recommendPurchasePackages(packages, sora, { loan, tenureYears, propertyType, bucOnly, preference })
-        return excludeBank ? all.filter(r => r.pkg.bank !== excludeBank) : all
-    }, [packages, sora, loan, tenureYears, propertyType, preference, bucOnly, excludeBank])
+    const ranked = useMemo(() => recommendPurchasePackages(packages, sora, {
+        loan, tenureYears,
+        propType: workflowPropType(propertyType, !!bucOnly),
+        bucOnly,
+        preference: 'either',          // BUC boundary only; the rate-type pills drive fixed/floating
+        rateTypes, features, priorityBanks, excludeBank,
+    }), [packages, sora, loan, tenureYears, propertyType, bucOnly, rateTypes, features, priorityBanks, excludeBank])
 
     const visible = expanded ? ranked : ranked.slice(0, 3)
 
@@ -108,6 +146,30 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                 </div>
             )}
 
+            {/* Refine — granular rate type + features (Rates-page parity) */}
+            <div className="px-4 pt-3 space-y-2">
+                {showRateTypePills && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+                            <SlidersHorizontal size={11} /> Rate type
+                        </span>
+                        {REFINE_RATE_TYPES.map(o => (
+                            <RefinePill key={o.key} active={rateTypes.has(o.key)} onClick={() => toggle(rateTypes, setRateTypes, o.key)}>
+                                {o.label}
+                            </RefinePill>
+                        ))}
+                    </div>
+                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Features</span>
+                    {FEATURE_OPTIONS.map(o => (
+                        <RefinePill key={o.key} active={features.has(o.key)} onClick={() => toggle(features, setFeatures, o.key)}>
+                            {o.label}
+                        </RefinePill>
+                    ))}
+                </div>
+            </div>
+
             <div className="p-3 space-y-2">
                 {visible.map(rec => {
                     const isSelected = rec.pkg.id === selectedId
@@ -117,6 +179,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                     const scheduleLines = formatRateSchedule(rec.pkg.rate_schedule)
                     const isCheapest = rec.pkg.id === ranked[0]?.pkg.id
                     const hasSubsidy = !!rec.pkg.subsidies && !/^\s*(no|none|nil)/i.test(rec.pkg.subsidies)
+                    const style = packageStyle(rec.pkg)
                     return (
                         <div key={rec.pkg.id}
                             className={`rounded-lg border transition-all overflow-hidden ${
@@ -132,11 +195,13 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                                             {rec.pkg.bank} · {rec.pkg.category}
                                             {rec.pkg.lockin_years ? ` · ${rec.pkg.lockin_years}Y lock-in` : ' · No lock-in'}
                                         </p>
-                                        <p className="text-xs text-slate-500 truncate">{rec.pkg.package_name}</p>
-                                        {(isCheapest || hasSubsidy) && (
+                                        <p className="text-xs text-slate-500 truncate">{stripBankPrefix(rec.pkg.package_name, rec.pkg.bank)}</p>
+                                        {(isCheapest || hasSubsidy || rec.appeal || style) && (
                                             <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                                {isCheapest && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Lowest rate</span>}
+                                                {isCheapest && !rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Lowest rate</span>}
+                                                {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal</span>}
                                                 {hasSubsidy && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Subsidy / rebate</span>}
+                                                <StyleBadge style={style} />
                                             </div>
                                         )}
                                     </div>

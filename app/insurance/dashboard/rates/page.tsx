@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MortgagePackage, MortgagePackageInput, RateScheduleEntry, RateCategory } from '@/lib/types/rates'
 import { formatRateEntry } from '@/lib/insurance/rateSchedule'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
+import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
 import RateIngestionModal from '@/components/insurance/rates/RateIngestionModal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
@@ -51,27 +52,11 @@ function shortLoan(n: number): string {
 
 // ── Filter config ─────────────────────────────────────────────────────────
 
-interface RateTypeOption { key: string; label: string; category: string; lockin: number | null }
-const RATE_TYPE_OPTIONS: RateTypeOption[] = [
-    { key: '1Y_FIXED',           label: '1 Year Fixed',         category: 'Fixed',                lockin: 1    },
-    { key: '2Y_FIXED',           label: '2 Year Fixed',         category: 'Fixed',                lockin: 2    },
-    { key: '3Y_FIXED',           label: '3 Year Fixed',         category: 'Fixed',                lockin: 3    },
-    { key: '5Y_FIXED',           label: '5 Year Fixed',         category: 'Fixed',                lockin: 5    },
-    { key: 'FLOATING_COMPLETED', label: 'Floating (Completed)', category: 'Floating (Completed)', lockin: null },
-    { key: 'BUC',                label: 'BUC / BTO',            category: 'BUC',                  lockin: null },
-]
-
 const PROPERTY_TYPE_OPTIONS = [
     { value: 'hdb',               label: 'HDB'                          },
     { value: 'bto',               label: 'BTO'                          },
     { value: 'private_completed', label: 'Private (Completed)'          },
     { value: 'private_uc',        label: 'Private (Under Construction)' },
-]
-
-const FEATURE_OPTIONS = [
-    { key: 'waiver_sale',       label: 'Waiver Due to Sale'          },
-    { key: 'partial_repayment', label: 'Partial Repayment'           },
-    { key: 'free_conversion',   label: 'Free Conversion (after 12M)' },
 ]
 
 // ── Column definitions ────────────────────────────────────────────────────
@@ -93,121 +78,12 @@ const COLUMN_DEFS: ColumnDef[] = [
     { key: 'BUC',      label: 'BUC / BTO',      accentClass: 'bg-amber-500',  accentHex: '#f59e0b', match: p => p.category === 'BUC' },
 ]
 
-type PropTypeFilter = '' | 'hdb' | 'bto' | 'private_completed' | 'private_uc'
-
 // ── Filter logic ──────────────────────────────────────────────────────────
-
-/** Number of fixed-rate years in the schedule (excludes thereafter). Used for
- *  column assignment and rate-type filtering — a package is "1 Year Fixed" when
- *  it has exactly 1 fixed entry, regardless of its lock-in period. */
-function fixedRateYears(pkg: MortgagePackage): number {
-    return pkg.rate_schedule.filter(e => e.type === 'fixed' && !e.thereafter).length
-}
-
-/** Remove the bank name prefix from a package name (it's already shown as the card title). */
-function stripBankPrefix(name: string, bank: string): string {
-    if (!name.toLowerCase().startsWith(bank.toLowerCase())) return name
-    return name.slice(bank.length).replace(/^\s*[-–—:,*]\s*/, '').trim()
-}
-
-/** Flexi = free conversion available before lock-in ends. Traditional = no early conversion. */
-function packageStyle(pkg: MortgagePackage): 'flexi' | 'traditional' | null {
-    if (pkg.lockin_years === 0) return null
-    const lockinMonths = pkg.lockin_years * 12
-    const convEntry = pkg.features.map(f => f.toLowerCase())
-        .find(f => f.includes('conversion') || f.includes('convert'))
-    if (!convEntry) return 'traditional'
-    const m = convEntry.match(/(\d+)\s*months?/i)
-    if (!m) return 'flexi'  // conversion with no stated timeframe = anytime
-    return parseInt(m[1]) < lockinMonths ? 'flexi' : 'traditional'
-}
 
 function isRateTypeDisabled(key: string, propType: PropTypeFilter) {
     if (key === 'BUC' && (propType === 'hdb' || propType === 'private_completed')) return true
     if (key !== 'BUC' && (propType === 'bto' || propType === 'private_uc')) return true
     return false
-}
-
-function matchesRateType(pkg: MortgagePackage, rateTypes: Set<string>) {
-    if (rateTypes.size === 0) return true
-    return RATE_TYPE_OPTIONS.some(o => rateTypes.has(o.key) && pkg.category === o.category && (o.lockin === null || fixedRateYears(pkg) === o.lockin))
-}
-
-function matchesPropType(pkg: MortgagePackage, propType: PropTypeFilter) {
-    if (!propType) return true
-    const pt = pkg.property_type.toLowerCase()
-    const isHdb = pt.includes('hdb')
-    const isPrivate = pt.includes('private') || pt.includes('executive')
-    const isBuc = pkg.category === 'BUC'
-    if (propType === 'hdb')               return isHdb && !isBuc
-    if (propType === 'bto')               return isHdb && isBuc
-    if (propType === 'private_completed') return isPrivate && !isBuc
-    if (propType === 'private_uc')        return isPrivate && isBuc
-    return true
-}
-
-function matchesFeature(pkg: MortgagePackage, features: Set<string>) {
-    if (features.size === 0) return true
-    const fl = pkg.features.map(f => f.toLowerCase())
-    for (const fk of features) {
-        const ok = fk === 'waiver_sale'       ? fl.some(f => f.includes('waiver') && (f.includes('sale') || f.includes('sold')))
-                 : fk === 'partial_repayment' ? fl.some(f => f.includes('partial'))
-                 : fk === 'free_conversion'   ? fl.some(f => {
-                       if (!f.includes('conversion') && !f.includes('convert')) return false
-                       const m = f.match(/(\d+)\s*months?/i)
-                       return !m || parseInt(m[1]) <= 12
-                   })
-                 : false
-        if (!ok) return false
-    }
-    return true
-}
-
-/** Parse a priority customer minimum loan size from min_loan_note.
- *  Looks for patterns like "Priority Banking: min $300K" or "Priority: min $500K". */
-function parsePriorityMin(note: string | null | undefined): number | null {
-    if (!note) return null
-    const lower = note.toLowerCase()
-    if (!lower.includes('priority') && !lower.includes('privilege') && !lower.includes('premier')) return null
-    const m = note.match(/\$?([\d.]+)\s*([KkMm])?/)
-    if (!m) return null
-    let n = parseFloat(m[1])
-    if (!Number.isFinite(n)) return null
-    const suffix = (m[2] || '').toLowerCase()
-    if (suffix === 'k') n *= 1_000
-    else if (suffix === 'm') n *= 1_000_000
-    return n
-}
-
-function applyLoanSizeFilter(pkgs: MortgagePackage[], loan: number, priorityBanks: Set<string> = new Set()): { pkg: MortgagePackage; appeal: boolean }[] {
-    const groups = new Map<string, MortgagePackage[]>()
-    for (const pkg of pkgs) {
-        const key = `${pkg.bank}|${pkg.category}|${pkg.property_type}|${pkg.lockin_years}`
-        if (!groups.has(key)) groups.set(key, [])
-        groups.get(key)!.push(pkg)
-    }
-    const result: { pkg: MortgagePackage; appeal: boolean }[] = []
-    for (const [, group] of groups) {
-        // For priority banking clients, use the lower threshold from min_loan_note if the
-        // bank is one where the client has priority status.
-        const effectiveMin = (pkg: MortgagePackage): number => {
-            if (priorityBanks.has(pkg.bank)) {
-                const pm = parsePriorityMin(pkg.min_loan_note)
-                if (pm != null && pm < pkg.min_loan_size) return pm
-            }
-            return pkg.min_loan_size
-        }
-        const strict = group.filter(p => effectiveMin(p) <= loan)
-        if (strict.length > 0) {
-            const maxTier = Math.max(...strict.map(p => effectiveMin(p)))
-            strict.filter(p => effectiveMin(p) === maxTier).forEach(p => result.push({ pkg: p, appeal: false }))
-        }
-        // Within 10% above the loan → bank may approve on appeal.
-        const VARIANCE = 1 / 0.9
-        group.filter(p => effectiveMin(p) > loan && effectiveMin(p) <= loan * VARIANCE)
-            .forEach(p => result.push({ pkg: p, appeal: true }))
-    }
-    return result
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────

@@ -1020,6 +1020,7 @@ export default function DecouplingWorkflowPanel({
                     includeBuc={pkgIncludeBuc}
                     currentRatePct={data.current_rate}
                     preference={data.rate_preference ?? 'both'}
+                    currentBank={data.current_bank}
                     selectedId={selectedPkgId}
                     onSelect={onSelectPackage}
                 />

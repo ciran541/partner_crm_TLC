@@ -101,6 +101,73 @@ export async function refreshSora(): Promise<SoraRates | null> {
     return latest
 }
 
+/**
+ * Single-fetch refresh: pulls the MAS endpoint once and updates both sora_rates
+ * (SORA fields) and domestic_rates (full row). Use this in the daily cron instead
+ * of refreshSora() to avoid a second 8MB round-trip for domestic rates.
+ */
+export async function refreshAll(): Promise<SoraRates | null> {
+    const key = process.env.MAS_API_KEY
+    if (!key) { console.error('[sora] MAS_API_KEY not set'); return null }
+
+    let json: { elements?: unknown[] }
+    try {
+        const res = await fetch(MAS_URL, {
+            headers: { keyid: key, accept: 'application/json' },
+            cache: 'no-store',
+        })
+        if (!res.ok) { console.error('[sora] MAS fetch failed:', res.status); return null }
+        json = await res.json()
+    } catch (e) {
+        console.error('[sora] refreshAll fetch threw:', String(e))
+        return null
+    }
+
+    const rows = (json?.elements ?? []) as unknown as Record<string, unknown>[]
+
+    // Find the latest row that has usable compounded SORA values
+    let latest: Record<string, unknown> | null = null
+    for (const r of rows) {
+        if (r.comp_sora_1m == null && r.comp_sora_3m == null) continue
+        if (typeof r.end_of_day !== 'string') continue
+        if (!latest || (r.end_of_day as string) > (latest.end_of_day as string)) latest = r
+    }
+    if (!latest) return null
+
+    const soraRow: SoraRates = {
+        value_date:    latest.end_of_day as string,
+        sora:          num(latest.sora),
+        sora_index:    num(latest.sora_index),
+        comp_sora_1m:  num(latest.comp_sora_1m),
+        comp_sora_3m:  num(latest.comp_sora_3m),
+        comp_sora_6m:  num(latest.comp_sora_6m),
+        published_date: latest.published_date
+            ? (latest.published_date as string).slice(0, 10)
+            : null,
+    }
+
+    const admin = createAdminClient()
+    const now = new Date().toISOString()
+    const { end_of_day, ...domRest } = latest
+
+    const [soraResult] = await Promise.all([
+        admin.from('sora_rates').upsert(
+            { ...soraRow, fetched_at: now },
+            { onConflict: 'value_date' }
+        ),
+        admin.from('domestic_rates').upsert(
+            { value_date: end_of_day as string, data: domRest, fetched_at: now },
+            { onConflict: 'value_date' }
+        ),
+    ])
+
+    if (soraResult.error) {
+        console.error('[sora] sora_rates upsert failed:', soraResult.error.message)
+        return null
+    }
+    return soraRow
+}
+
 /** Fetch ALL rows from MAS (same endpoint, different mapping). Used for one-time historical backfill. */
 export async function fetchAllSoraFromMas(): Promise<SoraRates[]> {
     const key = process.env.MAS_API_KEY
@@ -166,17 +233,26 @@ export async function fetchSoraHistoryForChart(): Promise<Pick<SoraRates, 'value
     } catch (e) { console.error('[sora] fetchSoraHistoryForChart threw:', String(e)); return [] }
 }
 
-/** Read all stored SORA rows (chart columns only), oldest first. */
+/** Read all stored SORA rows (chart columns only), oldest first.
+ *  PostgREST hard-caps each response at 1000 rows regardless of `.limit()`, so we
+ *  page through with `.range()` until a short page signals the end. Without this the
+ *  chart only ever saw the first 1000 rows (2005–mid-2009) and "latest" was wrong. */
 export async function getAllSoraFromDb(): Promise<Pick<SoraRates, 'value_date' | 'sora' | 'comp_sora_1m' | 'comp_sora_3m'>[]> {
     const admin = createAdminClient()
-    const { data, error } = await admin
-        .from('sora_rates')
-        .select('value_date, sora, comp_sora_1m, comp_sora_3m')
-        .gte('value_date', '2005-01-01')
-        .order('value_date', { ascending: true })
-        .limit(50000)   // PostgREST defaults to 1000 rows; override for full history
-    if (error || !data) return []
-    return data
+    const PAGE = 1000
+    const all: Pick<SoraRates, 'value_date' | 'sora' | 'comp_sora_1m' | 'comp_sora_3m'>[] = []
+    for (let from = 0; ; from += PAGE) {
+        const { data, error } = await admin
+            .from('sora_rates')
+            .select('value_date, sora, comp_sora_1m, comp_sora_3m')
+            .gte('value_date', '2005-01-01')
+            .order('value_date', { ascending: true })
+            .range(from, from + PAGE - 1)
+        if (error || !data) break
+        all.push(...data)
+        if (data.length < PAGE) break
+    }
+    return all
 }
 
 /** Read all stored bank benchmarks (FHR6, FHR8, etc.) as a key→value map. */

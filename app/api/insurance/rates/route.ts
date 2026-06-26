@@ -39,12 +39,11 @@ export async function GET(request: Request) {
     if (category) query = query.eq('category', category)
     if (q) query = query.ilike('package_name', `%${q}%`)
 
-    const { data, error } = await query
+    const [{ data, error }, sora] = await Promise.all([
+        query,
+        getCurrentSora(),
+    ])
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-    // Current SORA travels with the packages so Step 4 can compute floating rates
-    // in one round-trip. Cheap (single latest-row read); harmless for the browse page.
-    const sora = await getCurrentSora()
 
     return NextResponse.json({ data: data ?? [], isAdmin: isAdmin(profile.role), sora })
 }
