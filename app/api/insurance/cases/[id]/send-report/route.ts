@@ -15,10 +15,13 @@ import { getPurchaseWorkflow } from '@/lib/types/workflow'
 
 import { computeDecouple, inputsFromDecoupleWorkflow } from '@/lib/insurance/decoupleCalc'
 import { buildDecouplePresentationHtml } from '@/lib/insurance/decouplePresentation'
-import { getDecoupleWorkflow } from '@/lib/types/workflow'
+import { getDecoupleWorkflow, getEquityLoanWorkflow } from '@/lib/types/workflow'
+
+import { buildEquityLoanPresentationHtml } from '@/lib/insurance/equityLoanReport'
 
 import { generatePdf } from '@/lib/email/generatePdf'
 import { sendWorkflowReport } from '@/lib/email/sendWorkflowReport'
+import { getCurrentSora } from '@/lib/insurance/sora'
 
 // POST /api/insurance/cases/[id]/send-report
 // Generates a PDF from the case's workflow data and emails it to the client.
@@ -37,14 +40,20 @@ export async function POST(
     const { id: caseId } = await params
     const admin = createAdminClient()
 
-    // Fetch case (agent can only access their own cases; admins see all)
+    // Fetch case (agent can only access their own cases; admins see all).
+    // Note: `profiles` has no email column — the agent's email comes from the auth
+    // user (user.email), so we only join the agent's name here.
     const { data: row, error } = await admin
         .from('cases')
-        .select('id, case_type, client_name, client_email, workflow_data, profiles(name, email)')
+        .select('id, case_type, client_name, client_email, workflow_data, profiles(name)')
         .eq('id', caseId)
-        .single()
+        .maybeSingle()
 
-    if (error || !row) {
+    if (error) {
+        console.error('[send-report] case query failed:', error.message)
+        return NextResponse.json({ error: `Failed to load case: ${error.message}` }, { status: 500 })
+    }
+    if (!row) {
         return NextResponse.json({ error: 'Case not found' }, { status: 404 })
     }
     if (!row.client_email) {
@@ -53,7 +62,7 @@ export async function POST(
 
     const agentProfile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles
     const agentName: string = profile.name ?? agentProfile?.name ?? ''
-    const agentEmail: string | undefined = user.email ?? agentProfile?.email ?? undefined
+    const agentEmail: string | undefined = user.email ?? undefined
 
     let html: string
     const caseType = row.case_type as string
@@ -77,6 +86,7 @@ export async function POST(
         const totalOutstanding = (wf.outstanding_disbursed ?? 0) + (wf.outstanding_undisbursed ?? 0)
         html = buildRefiPresentationHtml({
             clientName: row.client_name ?? undefined,
+            advisorName: agentName || undefined,
             propertyLabel: meta?.label ?? 'Property',
             currentBank: wf.current_bank,
             currentRatePct: wf.current_rate,
@@ -86,6 +96,7 @@ export async function POST(
             selectedPackage: wf.selected_package_snapshot
                 ? (wf.selected_package_snapshot as Parameters<typeof buildRefiPresentationHtml>[0]['selectedPackage'])
                 : null,
+            sora: await getCurrentSora(),
         })
 
     } else if (caseType === 'Purchase') {
@@ -118,6 +129,7 @@ export async function POST(
             selectedPackage: wf.selected_package_snapshot
                 ? (wf.selected_package_snapshot as Parameters<typeof buildPurchasePresentationHtml>[0]['selectedPackage'])
                 : null,
+            sora: await getCurrentSora(),
         })
 
     } else if (caseType === 'Decouple') {
@@ -137,20 +149,35 @@ export async function POST(
             workflow: wf,
         })
 
+    } else if (caseType === 'Equity Loan') {
+        const wf = getEquityLoanWorkflow(row.workflow_data)
+        html = buildEquityLoanPresentationHtml({
+            clientName: row.client_name ?? undefined,
+            advisorName: agentName || undefined,
+            workflow: wf,
+            sora: await getCurrentSora(),
+        })
+
     } else {
         return NextResponse.json({ error: `Report not available for case type: ${caseType}` }, { status: 422 })
     }
 
-    const pdfBuffer = await generatePdf(html)
+    try {
+        const pdfBuffer = await generatePdf(html)
 
-    await sendWorkflowReport({
-        clientEmail: row.client_email,
-        clientName: row.client_name ?? undefined,
-        agentEmail,
-        agentName: agentName || undefined,
-        caseType: caseType as 'Refinancing' | 'Purchase' | 'Decouple',
-        pdfBuffer,
-    })
+        await sendWorkflowReport({
+            clientEmail: row.client_email,
+            clientName: row.client_name ?? undefined,
+            agentEmail,
+            agentName: agentName || undefined,
+            caseType: caseType as 'Refinancing' | 'Purchase' | 'Decouple' | 'Equity Loan',
+            pdfBuffer,
+        })
+    } catch (e) {
+        const message = e instanceof Error ? e.message : 'Failed to generate or send the report'
+        console.error('[send-report] failed:', message)
+        return NextResponse.json({ error: message }, { status: 502 })
+    }
 
     return NextResponse.json({ ok: true })
 }

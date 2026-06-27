@@ -19,6 +19,7 @@ export interface RefiProposalPackage {
     monthly_saving?: number | null
     net_saving_2yr?: number | null
     rate_schedule?: RateScheduleEntry[]
+    features?: string[]
 }
 
 const money = (n: number) => `$${Math.round(n).toLocaleString()}`

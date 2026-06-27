@@ -176,6 +176,7 @@ export default function PurchaseWorkflowPanel({
                 package_name: rec.pkg.package_name,
                 lockin_years: rec.pkg.lockin_years,
                 rate_schedule: rec.pkg.rate_schedule,
+                features: rec.pkg.features,
                 projected_monthly: rec.projection.newMonthly,
                 year1_rate: rec.projection.perYear[0]?.ratePct ?? null,
                 avg_rate_lockin_pct: rec.projection.avgRateLockinPct ?? null,
@@ -1348,6 +1349,7 @@ export default function PurchaseWorkflowPanel({
                     computation={computation}
                     remarks={remarks}
                     selectedPackage={data.selected_package_snapshot as ProposalPackage | undefined}
+                    sora={soraForAmort}
                     onClose={() => setPresentationOpen(false)}
                     onOpenChatSummary={() => { setPresentationOpen(false); setProposalOpen(true) }}
                 />

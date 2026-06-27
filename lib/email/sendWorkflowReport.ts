@@ -10,20 +10,22 @@ interface SendWorkflowReportParams {
     clientName?: string
     agentEmail?: string
     agentName?: string
-    caseType: 'Refinancing' | 'Purchase' | 'Decouple'
+    caseType: 'Refinancing' | 'Purchase' | 'Decouple' | 'Equity Loan'
     pdfBuffer: Buffer
 }
 
 const REPORT_LABELS: Record<SendWorkflowReportParams['caseType'], string> = {
-    Refinancing: 'Refinancing Plan',
-    Purchase:    'Home Financing Plan',
-    Decouple:    'Decoupling Plan',
+    Refinancing:    'Refinancing Plan',
+    Purchase:       'Home Financing Plan',
+    Decouple:       'Decoupling Plan',
+    'Equity Loan':  'Equity Loan Plan',
 }
 
 const REPORT_FILENAMES: Record<SendWorkflowReportParams['caseType'], string> = {
-    Refinancing: 'refinancing-plan.pdf',
-    Purchase:    'home-financing-plan.pdf',
-    Decouple:    'decoupling-plan.pdf',
+    Refinancing:    'refinancing-plan.pdf',
+    Purchase:       'home-financing-plan.pdf',
+    Decouple:       'decoupling-plan.pdf',
+    'Equity Loan':  'equity-loan-plan.pdf',
 }
 
 export async function sendWorkflowReport(params: SendWorkflowReportParams): Promise<void> {
@@ -39,7 +41,7 @@ export async function sendWorkflowReport(params: SendWorkflowReportParams): Prom
 
     const cc = agentEmail ? [agentEmail] : undefined
 
-    await resend.emails.send({
+    const { data, error } = await resend.emails.send({
         from: FROM,
         to: clientEmail,
         cc,
@@ -103,4 +105,13 @@ export async function sendWorkflowReport(params: SendWorkflowReportParams): Prom
 </body>
 </html>`,
     })
+
+    // Resend does NOT throw on API errors — it returns { data, error }. Surface it
+    // so the API route reports the real failure instead of a false success.
+    if (error) {
+        const detail = typeof error === 'object' ? JSON.stringify(error) : String(error)
+        console.error('[sendWorkflowReport] Resend send failed:', detail)
+        throw new Error(`Email could not be sent: ${detail}`)
+    }
+    console.log('[sendWorkflowReport] Resend accepted email, id:', data?.id, '→', clientEmail)
 }

@@ -15,6 +15,7 @@ export interface ProposalPackage {
     year1_rate?: number | null
     projected_monthly?: number | null
     rate_schedule?: RateScheduleEntry[]
+    features?: string[]
 }
 
 const money = (n: number) => `$${Math.round(n).toLocaleString()}`

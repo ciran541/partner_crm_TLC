@@ -10,9 +10,10 @@ import type { SoraRates } from '@/lib/insurance/sora'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import RefiPackages from './RefiPackages'
+import EquityLoanPresentation from './EquityLoanPresentation'
 import {
     Building2, CheckCircle2, AlertTriangle, Info, Save,
-    Wallet, ArrowRight, CalendarRange, Percent, Lock, Plus, Trash2,
+    Wallet, ArrowRight, CalendarRange, Percent, Lock, Plus, Trash2, Mail, Sparkles,
 } from 'lucide-react'
 
 // ─── Property type catalogue ──────────────────────────────────────────────────
@@ -39,6 +40,7 @@ interface Props {
     data: EquityLoanWorkflow
     onChange: (updated: EquityLoanWorkflow) => void
     clientName?: string
+    clientEmail?: string
     caseId?: string
     embedded?: boolean
     saving?: boolean
@@ -48,9 +50,31 @@ interface Props {
 }
 
 export default function EquityLoanWorkflowPanel({
-    data, onChange, clientName, embedded, saving, saved, hasClientName, onContinue,
+    data, onChange, clientName, clientEmail, caseId, embedded, saving, saved, hasClientName, onContinue,
 }: Props) {
     const update = (patch: Partial<EquityLoanWorkflow>) => onChange({ ...data, ...patch })
+    const [sendingReport, setSendingReport] = useState(false)
+    const [reportSent, setReportSent] = useState(false)
+    const [reportError, setReportError] = useState<string | null>(null)
+    const [presentationOpen, setPresentationOpen] = useState(false)
+
+    const handleSendReport = async () => {
+        if (!caseId) return
+        setSendingReport(true)
+        setReportError(null)
+        try {
+            const res = await fetch(`/api/insurance/cases/${caseId}/send-report`, { method: 'POST' })
+            const body = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(body.error ?? 'Failed to send report')
+            setReportSent(true)
+            setTimeout(() => setReportSent(false), 4000)
+        } catch (e) {
+            setReportError(e instanceof Error ? e.message : 'Failed to send report')
+            setTimeout(() => setReportError(null), 5000)
+        } finally {
+            setSendingReport(false)
+        }
+    }
 
     const [customSubsidy, setCustomSubsidy] = useState(
         data.subsidy_return_amount != null && !SUBSIDY_PRESETS.includes(String(data.subsidy_return_amount)),
@@ -159,6 +183,7 @@ export default function EquityLoanWorkflowPanel({
                 package_name: rec.pkg.package_name,
                 lockin_years: rec.pkg.lockin_years,
                 rate_schedule: rec.pkg.rate_schedule,
+                features: rec.pkg.features,
                 projected_monthly: rec.projection.newMonthly,
                 year1_rate: rec.projection.perYear[0]?.ratePct ?? null,
                 avg_rate_lockin_pct: rec.projection.avgRateLockinPct,
@@ -1386,6 +1411,47 @@ export default function EquityLoanWorkflowPanel({
                 )
             })()}
 
+            {/* Next step — present / email the client report */}
+            <div className="rounded-xl border-2 border-[#052d4a]/15 bg-gradient-to-b from-slate-50 to-white p-5 space-y-3">
+                <p className="text-sm font-bold text-[#052d4a] flex items-center gap-2">
+                    <ArrowRight size={16} className="text-[#03a9e7]" /> Next step
+                </p>
+                <div className="flex flex-wrap gap-2.5">
+                    <button
+                        type="button"
+                        onClick={() => setPresentationOpen(true)}
+                        disabled={!(data.market_price && data.market_price > 0)}
+                        title={!(data.market_price) ? 'Enter the property valuation first' : 'Show the client presentation'}
+                        className={`text-sm px-4 py-2 rounded-lg font-semibold flex items-center gap-2 transition-colors ${
+                            data.market_price && data.market_price > 0
+                                ? 'bg-[#052d4a] text-white hover:bg-[#063a5e]'
+                                : 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                        }`}
+                    >
+                        <Sparkles size={15} /> Present to client
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleSendReport}
+                        disabled={!clientEmail || sendingReport}
+                        title={!clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
+                        className={`text-sm px-4 py-2 rounded-lg border font-semibold flex items-center gap-2 transition-colors ${
+                            reportSent
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : !clientEmail
+                                    ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-white'
+                                    : 'border-slate-200 text-slate-600 hover:bg-slate-50 bg-white'
+                        }`}
+                    >
+                        <Mail size={15} />
+                        {sendingReport ? 'Sending…' : reportSent ? 'Sent!' : 'Email to client'}
+                    </button>
+                </div>
+                {reportError && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
+                )}
+            </div>
+
             {/* Hand-off */}
             {embedded && onContinue && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-[#03a9e7]/25 bg-sky-50/40 p-4">
@@ -1398,6 +1464,15 @@ export default function EquityLoanWorkflowPanel({
                         {hasClientName ? 'Save & continue' : 'Add client details & save'} <ArrowRight size={16} />
                     </button>
                 </div>
+            )}
+
+            {presentationOpen && (
+                <EquityLoanPresentation
+                    clientName={clientName}
+                    workflow={data}
+                    sora={soraForAmort}
+                    onClose={() => setPresentationOpen(false)}
+                />
             )}
         </div>
     )

@@ -608,6 +608,7 @@ export default function CaseDetailPage() {
                         data={workflowData as EquityLoanWorkflow}
                         onChange={handleWorkflowChange}
                         clientName={caseData.client_name}
+                        clientEmail={caseData.client_email}
                         caseId={caseId}
                         embedded
                         saving={workflowSaving}

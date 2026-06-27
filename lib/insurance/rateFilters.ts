@@ -149,8 +149,9 @@ export function stripBankPrefix(name: string, bank: string): string {
 }
 
 /** Flexi = free conversion available before lock-in ends; Traditional = no early
- *  conversion. Null when there's no lock-in (the distinction doesn't apply). */
-export function packageStyle(pkg: MortgagePackage): 'flexi' | 'traditional' | null {
+ *  conversion. Null when there's no lock-in (the distinction doesn't apply).
+ *  Takes a structural subset so it works on both a full package and a stored snapshot. */
+export function packageStyle(pkg: { lockin_years: number; features: string[] }): 'flexi' | 'traditional' | null {
     if (pkg.lockin_years === 0) return null
     const lockinMonths = pkg.lockin_years * 12
     const convEntry = pkg.features.map(f => f.toLowerCase())

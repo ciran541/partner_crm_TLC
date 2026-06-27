@@ -19,13 +19,19 @@ import { type RecommendedPackage } from '@/lib/insurance/rateRecommend'
 import { type SoraRates } from '@/lib/insurance/sora'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 import RefiPackages from './RefiPackages'
+import DecouplePresentation from './DecouplePresentation'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save,
     ArrowRight, ExternalLink, Users, Building2, Percent,
-    Wallet, CalendarRange, Lock, Plus, Trash2, Mail,
+    Wallet, CalendarRange, Lock, Plus, Trash2, Mail, Sparkles,
 } from 'lucide-react'
+
+const DECOUPLE_PROPERTY_LABELS: Record<string, string> = {
+    completed_condo: 'Completed Condo', completed_ec: 'Completed EC',
+    incompleted_condo: 'Incompleted Condo', landed: 'Landed',
+}
 
 interface Props {
     data: DecoupleWorkflow
@@ -59,6 +65,7 @@ export default function DecouplingWorkflowPanel({
     const [sendingReport, setSendingReport] = React.useState(false)
     const [reportSent, setReportSent] = React.useState(false)
     const [reportError, setReportError] = React.useState<string | null>(null)
+    const [presentationOpen, setPresentationOpen] = useState(false)
 
     const handleSendReport = async () => {
         if (!caseId) return
@@ -1603,6 +1610,19 @@ export default function DecouplingWorkflowPanel({
                 <div className="flex flex-wrap gap-2.5">
                     <button
                         type="button"
+                        onClick={() => setPresentationOpen(true)}
+                        disabled={!computation.ready}
+                        title={!computation.ready ? 'Complete the inputs above first' : 'Show the client presentation'}
+                        className={`text-sm px-4 py-2 rounded-lg font-semibold flex items-center gap-2 transition-colors ${
+                            computation.ready
+                                ? 'bg-[#052d4a] text-white hover:bg-[#063a5e]'
+                                : 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                        }`}
+                    >
+                        <Sparkles size={15} /> Present to client
+                    </button>
+                    <button
+                        type="button"
                         onClick={handleSendReport}
                         disabled={!clientEmail || sendingReport}
                         title={!clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
@@ -1635,6 +1655,18 @@ export default function DecouplingWorkflowPanel({
                         {hasClientName ? 'Save & continue' : 'Add client details & save'} <ArrowRight size={16} />
                     </button>
                 </div>
+            )}
+
+            {presentationOpen && (
+                <DecouplePresentation
+                    clientName={clientName}
+                    propertyLabel={DECOUPLE_PROPERTY_LABELS[data.property_type ?? ''] ?? 'Property'}
+                    propertyValuation={data.property_valuation ?? 0}
+                    buyerShare={data.buyer_share ?? 50}
+                    computation={computation}
+                    workflow={data}
+                    onClose={() => setPresentationOpen(false)}
+                />
             )}
         </div>
     )
