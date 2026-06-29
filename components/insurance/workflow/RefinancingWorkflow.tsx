@@ -23,6 +23,7 @@ import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import Modal from '@/components/shared/Modal'
 import RefiPackages from './RefiPackages'
 import RefiPresentation from './RefiPresentation'
+import MultiBankSelect from './MultiBankSelect'
 import {
     Building2, CheckCircle2, AlertTriangle, Info, Lightbulb, Save, Wallet, Receipt,
     ArrowRight, ClipboardList, CalendarClock, CalendarRange, Copy, Printer, Circle,
@@ -543,7 +544,8 @@ export default function RefinancingWorkflowPanel({
                 const cpfUsed = data.cpf_used ?? 0
                 const loanPct = valuation > 0 ? totalLoan / valuation : 0
                 const cpfPct = valuation > 0 ? cpfUsed / valuation : 0
-                const equityPct = Math.max(0, 0.75 - loanPct - cpfPct)
+                const equityPctRaw = 0.75 - loanPct - cpfPct   // raw headroom — can be negative; shown as-is
+                const equityPct = Math.max(0, equityPctRaw)
                 const equityAmt = equityPct * valuation
                 const cashPct = Math.max(0, 1 - loanPct - cpfPct)
                 const cashAmt = cashPct * valuation
@@ -584,9 +586,9 @@ export default function RefinancingWorkflowPanel({
                                         <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
                                         <p className="text-sm text-slate-600">
                                             75% − {pct(loanPct)} (loan) − {pct(cpfPct)} (CPF)
-                                            {' '}= <span className={`font-bold ${equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPct)}</span>
+                                            {' '}= <span className={`font-bold ${equityPctRaw > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPctRaw)}</span>
                                         </p>
-                                        {equityPct <= 0 ? (
+                                        {equityPctRaw <= 0 ? (
                                             <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
                                                 <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
                                                 <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
@@ -607,13 +609,22 @@ export default function RefinancingWorkflowPanel({
                                                     </p>
                                                 </div>
                                                 <Question label="Would you like to take up an equity loan?">
-                                                    <FieldInput commas prefix="$"
-                                                        value={data.equity_loan_amount ?? ''}
-                                                        placeholder={`max ${money(equityAmt)}`}
-                                                        onChange={v => {
-                                                            const n = num(v)
-                                                            update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
-                                                        }} />
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="flex-1">
+                                                            <FieldInput commas prefix="$"
+                                                                value={data.equity_loan_amount ?? ''}
+                                                                placeholder={`max ${money(equityAmt)}`}
+                                                                onChange={v => {
+                                                                    const n = num(v)
+                                                                    update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
+                                                                }} />
+                                                        </div>
+                                                        <button type="button"
+                                                            onClick={() => update({ equity_loan_amount: Math.floor(equityAmt) })}
+                                                            className="text-[11px] font-semibold text-[#03a9e7] hover:text-[#0290c5] bg-sky-50 hover:bg-sky-100 px-2.5 py-2 rounded-md shrink-0 transition-colors">
+                                                            Max
+                                                        </button>
+                                                    </div>
                                                 </Question>
                                             </div>
                                         )}
@@ -1060,24 +1071,7 @@ export default function RefinancingWorkflowPanel({
                 )
             })()}
 
-            {/* ── Rate preference ── */}
-            {data.property_type && (
-                <Section title="Rate Preference" icon={<Percent size={15} />}>
-                    <Question label="Any preference for fixed or floating rates?">
-                        <PillSelect
-                            value={data.rate_preference ?? 'both'}
-                            onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'both' })}
-                            options={[
-                                { value: 'both', label: 'Both' },
-                                { value: 'fixed', label: 'Fixed' },
-                                { value: 'floating', label: 'Floating' },
-                            ]}
-                        />
-                    </Question>
-                </Section>
-            )}
-
-            {/* ── Packages (shown right after rate preference) ── */}
+            {/* ── Packages ── */}
             {computation.totalOutstanding > 0 && data.property_type && (
                 <RefiPackages
                     loan={computation.totalOutstanding}
@@ -1086,7 +1080,6 @@ export default function RefinancingWorkflowPanel({
                     includeBuc={!!meta?.buc}
                     currentRatePct={data.current_rate}
                     clawbackAmount={computation.subsidyClawback}
-                    preference={data.rate_preference ?? 'both'}
                     priorityBanks={data.priority_client ? data.priority_banks : undefined}
                     currentBank={data.current_bank}
                     selectedId={selectedPkgId}
@@ -2126,41 +2119,6 @@ function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenureMin, te
                 </p>
             )}
         </Section>
-    )
-}
-
-let bankCache: { id: string; name: string }[] | null = null
-
-function MultiBankSelect({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
-    const [banks, setBanks] = useState<{ id: string; name: string }[]>(bankCache ?? [])
-    useEffect(() => {
-        if (bankCache) { setBanks(bankCache); return }
-        fetch('/api/insurance/banks')
-            .then(r => r.json())
-            .then(json => { bankCache = json.data ?? []; setBanks(bankCache!) })
-            .catch(() => {})
-    }, [])
-
-    const toggle = (name: string) => {
-        const set = new Set(value)
-        if (set.has(name)) set.delete(name); else set.add(name)
-        onChange([...set])
-    }
-
-    if (!banks.length) return <p className="text-[12px] text-slate-400">Loading banks…</p>
-    return (
-        <div className="flex flex-wrap gap-2">
-            {banks.map(b => (
-                <button key={b.id} type="button" onClick={() => toggle(b.name)}
-                    className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
-                        value.includes(b.name)
-                            ? 'bg-[#052d4a] border-[#052d4a] text-white'
-                            : 'bg-white border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7]'
-                    }`}>
-                    {b.name}
-                </button>
-            ))}
-        </div>
     )
 }
 

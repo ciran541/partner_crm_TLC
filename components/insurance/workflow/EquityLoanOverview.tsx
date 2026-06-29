@@ -87,6 +87,9 @@ export default function EquityLoanOverview({ workflow, stage, followUpDate, onOp
                         <Field label="Equity Loan Amount" value={money(workflow.equity_loan_amount)} highlight />
                     )}
                     <Field label="Rate Preference" value={workflow.rate_preference ? RATE_PREF_LABEL[workflow.rate_preference] : undefined} />
+                    {workflow.priority_client && (
+                        <Field label="Priority Banks" value={workflow.priority_banks?.length ? workflow.priority_banks.join(', ') : 'Yes'} />
+                    )}
                 </div>
 
                 {/* Current loan summary (not fully paid) */}

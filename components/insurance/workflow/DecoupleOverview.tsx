@@ -85,6 +85,9 @@ export default function DecoupleOverview({ workflow, stage, followUpDate, onOpen
 
                     {/* Buyer */}
                     <Field label="Buyer Residency" value={workflow.residency ? RESIDENCY_LABEL[workflow.residency] : undefined} />
+                    {workflow.priority_client && (
+                        <Field label="Priority Banks" value={workflow.priority_banks?.length ? workflow.priority_banks.join(', ') : 'Yes'} />
+                    )}
                 </div>
 
                 {/* Scenario badge */}

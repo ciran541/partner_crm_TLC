@@ -92,6 +92,9 @@ export default function PurchaseOverview({ workflow, stage, followUpDate, onOpen
                     {workflow.rate_preference && (
                         <Field label="Rate Preference" value={workflow.rate_preference === 'fixed' ? 'Fixed' : workflow.rate_preference === 'floating' ? 'Floating' : 'Either'} />
                     )}
+                    {workflow.priority_client && (
+                        <Field label="Priority Banks" value={workflow.priority_banks?.length ? workflow.priority_banks.join(', ') : 'Yes'} />
+                    )}
 
                     {/* Row 4 — Computed outputs (highlighted) */}
                     {comp.weightedAge != null && comp.weightedAge > 0 && (

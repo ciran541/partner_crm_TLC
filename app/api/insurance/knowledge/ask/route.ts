@@ -4,6 +4,7 @@ import { getServerUser } from '@/lib/auth/getUser'
 import { canAccessInsurance } from '@/lib/permissions'
 import { embedText } from '@/lib/insurance/embed'
 import { composeAnswer } from '@/lib/insurance/askGemini'
+import { normalizeQuery } from '@/lib/insurance/normalizeQuery'
 
 // POST /api/insurance/knowledge/ask  { question }
 // Grounded RAG: retrieve matching articles, then Gemini composes an answer
@@ -23,16 +24,22 @@ export async function POST(request: Request) {
     const supabaseAdmin = createAdminClient()
     const SELECT = 'id, title, content, category, tags, case_types'
 
+    // ── Normalize the query before retrieval ──
+    // Rewrites vague/poorly-typed questions into clean precise questions so
+    // semantic search matches the Q&A knowledge base accurately.
+    const normalizedQuestion = await normalizeQuery(question)
+    const searchQuery = normalizedQuestion || question
+
     // ── Retrieve candidate articles ──
     let candidates: any[] = []
     let semanticHit = false
 
-    const queryEmbedding = await embedText(question)
+    const queryEmbedding = await embedText(searchQuery)
     if (queryEmbedding) {
         const { data: matches } = await supabaseAdmin.rpc('match_knowledge_articles', {
             query_embedding: queryEmbedding,
             match_threshold: 0.25,
-            match_count: 5,
+            match_count: 3,
             filter_case_type: null,
         })
         if (matches?.length) { candidates = matches; semanticHit = true }
@@ -44,15 +51,15 @@ export async function POST(request: Request) {
             .from('knowledge_articles')
             .select(SELECT)
             .eq('status', 'published')
-            .textSearch('search_vector', question, { type: 'websearch', config: 'english' })
-            .limit(5)
+            .textSearch('search_vector', searchQuery, { type: 'websearch', config: 'english' })
+            .limit(3)
         if (ftsData) candidates = ftsData
     }
 
     // Tier 3: keyword ILIKE fallback — extract non-trivial words and match on title/content
     if (candidates.length === 0) {
         const stopWords = new Set(['what','is','the','a','an','my','for','of','to','in','on','at','are','how','do','does','can','will','if','client','has','have','with','and','or','but','not','this','that','their','its','be','been','was','were','when'])
-        const keywords = question
+        const keywords = searchQuery
             .toLowerCase()
             .replace(/[^a-z0-9\s]/g, ' ')
             .split(/\s+/)
@@ -64,14 +71,14 @@ export async function POST(request: Request) {
                 .select(SELECT)
                 .eq('status', 'published')
                 .or(keywords.map(k => `title.ilike.%${k}%,content.ilike.%${k}%`).join(','))
-                .limit(5)
+                .limit(3)
             if (ilikeData) candidates = ilikeData
         }
     }
 
     // Re-rank Tier 2/3 results by keyword overlap (semantic is already relevance-ordered)
     if (!semanticHit && candidates.length > 1) {
-        candidates = rankByKeywords(candidates, question)
+        candidates = rankByKeywords(candidates, searchQuery)
     }
 
     // ── Threshold gate: no relevant knowledge → refuse, never call the model ──

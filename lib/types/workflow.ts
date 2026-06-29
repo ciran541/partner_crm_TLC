@@ -105,6 +105,8 @@ export interface PurchaseIpa {
     amount?: number
     tenure?: number
     age_cap?: 65 | 75
+    /** Snapshot of the manually-entered IPA captured before "Use this instead" switched options, so it can be reset back rather than reverse-engineered a second time. */
+    original?: { amount?: number; tenure?: number; age_cap?: 65 | 75 }
 }
 
 export interface PurchaseBorrower {
@@ -125,6 +127,9 @@ export interface PurchaseWorkflow {
     outstanding_housing_loans?: '0' | '1' | '2plus'
     residential_properties_owned?: '1' | '2' | '3plus'
     borrowers?: PurchaseBorrower[]
+    // Priority / privilege banking — unlocks lower min-loan tiers for those banks
+    priority_client?: boolean
+    priority_banks?: string[]
     married?: boolean          // co-owners are a married couple (affects ABSD for SC + PR/Foreigner)
     property_price?: number
     reference_rate?: number
@@ -200,6 +205,10 @@ export interface DecoupleWorkflow {
     // Borrowers — income for TDSR (always collected, both financing paths)
     borrowers?: DecoupleBorrower[]
 
+    // Priority / privilege banking — unlocks lower min-loan tiers for those banks
+    priority_client?: boolean
+    priority_banks?: string[]
+
     // Equity loan amount (filled in if the client wants one)
     equity_loan_amount?: number
 
@@ -272,6 +281,10 @@ export interface EquityLoanWorkflow {
 
     // Borrowers & income
     borrowers?: RefiBorrower[]
+
+    // Priority / privilege banking — unlocks lower min-loan tiers for those banks
+    priority_client?: boolean
+    priority_banks?: string[]
 
     // TDSR exploration tenures
     preferred_tenure_refi?: number                  // home loan tenure (not-fully-paid path)

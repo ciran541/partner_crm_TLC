@@ -11,6 +11,7 @@ import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowSt
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import RefiPackages from './RefiPackages'
 import EquityLoanPresentation from './EquityLoanPresentation'
+import MultiBankSelect from './MultiBankSelect'
 import {
     Building2, CheckCircle2, AlertTriangle, Info, Save,
     Wallet, ArrowRight, CalendarRange, Percent, Lock, Plus, Trash2, Mail, Sparkles,
@@ -168,7 +169,8 @@ export default function EquityLoanWorkflowPanel({
         ? (data.fully_paid ? 0 : totalHomeLoan) / valuation
         : 0
     const cpfPct = valuation > 0 ? cpfUsed / valuation : 0
-    const equityPct = Math.max(0, 0.75 - loanPctOfVal - cpfPct)
+    const equityPctRaw = 0.75 - loanPctOfVal - cpfPct   // raw headroom — can be negative; shown as-is
+    const equityPct = Math.max(0, equityPctRaw)
     const equityAmt = equityPct * valuation
     const equityEligible = equityAmt >= 50_000
     const cashPct = Math.max(0, 1 - loanPctOfVal - cpfPct)
@@ -459,9 +461,9 @@ export default function EquityLoanWorkflowPanel({
                                     <p className="text-xs font-bold text-[#03a9e7] uppercase tracking-wide">Available Equity</p>
                                     <p className="text-sm text-slate-600">
                                         75% − {pct(loanPctOfVal)} (loan) − {pct(cpfPct)} (CPF)
-                                        {' '}= <span className={`font-bold ${equityPct > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPct)}</span>
+                                        {' '}= <span className={`font-bold ${equityPctRaw > 0 ? 'text-emerald-700' : 'text-red-600'}`}>{pct(equityPctRaw)}</span>
                                     </p>
-                                    {equityPct <= 0 ? (
+                                    {equityPctRaw <= 0 ? (
                                         <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
                                             <AlertTriangle size={13} className="text-red-500 shrink-0 mt-0.5" />
                                             <p className="text-[12px] text-red-800">Not eligible for equity loan — combined loan and CPF already reach 75% of property value.</p>
@@ -482,13 +484,22 @@ export default function EquityLoanWorkflowPanel({
                                                 </p>
                                             </div>
                                             <Question label="Equity loan amount">
-                                                <FieldInput commas prefix="$"
-                                                    value={data.equity_loan_amount ?? ''}
-                                                    placeholder={`max ${money(equityAmt)}`}
-                                                    onChange={v => {
-                                                        const n = num(v)
-                                                        update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
-                                                    }} />
+                                                <div className="flex items-center gap-2">
+                                                    <div className="flex-1">
+                                                        <FieldInput commas prefix="$"
+                                                            value={data.equity_loan_amount ?? ''}
+                                                            placeholder={`max ${money(equityAmt)}`}
+                                                            onChange={v => {
+                                                                const n = num(v)
+                                                                update({ equity_loan_amount: n !== undefined ? Math.min(n, equityAmt) : undefined })
+                                                            }} />
+                                                    </div>
+                                                    <button type="button"
+                                                        onClick={() => update({ equity_loan_amount: Math.floor(equityAmt) })}
+                                                        className="text-[11px] font-semibold text-[#03a9e7] hover:text-[#0290c5] bg-sky-50 hover:bg-sky-100 px-2.5 py-2 rounded-md shrink-0 transition-colors">
+                                                        Max
+                                                    </button>
+                                                </div>
                                             </Question>
                                         </div>
                                     )}
@@ -582,6 +593,18 @@ export default function EquityLoanWorkflowPanel({
                         <p className="text-[12px] text-slate-400 flex items-center gap-1.5">
                             <Info size={12} /> Enter borrower age(s) above to capture income for TDSR assessment.
                         </p>
+                    )}
+
+                    <Question label="Is any borrower a priority client with any bank?">
+                        <YesNo value={data.priority_client} onChange={v => update({ priority_client: v, priority_banks: v ? data.priority_banks : [] })} />
+                    </Question>
+                    {data.priority_client && (
+                        <Question label="Which bank(s)? (select all that apply)">
+                            <MultiBankSelect
+                                value={data.priority_banks ?? []}
+                                onChange={v => update({ priority_banks: v })}
+                            />
+                        </Question>
                     )}
                 </Section>
             )}
@@ -912,23 +935,6 @@ export default function EquityLoanWorkflowPanel({
                 )
             })()}
 
-            {/* ── Rate Preference ── */}
-            {data.property_type && (
-                <Section title="Rate Preference" icon={<Percent size={15} />}>
-                    <Question label="Any preference for fixed or floating rates?">
-                        <PillSelect
-                            value={data.rate_preference ?? 'both'}
-                            onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'both' })}
-                            options={[
-                                { value: 'both', label: 'Both' },
-                                { value: 'fixed', label: 'Fixed' },
-                                { value: 'floating', label: 'Floating' },
-                            ]}
-                        />
-                    </Question>
-                </Section>
-            )}
-
             {/* ── Packages ── */}
             {(data.equity_loan_amount ?? 0) > 0 && data.property_type && (
                 <RefiPackages
@@ -936,7 +942,7 @@ export default function EquityLoanWorkflowPanel({
                     tenureYears={equityOnlyTenureMax}
                     propertyType={meta?.ratesType}
                     includeBuc={false}
-                    preference={data.rate_preference ?? 'both'}
+                    priorityBanks={data.priority_client ? data.priority_banks : undefined}
                     currentBank={data.current_bank}
                     selectedId={selectedPkgId}
                     onSelect={onSelectPackage}

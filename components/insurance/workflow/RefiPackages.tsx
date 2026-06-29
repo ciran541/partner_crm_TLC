@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPackages, type RecommendedPackage } from '@/lib/insurance/rateRecommend'
-import { workflowPropType, seedRateTypesFromPreference, packageStyle, stripBankPrefix, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
+import { workflowPropType, packageStyle, stripBankPrefix, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule } from '@/lib/insurance/rateSchedule'
 import Spinner from '@/components/shared/Spinner'
 import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, TrendingDown, SlidersHorizontal, RefreshCcw } from 'lucide-react'
@@ -38,7 +38,6 @@ interface Props {
     includeBuc?: boolean
     currentRatePct?: number
     clawbackAmount?: number
-    preference: 'fixed' | 'floating' | 'both'
     priorityBanks?: string[]        // banks where the client holds priority status (lowers min-loan tier)
     currentBank?: string            // client's existing bank — excluded (refinancing moves away)
     selectedId?: string
@@ -48,7 +47,7 @@ interface Props {
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 
 export default function RefiPackages({
-    loan, tenureYears, propertyType, includeBuc, currentRatePct, clawbackAmount, preference, priorityBanks, currentBank, selectedId, onSelect,
+    loan, tenureYears, propertyType, includeBuc, currentRatePct, clawbackAmount, priorityBanks, currentBank, selectedId, onSelect,
 }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
@@ -59,10 +58,10 @@ export default function RefiPackages({
 
     // Rates-page refine pills (ephemeral). Granular rate type only applies to a
     // completed property; for a BUC/uncompleted one only BUC packages exist, so the
-    // rate-type row is hidden. Seeded once from the client's saved preference.
+    // rate-type row is hidden. Start empty — the list stays hidden until the agent
+    // picks at least one filter (rate type or feature).
     const showRateTypePills = !includeBuc
-    const [rateTypes, setRateTypes] = useState<Set<string>>(
-        () => showRateTypePills ? seedRateTypesFromPreference(preference) : new Set())
+    const [rateTypes, setRateTypes] = useState<Set<string>>(new Set())
     const [features, setFeatures] = useState<Set<string>>(() => new Set())
     const toggle = (set: Set<string>, setter: (s: Set<string>) => void, key: string) => {
         const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); setter(n)
@@ -114,16 +113,13 @@ export default function RefiPackages({
     if (error) return (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Couldn&apos;t load packages: {error}.</div>
     )
-    if (!ranked.length) return (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
-            No matching packages yet for this property type. Admins can add packages on the Rates page.
-        </div>
-    )
-
     const noneSel = rateTypes.size === 0
     const anyFixedSel = ['1Y_FIXED', '2Y_FIXED', '3Y_FIXED', '5Y_FIXED'].some(k => rateTypes.has(k))
     const showFixed = noneSel || anyFixedSel
     const showFloating = noneSel || rateTypes.has('FLOATING_COMPLETED')
+    // Don't surface any package until the agent has narrowed with at least one
+    // filter. BUC has no rate-type pills to pick, so it shows immediately.
+    const needsFilter = showRateTypePills && rateTypes.size === 0 && features.size === 0
 
     const card = (rec: RecommendedPackage, best: boolean) => {
         const isSelected = rec.pkg.id === selectedId
@@ -231,6 +227,15 @@ export default function RefiPackages({
                 </div>
             </div>
 
+            {needsFilter ? (
+                <div className="px-4 py-8 text-center text-sm text-slate-500">
+                    Select a <span className="font-medium text-slate-600">rate type</span> or feature above to see recommended packages.
+                </div>
+            ) : !ranked.length ? (
+                <div className="px-4 py-6 text-sm text-slate-500">
+                    No packages match these filters. Try removing one.
+                </div>
+            ) : (
             <div className="p-3 grid sm:grid-cols-2 gap-4">
                 {showFixed && (
                     <div className="space-y-2">
@@ -245,6 +250,7 @@ export default function RefiPackages({
                     </div>
                 )}
             </div>
+            )}
         </div>
     )
 }

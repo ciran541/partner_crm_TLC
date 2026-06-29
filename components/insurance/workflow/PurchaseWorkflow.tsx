@@ -32,6 +32,7 @@ import type { PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
 import type { SoraRates } from '@/lib/insurance/sora'
 import PurchasePackages from './PurchasePackages'
 import PurchasePresentation from './PurchasePresentation'
+import MultiBankSelect from './MultiBankSelect'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save, FileText, Wallet, XCircle,
     ArrowRight, ClipboardList, Copy, Printer, Circle, Lock, Plus, Trash2,
@@ -413,6 +414,18 @@ export default function PurchaseWorkflowPanel({
                             })()}
                         </Question>
                     )}
+
+                    <Question label="Is any borrower a priority client with any bank?">
+                        <YesNo value={data.priority_client} onChange={v => update({ priority_client: v, priority_banks: v ? data.priority_banks : [] })} />
+                    </Question>
+                    {data.priority_client && (
+                        <Question label="Which bank(s)? (select all that apply)">
+                            <MultiBankSelect
+                                value={data.priority_banks ?? []}
+                                onChange={v => update({ priority_banks: v })}
+                            />
+                        </Question>
+                    )}
                 </Section>
             )}
 
@@ -478,8 +491,32 @@ export default function PurchaseWorkflowPanel({
                                     </Question>
                                 )
                             })()}
-                            {/* Reverse-engineered alternative option — derived from IPA data alone, no income entry needed */}
-                            {data.property_price && data.ipa?.amount && data.ipa?.tenure && data.ipa?.age_cap && (() => {
+                            {/* Once "Use this instead" has switched options, offer a Reset back to the originally-entered
+                                IPA instead of reverse-engineering a second (lossy) time. */}
+                            {data.ipa?.original && (data.ipa.original.amount != null || data.ipa.original.tenure != null) ? (
+                                <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4 space-y-1.5">
+                                    <p className="text-[11px] font-bold text-[#052d4a]">
+                                        Original IPA (Option {data.ipa.original.age_cap === 65 ? '1' : '2'}, age cap {data.ipa.original.age_cap})
+                                    </p>
+                                    <p className="text-sm text-slate-700">
+                                        <span className="font-semibold">{money(data.ipa.original.amount ?? 0)}</span>{' '}
+                                        over <span className="font-semibold">{data.ipa.original.tenure} years</span>
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setAdjustedLoans({})
+                                            const o = data.ipa!.original!
+                                            update({ ipa: { ...data.ipa, amount: o.amount, tenure: o.tenure, age_cap: o.age_cap, original: undefined } })
+                                        }}
+                                        className="mt-0.5 text-[11px] font-semibold text-slate-500 hover:text-slate-700 underline underline-offset-2"
+                                    >
+                                        ↺ Reset to original IPA
+                                    </button>
+                                </div>
+                            ) : (
+                            /* Reverse-engineered alternative option — derived from IPA data alone, no income entry needed */
+                            data.property_price && data.ipa?.amount && data.ipa?.tenure && data.ipa?.age_cap && (() => {
                                 const outstanding = (outstandingLocked ? '0' : (data.outstanding_housing_loans ?? '0')) as OutstandingLoans
                                 const [opt1, opt2] = OPTION_MATRIX[outstanding]
                                 const ipaKey = data.ipa.age_cap === 65 ? '1' : '2'
@@ -508,7 +545,12 @@ export default function PurchaseWorkflowPanel({
                                             type="button"
                                             onClick={() => {
                                                 setAdjustedLoans({})
-                                                update({ ipa: { ...data.ipa, age_cap: altOpt.ageCap as 65 | 75, tenure: altTenure, amount: Math.round(altMaxFromTdsr) } })
+                                                const original = data.ipa?.original ?? {
+                                                    amount: data.ipa!.amount,
+                                                    tenure: data.ipa!.tenure,
+                                                    age_cap: data.ipa!.age_cap as 65 | 75,
+                                                }
+                                                update({ ipa: { ...data.ipa, age_cap: altOpt.ageCap as 65 | 75, tenure: altTenure, amount: Math.round(altMaxFromTdsr), original } })
                                             }}
                                             className="mt-0.5 text-[11px] font-semibold text-[#03a9e7] hover:text-[#0290c5] underline underline-offset-2"
                                         >
@@ -516,7 +558,8 @@ export default function PurchaseWorkflowPanel({
                                         </button>
                                     </div>
                                 )
-                            })()}
+                            })()
+                            )}
                         </>
                     )}
                 </Section>
@@ -750,42 +793,29 @@ export default function PurchaseWorkflowPanel({
                         rule={meta?.rule ?? 'tdsr'}
                     />
 
-                    {/* Rate preference — just above the package list */}
-                    <Section title="Rate Preference" icon={<Info size={15} />}>
-                        {meta && !meta.buc ? (
-                            <Question label="Do you prefer fixed or floating rates?">
-                                <PillSelect
-                                    value={data.rate_preference ?? 'either'}
-                                    onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'either' })}
-                                    options={[
-                                        { value: 'either', label: 'Both' },
-                                        { value: 'fixed', label: 'Fixed' },
-                                        { value: 'floating', label: 'Floating' },
-                                    ]}
-                                />
-                            </Question>
-                        ) : (
-                            <p className="text-[12px] text-slate-500 flex items-start gap-1.5">
-                                <Info size={13} className="mt-0.5 shrink-0 text-[#03a9e7]" />
-                                Only floating rates are available until TOP — package suggestions are floating-only.
-                            </p>
-                        )}
-                        <Tip>Interest rates can only be secured once the OTP from the seller has been obtained.</Tip>
-                    </Section>
-
-                    {/* Packages */}
-                    {computation.options[0]?.finalLoan > 0 && (
-                        <PurchasePackages
-                            loan={computation.options[0].finalLoan}
-                            tenureYears={computation.options[0].tenure}
-                            propertyType={ratesPropertyType(data.property_type)}
-                            bucOnly={!!meta?.buc}
-                            preference={meta?.buc ? 'floating' : (data.rate_preference ?? 'either')}
-                            selectedId={selectedPkgId}
-                            excludeBank={data.ipa_done && data.ipa?.bank ? data.ipa.bank : undefined}
-                            onSelect={onSelectPackage}
-                        />
-                    )}
+                    {/* Packages — priced + filtered for the SELECTED option's loan. The loan
+                        size is the agent's "how much loan does the client actually require?"
+                        amount (adjustedLoans), falling back to the option's bank-approved base.
+                        Option 1 vs Option 2 are different loan sizes, so they recommend
+                        different packages (min-loan tiers differ). */}
+                    {(() => {
+                        const selectedOpt = computation.options.find(o => o.key === liquidityOption) ?? computation.options[0]
+                        if (!selectedOpt || selectedOpt.finalLoan <= 0) return null
+                        const pkgLoan = adjustedLoans[selectedOpt.key] ?? selectedOpt.finalLoan
+                        if (pkgLoan <= 0) return null
+                        return (
+                            <PurchasePackages
+                                loan={pkgLoan}
+                                tenureYears={selectedOpt.tenure}
+                                propertyType={ratesPropertyType(data.property_type)}
+                                bucOnly={!!meta?.buc}
+                                priorityBanks={data.priority_client ? data.priority_banks : undefined}
+                                selectedId={selectedPkgId}
+                                excludeBank={data.ipa_done && data.ipa?.bank ? data.ipa.bank : undefined}
+                                onSelect={onSelectPackage}
+                            />
+                        )
+                    })()}
 
                     {/* BUC Progressive Payment Scheme — New Launch Condo and EC New Launch */}
                     {isBuc && (() => {

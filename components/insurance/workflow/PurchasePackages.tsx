@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPurchasePackages, type PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
-import { workflowPropType, seedRateTypesFromPreference, packageStyle, stripBankPrefix, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
+import { workflowPropType, packageStyle, stripBankPrefix, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule } from '@/lib/insurance/rateSchedule'
 import Spinner from '@/components/shared/Spinner'
 import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, SlidersHorizontal, RefreshCcw } from 'lucide-react'
@@ -36,7 +36,6 @@ interface Props {
     tenureYears: number                            // prices the monthly instalment
     propertyType?: 'hdb' | 'private_condo' | 'landed' | 'ec'
     bucOnly?: boolean                              // uncompleted property → floating/BUC packages only
-    preference?: 'fixed' | 'floating' | 'either'   // rate preference
     priorityBanks?: string[]                       // banks where the client holds priority status
     selectedId?: string
     excludeBank?: string                           // omit packages from this bank (e.g. IPA bank)
@@ -48,7 +47,7 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 // New-purchase recommendation deliberately uses only loan size, property type and
 // rate preference — no income/TDSR (precise on paper but unreliable vs the bank's
 // real assessment), no horizon signals.
-export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, preference, priorityBanks, selectedId, excludeBank, onSelect }: Props) {
+export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, priorityBanks, selectedId, excludeBank, onSelect }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
     const [loading, setLoading] = useState(true)
@@ -59,10 +58,10 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
 
     // Rates-page refine pills (ephemeral). Granular rate type only applies to a
     // completed purchase; an uncompleted (BUC) one has only BUC packages, so the
-    // rate-type row is hidden. Seeded once from the client's saved preference.
+    // rate-type row is hidden. Start empty — the list stays hidden until the agent
+    // picks at least one filter (rate type or feature).
     const showRateTypePills = !bucOnly
-    const [rateTypes, setRateTypes] = useState<Set<string>>(
-        () => showRateTypePills ? seedRateTypesFromPreference(preference) : new Set())
+    const [rateTypes, setRateTypes] = useState<Set<string>>(new Set())
     const [features, setFeatures] = useState<Set<string>>(() => new Set())
     const toggle = (set: Set<string>, setter: (s: Set<string>) => void, key: string) => {
         const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); setter(n)
@@ -96,6 +95,9 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
         rateTypes, features, priorityBanks, excludeBank,
     }), [packages, sora, loan, tenureYears, propertyType, bucOnly, rateTypes, features, priorityBanks, excludeBank])
 
+    // Don't surface any package until the agent has narrowed with at least one
+    // filter. BUC has no rate-type pills to pick, so it shows immediately.
+    const needsFilter = showRateTypePills && rateTypes.size === 0 && features.size === 0
     const visible = expanded ? ranked : ranked.slice(0, 3)
 
     if (loading) return (
@@ -110,12 +112,6 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
         </div>
     )
 
-    if (!ranked.length) return (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
-            No matching packages yet for this property type. Admins can add packages on the Rates page.
-        </div>
-    )
-
     return (
         <div className="rounded-xl border border-[#03a9e7]/30 bg-gradient-to-b from-sky-50/60 to-white overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
@@ -124,7 +120,6 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                     <p className="text-sm font-bold text-[#052d4a] flex items-center gap-2 flex-wrap">
                         Recommended packages
                         {bucOnly && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">Floating only · uncompleted</span>}
-                        {!bucOnly && preference && preference !== 'either' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">{preference === 'fixed' ? 'Fixed preferred' : 'Floating preferred'}</span>}
                     </p>
                     <p className="text-[11px] text-slate-400">
                         Priced for {fmt(loan)} over {tenureYears} yrs · {sora?.value_date
@@ -170,6 +165,15 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                 </div>
             </div>
 
+            {needsFilter ? (
+                <div className="px-4 py-8 text-center text-sm text-slate-500">
+                    Select a <span className="font-medium text-slate-600">rate type</span> or feature above to see recommended packages.
+                </div>
+            ) : !ranked.length ? (
+                <div className="px-4 py-6 text-sm text-slate-500">
+                    No packages match these filters. Try removing one.
+                </div>
+            ) : (
             <div className="p-3 space-y-2">
                 {visible.map(rec => {
                     const isSelected = rec.pkg.id === selectedId
@@ -249,8 +253,9 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                     )
                 })}
             </div>
+            )}
 
-            {ranked.length > 3 && (
+            {!needsFilter && ranked.length > 3 && (
                 <button type="button" onClick={() => setExpanded(v => !v)}
                     className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium text-slate-500 hover:text-[#03a9e7] border-t border-slate-100">
                     {expanded ? 'Show fewer' : `Show all ${ranked.length}`} <ChevronDown size={13} className={expanded ? 'rotate-180' : ''} />

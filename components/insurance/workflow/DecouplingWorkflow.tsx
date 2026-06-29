@@ -20,6 +20,7 @@ import { type SoraRates } from '@/lib/insurance/sora'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 import RefiPackages from './RefiPackages'
 import DecouplePresentation from './DecouplePresentation'
+import MultiBankSelect from './MultiBankSelect'
 import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
@@ -655,13 +656,22 @@ export default function DecouplingWorkflowPanel({
                                         </p>
                                     </div>
                                     <Question label="Would you like to take up an equity loan?">
-                                        <FieldInput commas prefix="$"
-                                            value={data.equity_loan_amount ?? ''}
-                                            placeholder={`max ${money(computation.equityLoanMax)}`}
-                                            onChange={v => {
-                                                const n = num(v)
-                                                update({ equity_loan_amount: n !== undefined ? Math.min(n, computation.equityLoanMax) : undefined })
-                                            }} />
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex-1">
+                                                <FieldInput commas prefix="$"
+                                                    value={data.equity_loan_amount ?? ''}
+                                                    placeholder={`max ${money(computation.equityLoanMax)}`}
+                                                    onChange={v => {
+                                                        const n = num(v)
+                                                        update({ equity_loan_amount: n !== undefined ? Math.min(n, computation.equityLoanMax) : undefined })
+                                                    }} />
+                                            </div>
+                                            <button type="button"
+                                                onClick={() => update({ equity_loan_amount: Math.floor(computation.equityLoanMax) })}
+                                                className="text-[11px] font-semibold text-[#03a9e7] hover:text-[#0290c5] bg-sky-50 hover:bg-sky-100 px-2.5 py-2 rounded-md shrink-0 transition-colors">
+                                                Max
+                                            </button>
+                                        </div>
                                     </Question>
                                 </div>
                             )}
@@ -710,6 +720,17 @@ export default function DecouplingWorkflowPanel({
                         </div>
                     ))}
 
+                    <Question label="Is any borrower a priority client with any bank?">
+                        <YesNo value={data.priority_client} onChange={v => update({ priority_client: v, priority_banks: v ? data.priority_banks : [] })} />
+                    </Question>
+                    {data.priority_client && (
+                        <Question label="Which bank(s)? (select all that apply)">
+                            <MultiBankSelect
+                                value={data.priority_banks ?? []}
+                                onChange={v => update({ priority_banks: v })}
+                            />
+                        </Question>
+                    )}
                 </Section>
             )}
 
@@ -1001,24 +1022,7 @@ export default function DecouplingWorkflowPanel({
                 )
             })()}
 
-            {/* ── 10. RATE PREFERENCE ── */}
-            {computation.ready && scenario !== null && scenario !== 'S4' && (
-                <Section title="Rate Preference" icon={<Percent size={15} />}>
-                    <Question label="Any preference for fixed or floating rates?">
-                        <PillSelect
-                            value={data.rate_preference ?? 'both'}
-                            onChange={v => update({ rate_preference: v as 'fixed' | 'floating' | 'both' })}
-                            options={[
-                                { value: 'both', label: 'Both' },
-                                { value: 'fixed', label: 'Fixed' },
-                                { value: 'floating', label: 'Floating' },
-                            ]}
-                        />
-                    </Question>
-                </Section>
-            )}
-
-            {/* ── 11. RECOMMENDED PACKAGES ── */}
+            {/* ── 10. RECOMMENDED PACKAGES ── */}
             {computation.ready && scenario !== null && scenario !== 'S4' && pkgLoan > 0 && (
                 <RefiPackages
                     loan={pkgLoan}
@@ -1026,7 +1030,7 @@ export default function DecouplingWorkflowPanel({
                     propertyType={pkgPropertyType}
                     includeBuc={pkgIncludeBuc}
                     currentRatePct={data.current_rate}
-                    preference={data.rate_preference ?? 'both'}
+                    priorityBanks={data.priority_client ? data.priority_banks : undefined}
                     currentBank={data.current_bank}
                     selectedId={selectedPkgId}
                     onSelect={onSelectPackage}
