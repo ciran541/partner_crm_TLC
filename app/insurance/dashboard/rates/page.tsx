@@ -4,13 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MortgagePackage, MortgagePackageInput, RateScheduleEntry, RateCategory } from '@/lib/types/rates'
 import { formatRateEntry } from '@/lib/insurance/rateSchedule'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
-import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
+import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, shortLoan, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
 import RateIngestionModal from '@/components/insurance/rates/RateIngestionModal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
-import { Percent, Plus, Pencil, Copy, Trash2, Search, Lock, LockOpen, Wallet, Building2, X, ChevronDown, ChevronUp, RefreshCcw, Upload, Eye } from 'lucide-react'
+import { Percent, Plus, Pencil, Copy, Trash2, Search, Lock, LockOpen, Wallet, Building2, X, ChevronDown, RefreshCcw, Upload, Eye } from 'lucide-react'
 import type { SoraRates } from '@/lib/insurance/sora'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -44,11 +44,6 @@ function shortPropType(pt: string): string {
     return pt
 }
 
-function shortLoan(n: number): string {
-    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
-    if (n >= 1_000)     return `$${Math.round(n / 1_000)}k`
-    return `$${n}`
-}
 
 // ── Filter config ─────────────────────────────────────────────────────────
 
@@ -544,7 +539,6 @@ export default function RatesPage() {
                                             appeal={appeal}
                                             busy={busyId === pkg.id}
                                             confirming={confirmDelete === pkg.id}
-                                            accentClass={col.accentClass}
                                             priorityMin={priorityBanks.has(pkg.bank) ? parsePriorityMin(pkg.min_loan_note) : null}
                                             onEdit={() => { setEditing(pkg); setEditorOpen(true) }}
                                             onDuplicate={() => handleDuplicate(pkg.id)}
@@ -580,7 +574,7 @@ export default function RatesPage() {
 // Expanded: rate schedule, features, subsidies revealed below.
 
 function RateCard({
-    pkg, sora, admin, appeal, busy, confirming, accentClass, priorityMin,
+    pkg, sora, admin, appeal, busy, confirming, priorityMin,
     onEdit, onDuplicate, onPublish, onAskDelete, onCancelDelete, onConfirmDelete,
 }: {
     pkg: MortgagePackage
@@ -589,7 +583,6 @@ function RateCard({
     appeal: boolean
     busy: boolean
     confirming: boolean
-    accentClass: string
     priorityMin?: number | null
     onEdit: () => void
     onDuplicate: () => void
@@ -603,172 +596,151 @@ function RateCard({
     const locked = pkg.lockin_years > 0
 
     return (
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-150 overflow-hidden">
-            {/* 3px top accent */}
-            <div className={`h-[3px] ${accentClass}`} />
-
-            <div className="p-4">
-                {/* ── Always-visible section ─────────────────────────── */}
-
-                {/* Bank row */}
-                <div className="flex items-start justify-between gap-2 mb-1">
-                    <span className="font-bold text-[13px] text-[#052d4a] truncate leading-tight flex-1">
-                        {pkg.bank}
-                    </span>
-                    <div className="flex items-center gap-1 shrink-0">
-                        {pkg.status === 'draft' && (
-                            <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">Draft</span>
-                        )}
-                        {appeal && (
-                            <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200">Appeal</span>
-                        )}
-                    </div>
-                </div>
-
-                {/* Package name — strip leading bank name since it's already the card title */}
-                <p className="text-[11px] text-slate-400 line-clamp-2 leading-snug min-h-[32px] mb-3">
-                    {stripBankPrefix(pkg.package_name, pkg.bank)}
-                </p>
-
-                {/* Rate — the hero */}
-                <div className="mb-4">
-                    <p className="text-[34px] font-bold tabular-nums leading-none tracking-tight text-[#052d4a]">
-                        {head.big}
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-medium">
-                        {head.sub}
-                    </p>
-                </div>
-
-                {/* Key chips */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                    <SmallChip icon={Building2}>{shortPropType(pkg.property_type)}</SmallChip>
-                    <SmallChip icon={locked ? Lock : LockOpen}>
-                        {locked ? `${pkg.lockin_years}Y lock-in` : 'No lock-in'}
-                    </SmallChip>
-                    <SmallChip icon={Wallet}>
-                        {priorityMin != null && priorityMin < pkg.min_loan_size
-                            ? <><span className="line-through text-slate-300 mr-1">{shortLoan(pkg.min_loan_size)}</span><span className="text-violet-600 font-semibold">Min {shortLoan(priorityMin)}</span></>
-                            : <>Min {shortLoan(pkg.min_loan_size)}</>
-                        }
-                    </SmallChip>
-                    {(() => {
-                        const style = packageStyle(pkg)
-                        if (!style) return null
-                        return style === 'flexi'
-                            ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#03a9e7] bg-sky-50 border border-[#03a9e7]/30 rounded-md px-1.5 py-0.5 whitespace-nowrap">
-                                  <RefreshCcw size={9} className="shrink-0" />Flexi
-                              </span>
-                            : <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-200 rounded-md px-1.5 py-0.5 whitespace-nowrap">
-                                  <Lock size={9} className="text-slate-400 shrink-0" />Traditional
-                              </span>
-                    })()}
-                </div>
-
-                {/* ── Expandable section ─────────────────────────────── */}
-                {expanded && (
-                    <div className="mt-4 space-y-3">
-                        {/* Rate schedule */}
-                        <div className="rounded-xl overflow-hidden border border-slate-100 divide-y divide-slate-100">
-                            {pkg.rate_schedule.map((e, i) => {
-                                const yearLabel = e.thereafter ? 'After' : `Y${e.year}`
-                                const rateText  = formatRateEntry(e).split(': ').slice(1).join(': ')
-                                const { rate }  = e.type === 'floating' ? effectiveRate(e, sora) : { rate: null }
-                                const inLockin  = !e.thereafter && typeof e.year === 'number' && e.year <= pkg.lockin_years
-                                return (
-                                    <div key={i} className={`flex items-center justify-between px-3 py-2 text-[11px] ${e.thereafter ? 'bg-slate-50/50' : 'bg-white'}`}>
-                                        <span className={`flex items-center gap-1.5 font-medium ${e.thereafter ? 'text-slate-400' : 'text-slate-600'}`}>
-                                            {inLockin && <span className="w-1 h-1 rounded-full bg-[#03a9e7] shrink-0" />}
-                                            {yearLabel}
-                                        </span>
-                                        <span className="text-slate-700 tabular-nums text-right">
-                                            {rateText}
-                                            {rate != null && <span className="text-[#0277a8] ml-1">({rate.toFixed(2)}%)</span>}
-                                        </span>
-                                    </div>
-                                )
-                            })}
+        <div className={`rounded-lg border bg-white transition-all overflow-hidden hover:border-slate-300 ${appeal ? 'border-amber-200' : 'border-slate-200'}`}>
+            {/* ── Always-visible section (mirrors the workflow package card) ── */}
+            <div className="p-3">
+                <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#052d4a] truncate flex items-center gap-1.5">
+                            {locked ? <Lock size={12} className="text-slate-400 shrink-0" /> : <LockOpen size={12} className="text-slate-400 shrink-0" />}
+                            {pkg.bank}
+                            {locked ? ` · ${pkg.lockin_years}Y lock-in` : ' · No lock-in'}
+                        </p>
+                        <p className="text-xs text-slate-500 truncate">{stripBankPrefix(pkg.package_name, pkg.bank)}</p>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                            {pkg.status === 'draft' && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">Draft</span>
+                            )}
+                            {appeal && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(pkg.min_loan_size)}</span>
+                            )}
+                            <SmallChip icon={Building2}>{shortPropType(pkg.property_type)}</SmallChip>
+                            <SmallChip icon={Wallet}>
+                                {priorityMin != null && priorityMin < pkg.min_loan_size
+                                    ? <><span className="line-through text-slate-300 mr-1">{shortLoan(pkg.min_loan_size)}</span><span className="text-violet-600 font-semibold">Min {shortLoan(priorityMin)}</span></>
+                                    : <>Min {shortLoan(pkg.min_loan_size)}</>
+                                }
+                            </SmallChip>
+                            {(() => {
+                                const style = packageStyle(pkg)
+                                if (!style) return null
+                                return style === 'flexi'
+                                    ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#03a9e7] bg-sky-50 border border-[#03a9e7]/30 rounded-full px-1.5 py-0.5 whitespace-nowrap">
+                                          <RefreshCcw size={9} className="shrink-0" />Flexi
+                                      </span>
+                                    : <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-1.5 py-0.5 whitespace-nowrap">
+                                          <Lock size={9} className="text-slate-400 shrink-0" />Traditional
+                                      </span>
+                            })()}
                         </div>
-
-                        {/* Features */}
-                        {pkg.features.length > 0 && (
-                            <ul className="space-y-1 pt-0.5">
-                                {pkg.features.map((f, i) => (
-                                    <li key={i} className="flex gap-1.5 text-[11px] text-slate-500 leading-snug">
-                                        <span className="text-[#03a9e7] shrink-0 mt-0.5">›</span>
-                                        <span>{f}</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-
-                        {/* Subsidies */}
-                        {pkg.subsidies && (
-                            <p className="text-[11px] text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">
-                                <span className="font-semibold">Subsidy:</span> {pkg.subsidies}
-                            </p>
-                        )}
-
-                        {/* Min loan note */}
-                        {pkg.min_loan_note && (
-                            <p className="text-[10px] text-slate-400 italic">{pkg.min_loan_note}</p>
-                        )}
-
-                        {/* Admin remarks */}
-                        {admin && pkg.remarks && (
-                            <p className="text-[10px] text-slate-400 italic border-l-2 border-slate-200 pl-2">
-                                {pkg.remarks}
-                            </p>
-                        )}
                     </div>
-                )}
-
-                {/* ── Footer ─────────────────────────────────────────── */}
-                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                    <button
-                        onClick={() => setExpanded(v => !v)}
-                        className="flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-[#03a9e7] transition-colors"
-                    >
-                        {expanded
-                            ? <><ChevronUp size={12} /> Less</>
-                            : <><ChevronDown size={12} /> Details</>}
-                    </button>
-
-                    {admin && (
-                        confirming ? (
-                            <div className="flex items-center gap-2">
-                                <span className="text-[11px] text-slate-500">Delete?</span>
-                                <button onClick={onConfirmDelete} disabled={busy}
-                                    className="text-[11px] font-semibold text-red-500 hover:underline">
-                                    {busy ? '…' : 'Yes'}
-                                </button>
-                                <button onClick={onCancelDelete} className="text-[11px] text-slate-400 hover:underline">No</button>
-                            </div>
-                        ) : (
-                            <div className="flex items-center">
-                                {pkg.status === 'draft' && (
-                                    <button onClick={onPublish} disabled={busy} title="Publish"
-                                        className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-emerald-600 hover:bg-emerald-50 rounded-lg mr-1 transition-colors">
-                                        <Eye size={11} /> Publish
-                                    </button>
-                                )}
-                                <button onClick={onEdit} title="Edit"
-                                    className="p-1.5 text-slate-300 hover:text-[#03a9e7] hover:bg-slate-50 rounded-lg transition-colors">
-                                    <Pencil size={12} />
-                                </button>
-                                <button onClick={onDuplicate} disabled={busy} title="Duplicate"
-                                    className="p-1.5 text-slate-300 hover:text-[#03a9e7] hover:bg-slate-50 rounded-lg disabled:opacity-40 transition-colors">
-                                    <Copy size={12} />
-                                </button>
-                                <button onClick={onAskDelete} title="Delete"
-                                    className="p-1.5 text-slate-300 hover:text-red-400 hover:bg-red-50 rounded-lg transition-colors">
-                                    <Trash2 size={12} />
-                                </button>
-                            </div>
-                        )
-                    )}
+                    <div className="text-right shrink-0">
+                        <p className="text-base font-bold text-[#03a9e7] tabular-nums leading-none">{head.big}</p>
+                        <p className="text-[9px] text-slate-400 mt-1 uppercase tracking-wide">{head.sub}</p>
+                    </div>
                 </div>
             </div>
+
+            {/* Expand for full package details */}
+            <button type="button" onClick={() => setExpanded(v => !v)}
+                className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-slate-400 hover:text-[#03a9e7] border-t border-slate-100">
+                {expanded ? 'Hide details' : 'Full package details'} <ChevronDown size={12} className={expanded ? 'rotate-180' : ''} />
+            </button>
+
+            {/* ── Expandable section ─────────────────────────────── */}
+            {expanded && (
+                <div className="px-3 pb-3 pt-2 space-y-3 bg-slate-50/60 border-t border-slate-100">
+                    {/* Rate schedule */}
+                    <div className="rounded-xl overflow-hidden border border-slate-100 divide-y divide-slate-100 bg-white">
+                        {pkg.rate_schedule.map((e, i) => {
+                            const yearLabel = e.thereafter ? 'After' : `Y${e.year}`
+                            const rateText  = formatRateEntry(e).split(': ').slice(1).join(': ')
+                            const { rate }  = e.type === 'floating' ? effectiveRate(e, sora) : { rate: null }
+                            const inLockin  = !e.thereafter && typeof e.year === 'number' && e.year <= pkg.lockin_years
+                            return (
+                                <div key={i} className={`flex items-center justify-between px-3 py-2 text-[11px] ${e.thereafter ? 'bg-slate-50/50' : 'bg-white'}`}>
+                                    <span className={`flex items-center gap-1.5 font-medium ${e.thereafter ? 'text-slate-400' : 'text-slate-600'}`}>
+                                        {inLockin && <span className="w-1 h-1 rounded-full bg-[#03a9e7] shrink-0" />}
+                                        {yearLabel}
+                                    </span>
+                                    <span className="text-slate-700 tabular-nums text-right">
+                                        {rateText}
+                                        {rate != null && <span className="text-[#0277a8] ml-1">({rate.toFixed(2)}%)</span>}
+                                    </span>
+                                </div>
+                            )
+                        })}
+                    </div>
+
+                    {/* Features */}
+                    {pkg.features.length > 0 && (
+                        <ul className="space-y-1 pt-0.5">
+                            {pkg.features.map((f, i) => (
+                                <li key={i} className="flex gap-1.5 text-[11px] text-slate-500 leading-snug">
+                                    <span className="text-[#03a9e7] shrink-0 mt-0.5">›</span>
+                                    <span>{f}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+
+                    {/* Subsidies */}
+                    {pkg.subsidies && (
+                        <p className="text-[11px] text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">
+                            <span className="font-semibold">Subsidy:</span> {pkg.subsidies}
+                        </p>
+                    )}
+
+                    {/* Min loan note */}
+                    {pkg.min_loan_note && (
+                        <p className="text-[10px] text-slate-400 italic">{pkg.min_loan_note}</p>
+                    )}
+
+                    {/* Admin remarks */}
+                    {admin && pkg.remarks && (
+                        <p className="text-[10px] text-slate-400 italic border-l-2 border-slate-200 pl-2">
+                            {pkg.remarks}
+                        </p>
+                    )}
+                </div>
+            )}
+
+            {/* ── Admin footer ─────────────────────────────────────── */}
+            {admin && (
+                <div className="px-3 py-2 border-t border-slate-100 flex items-center justify-end gap-2">
+                    {confirming ? (
+                        <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-slate-500">Delete?</span>
+                            <button onClick={onConfirmDelete} disabled={busy}
+                                className="text-[11px] font-semibold text-red-500 hover:underline">
+                                {busy ? '…' : 'Yes'}
+                            </button>
+                            <button onClick={onCancelDelete} className="text-[11px] text-slate-400 hover:underline">No</button>
+                        </div>
+                    ) : (
+                        <div className="flex items-center">
+                            {pkg.status === 'draft' && (
+                                <button onClick={onPublish} disabled={busy} title="Publish"
+                                    className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-emerald-600 hover:bg-emerald-50 rounded-lg mr-1 transition-colors">
+                                    <Eye size={11} /> Publish
+                                </button>
+                            )}
+                            <button onClick={onEdit} title="Edit"
+                                className="p-1.5 text-slate-300 hover:text-[#03a9e7] hover:bg-slate-50 rounded-lg transition-colors">
+                                <Pencil size={12} />
+                            </button>
+                            <button onClick={onDuplicate} disabled={busy} title="Duplicate"
+                                className="p-1.5 text-slate-300 hover:text-[#03a9e7] hover:bg-slate-50 rounded-lg disabled:opacity-40 transition-colors">
+                                <Copy size={12} />
+                            </button>
+                            <button onClick={onAskDelete} title="Delete"
+                                className="p-1.5 text-slate-300 hover:text-red-400 hover:bg-red-50 rounded-lg transition-colors">
+                                <Trash2 size={12} />
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     )
 }

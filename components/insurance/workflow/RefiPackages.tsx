@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPackages, type RecommendedPackage } from '@/lib/insurance/rateRecommend'
-import { workflowPropType, packageStyle, stripBankPrefix, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
+import { workflowPropType, packageStyle, stripBankPrefix, shortLoan, groupByRateTypeColumn, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule } from '@/lib/insurance/rateSchedule'
 import Spinner from '@/components/shared/Spinner'
-import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, TrendingDown, SlidersHorizontal, RefreshCcw } from 'lucide-react'
+import PackageCompareModal, { type ComparePackageItem } from './PackageCompareModal'
+import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, TrendingDown, SlidersHorizontal, RefreshCcw, Columns2, CheckSquare, Square } from 'lucide-react'
 
 /** Flexi / Traditional badge — matches the Rates page. */
 function StyleBadge({ style }: { style: 'flexi' | 'traditional' | null }) {
@@ -55,6 +56,17 @@ export default function RefiPackages({
     const [error, setError] = useState<string | null>(null)
     const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({})
     const toggleDetails = (id: string) => setOpenDetails(prev => ({ ...prev, [id]: !prev[id] }))
+    // Each column shows only the top few by default; expand per-column to see the rest.
+    const COLUMN_LIMIT = 3
+    const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set())
+    const toggleCol = (key: string) => setExpandedCols(prev => {
+        const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n
+    })
+    // Compare — pick up to 2 packages to view side-by-side (ephemeral, separate from the proposal pick).
+    const [compareIds, setCompareIds] = useState<string[]>([])
+    const [compareOpen, setCompareOpen] = useState(false)
+    const toggleCompare = (id: string) => setCompareIds(prev =>
+        prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 2 ? [...prev, id] : prev)
 
     // Rates-page refine pills (ephemeral). Granular rate type only applies to a
     // completed property; for a BUC/uncompleted one only BUC packages exist, so the
@@ -101,10 +113,6 @@ export default function RefiPackages({
         includeBuc,
     }), [packages, sora, loan, tenureYears, currentRatePct, clawbackAmount, propertyType, includeBuc, priorityBanks, currentBank, rateTypes, features])
 
-    const isFloating = (cat: string) => cat === 'Floating (Completed)' || cat === 'BUC'
-    const fixed = useMemo(() => ranked.filter(r => r.pkg.category === 'Fixed').slice(0, 3), [ranked])
-    const floating = useMemo(() => ranked.filter(r => isFloating(r.pkg.category)).slice(0, 3), [ranked])
-
     if (loading) return (
         <div className="rounded-xl border border-slate-200 bg-white p-6 flex items-center justify-center">
             <Spinner size="sm" color="#03a9e7" label="Finding the best packages…" />
@@ -113,16 +121,27 @@ export default function RefiPackages({
     if (error) return (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Couldn&apos;t load packages: {error}.</div>
     )
-    const noneSel = rateTypes.size === 0
-    const anyFixedSel = ['1Y_FIXED', '2Y_FIXED', '3Y_FIXED', '5Y_FIXED'].some(k => rateTypes.has(k))
-    const showFixed = noneSel || anyFixedSel
-    const showFloating = noneSel || rateTypes.has('FLOATING_COMPLETED')
     // Don't surface any package until the agent has narrowed with at least one
     // filter. BUC has no rate-type pills to pick, so it shows immediately.
     const needsFilter = showRateTypePills && rateTypes.size === 0 && features.size === 0
+    // Group the ranked list into rate-type columns (1Y / 2Y / 3Y / 5Y Fixed,
+    // Floating, BUC) — same buckets as the Rates browse tab.
+    const columns = groupByRateTypeColumn(ranked)
+    const compareItems: ComparePackageItem[] = compareIds
+        .map(id => ranked.find(r => r.pkg.id === id))
+        .filter((r): r is RecommendedPackage => !!r)
+        .map(r => ({
+            pkg: r.pkg,
+            year1Pct: r.projection.perYear[0]?.ratePct ?? null,
+            monthly: r.projection.newMonthly,
+            avgLockinPct: r.projection.avgRateLockinPct,
+            monthlySaving: r.savings?.monthlySaving ?? null,
+        }))
 
     const card = (rec: RecommendedPackage, best: boolean) => {
         const isSelected = rec.pkg.id === selectedId
+        const inCompare = compareIds.includes(rec.pkg.id)
+        const compareDisabled = !inCompare && compareIds.length >= 2
         const monthly = rec.projection.newMonthly
         const year1 = rec.projection.perYear[0]?.ratePct
         const saving = rec.savings?.monthlySaving ?? null
@@ -135,14 +154,14 @@ export default function RefiPackages({
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                             <p className="text-sm font-semibold text-[#052d4a] truncate flex items-center gap-1.5">
-                                {rec.pkg.lockin_years ? <Lock size={12} className="text-slate-400" /> : <LockOpen size={12} className="text-slate-400" />}
-                                {rec.pkg.bank} · {rec.pkg.category}
+                                {rec.pkg.lockin_years ? <Lock size={12} className="text-slate-400 shrink-0" /> : <LockOpen size={12} className="text-slate-400 shrink-0" />}
+                                {rec.pkg.bank}
                                 {rec.pkg.lockin_years ? ` · ${rec.pkg.lockin_years}Y lock-in` : ' · No lock-in'}
                             </p>
                             <p className="text-xs text-slate-500 truncate">{stripBankPrefix(rec.pkg.package_name, rec.pkg.bank)}</p>
                             <div className="flex flex-wrap gap-1.5 mt-1.5">
                                 {best && !rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Best match</span>}
-                                {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal</span>}
+                                {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(rec.pkg.min_loan_size)}</span>}
                                 {saving != null && saving > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1"><TrendingDown size={10} /> Save {fmt(saving)}</span>}
                                 <StyleBadge style={packageStyle(rec.pkg)} />
                             </div>
@@ -154,10 +173,17 @@ export default function RefiPackages({
                         </div>
                     </div>
                 </button>
-                <button type="button" onClick={() => toggleDetails(rec.pkg.id)}
-                    className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-slate-400 hover:text-[#03a9e7] border-t border-slate-100">
-                    {isOpen ? 'Hide details' : 'Full package details'} <ChevronDown size={12} className={isOpen ? 'rotate-180' : ''} />
-                </button>
+                <div className="flex items-stretch border-t border-slate-100 divide-x divide-slate-100">
+                    <button type="button" onClick={() => toggleCompare(rec.pkg.id)} disabled={compareDisabled}
+                        className={`flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium transition-colors ${
+                            inCompare ? 'text-[#03a9e7]' : compareDisabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-[#03a9e7]'}`}>
+                        {inCompare ? <CheckSquare size={12} /> : <Square size={12} />} Compare
+                    </button>
+                    <button type="button" onClick={() => toggleDetails(rec.pkg.id)}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium text-slate-400 hover:text-[#03a9e7]">
+                        {isOpen ? 'Hide' : 'Details'} <ChevronDown size={12} className={isOpen ? 'rotate-180' : ''} />
+                    </button>
+                </div>
                 {isOpen && (
                     <div className="px-3 pb-3 pt-1 space-y-2 text-xs text-slate-600 bg-slate-50/60 border-t border-slate-100">
                         <div>
@@ -183,6 +209,7 @@ export default function RefiPackages({
     }
 
     return (
+        <>
         <div className="rounded-xl border border-[#03a9e7]/30 bg-gradient-to-b from-sky-50/60 to-white overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
                 <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-[#03a9e7]/15"><Sparkles size={15} className="text-[#03a9e7]" /></span>
@@ -236,21 +263,54 @@ export default function RefiPackages({
                     No packages match these filters. Try removing one.
                 </div>
             ) : (
-            <div className="p-3 grid sm:grid-cols-2 gap-4">
-                {showFixed && (
-                    <div className="space-y-2">
-                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide px-1">Fixed</p>
-                        {fixed.length ? fixed.map((r, i) => card(r, i === 0)) : <p className="text-xs text-slate-400 px-1 py-3">No fixed packages match.</p>}
+                /* Grouped into rate-type columns, side-by-side like the Rates browse tab. */
+                <div className="overflow-x-auto p-3">
+                    <div className="flex gap-3 items-start" style={{ minWidth: `${columns.length * 264 + Math.max(0, columns.length - 1) * 12}px` }}>
+                        {columns.map(({ col, items }) => {
+                            const colExpanded = expandedCols.has(col.key)
+                            const shown = colExpanded ? items : items.slice(0, COLUMN_LIMIT)
+                            return (
+                                <div key={col.key} className="w-[264px] flex-shrink-0">
+                                    <div className="mb-2 px-0.5">
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <span className="font-bold text-[12px] text-[#052d4a] tracking-tight">{col.label}</span>
+                                            <span className="text-[11px] font-medium text-slate-400 tabular-nums">{items.length}</span>
+                                        </div>
+                                        <div className="h-[2px] rounded-full" style={{ background: col.accentHex }} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        {shown.map((r, i) => card(r, i === 0))}
+                                    </div>
+                                    {items.length > COLUMN_LIMIT && (
+                                        <button type="button" onClick={() => toggleCol(col.key)}
+                                            className="w-full mt-2 flex items-center justify-center gap-1 py-1.5 text-[11px] font-medium text-slate-400 hover:text-[#03a9e7] rounded-md border border-slate-100">
+                                            {colExpanded ? 'Show fewer' : `Show all ${items.length}`} <ChevronDown size={12} className={colExpanded ? 'rotate-180' : ''} />
+                                        </button>
+                                    )}
+                                </div>
+                            )
+                        })}
                     </div>
-                )}
-                {showFloating && (
-                    <div className="space-y-2">
-                        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide px-1">Floating</p>
-                        {floating.length ? floating.map((r, i) => card(r, i === 0)) : <p className="text-xs text-slate-400 px-1 py-3">No floating packages match.</p>}
+                </div>
+            )}
+
+            {compareIds.length > 0 && (
+                <div className="px-4 py-2.5 border-t border-slate-100 bg-sky-50/50 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-medium text-slate-500">{compareIds.length}/2 selected to compare</span>
+                    <div className="flex items-center gap-3">
+                        <button type="button" onClick={() => setCompareIds([])} className="text-[11px] text-slate-400 hover:text-slate-700 underline">Clear</button>
+                        <button type="button" disabled={compareIds.length < 2} onClick={() => setCompareOpen(true)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-md bg-[#03a9e7] text-white hover:bg-[#0290c5] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            <Columns2 size={12} /> Compare
+                        </button>
                     </div>
-                )}
-            </div>
+                </div>
             )}
         </div>
+
+        {compareOpen && compareItems.length === 2 && (
+            <PackageCompareModal items={compareItems} showSavings onClose={() => setCompareOpen(false)} />
+        )}
+        </>
     )
 }

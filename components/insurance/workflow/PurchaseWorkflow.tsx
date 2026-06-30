@@ -811,7 +811,6 @@ export default function PurchaseWorkflowPanel({
                                 bucOnly={!!meta?.buc}
                                 priorityBanks={data.priority_client ? data.priority_banks : undefined}
                                 selectedId={selectedPkgId}
-                                excludeBank={data.ipa_done && data.ipa?.bank ? data.ipa.bank : undefined}
                                 onSelect={onSelectPackage}
                             />
                         )

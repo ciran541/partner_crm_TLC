@@ -141,6 +141,47 @@ export function matchesFeature(pkg: MortgagePackage, features: Set<string>): boo
     return true
 }
 
+/** Compact loan formatting — "$1.5M", "$800k", "$500". Shared by the Rates browse
+ *  tab and the workflow package cards so min-loan figures read identically. */
+export function shortLoan(n: number): string {
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`
+    if (n >= 1_000)     return `$${Math.round(n / 1_000)}k`
+    return `$${n}`
+}
+
+// ── Rate-type columns (workflow package showcase — mirrors the Rates browse tab) ──
+
+export interface RateTypeColumn {
+    key: string
+    label: string
+    accentHex: string
+    match: (p: MortgagePackage) => boolean
+}
+
+/** Column buckets for grouping recommended packages by rate type, in display order.
+ *  Mirrors the Rates page COLUMN_DEFS so a client seen inside a workflow is grouped
+ *  identically to the browse tab. */
+export const RATE_TYPE_COLUMNS: RateTypeColumn[] = [
+    { key: '1Y',     label: '1 Year Fixed',         accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 1 },
+    { key: '2Y',     label: '2 Year Fixed',         accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 2 },
+    { key: '3Y',     label: '3 Year Fixed',         accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 3 },
+    { key: '5Y',     label: '5 Year Fixed',         accentHex: '#052d4a', match: p => p.category === 'Fixed' && fixedRateYears(p) === 5 },
+    { key: 'OTHFIX', label: 'Other Fixed',          accentHex: '#64748b', match: p => p.category === 'Fixed' && ![1, 2, 3, 5].includes(fixedRateYears(p)) },
+    { key: 'FLOAT',  label: 'Floating (Completed)', accentHex: '#03a9e7', match: p => p.category === 'Floating (Completed)' },
+    { key: 'BUC',    label: 'BUC / BTO',            accentHex: '#f59e0b', match: p => p.category === 'BUC' },
+]
+
+/** Bucket already-ranked recommendations into rate-type columns, preserving rank
+ *  order within each column and dropping empty columns. Generic over any item that
+ *  carries a `pkg` (purchase + refi recommendations both do). */
+export function groupByRateTypeColumn<T extends { pkg: MortgagePackage }>(
+    items: T[],
+): { col: RateTypeColumn; items: T[] }[] {
+    return RATE_TYPE_COLUMNS
+        .map(col => ({ col, items: items.filter(it => col.match(it.pkg)) }))
+        .filter(g => g.items.length > 0)
+}
+
 /** Remove the bank-name prefix from a package name (the bank is already shown as
  *  the card title, so repeating it is noise). e.g. "OCBC 1Y Fixed Rates" → "1Y Fixed Rates". */
 export function stripBankPrefix(name: string, bank: string): string {
