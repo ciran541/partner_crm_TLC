@@ -7,7 +7,7 @@ import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
 import type { SoraRates } from '@/lib/insurance/sora'
-import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
+import { Question, FieldInput, AgentNotesCard } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import RefiPackages from './RefiPackages'
 import EquityLoanPresentation from './EquityLoanPresentation'
@@ -1457,6 +1457,9 @@ export default function EquityLoanWorkflowPanel({
                     <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
                 )}
             </div>
+
+            {/* Agent notes — internal, per-case */}
+            <AgentNotesCard value={data.agent_notes} onChange={v => update({ agent_notes: v })} />
 
             {/* Hand-off */}
             {embedded && onContinue && (

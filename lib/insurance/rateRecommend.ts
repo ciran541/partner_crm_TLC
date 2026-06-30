@@ -160,6 +160,7 @@ export interface RecommendedPackage {
     fit: Fit                              // suitability vs the client's profile
     reasons: string[]                     // technical notes / caveats
     appeal: boolean                       // min-loan up to 10% above the client's loan — bank may approve on appeal
+    priority: boolean                     // only qualifies because of the client's priority-banking status
 }
 
 // Weighting kept as named deltas so it's easy to tune.
@@ -237,7 +238,7 @@ export function recommendPackages(
             matchesFeature(pkg, criteria.features ?? new Set())
         )
 
-    const scored: RecommendedPackage[] = candidates.map(({ pkg, appeal }) => {
+    const scored: RecommendedPackage[] = candidates.map(({ pkg, appeal, priority }) => {
         const projection = projectPackage(pkg, outstandingLoan, remainingTenureYears, sora)
         const reasons: string[] = [...projection.notes]
 
@@ -267,20 +268,21 @@ export function recommendPackages(
 
         const fit = assessSuitability(pkg, sora, criteria)
 
-        return { pkg, projection, savings, tdsrRatioPct, eligible, fit, reasons, appeal }
+        return { pkg, projection, savings, tdsrRatioPct, eligible, fit, reasons, appeal, priority }
     })
 
     // Rank, in order of precedence:
-    //  1. packages we can actually price
-    //  2. strict qualifiers above appeal-eligible (the client may not get appeal ones)
-    //  3. genuine fit (a hard mismatch — e.g. long lock-in but selling soon — is
-    //     demoted regardless of price; recommending it would be wrong)
-    //  4. highest monthly saving (money stays the lead factor among suitable options)
-    //  5. better suitability score (breaks near-ties)
-    //  6. lowest lock-in average rate
+    //  1. the displayed (year-1) rate, lowest first — agents read the list as a
+    //     low→high rate ladder, so price on the card always leads (appeal packages
+    //     are mixed in at their true rate position, not demoted below pricier ones)
+    //  2. packages we can actually price sit above "not auto-priced" ones
+    //  3-6. tie-breakers among equal year-1 rates: avoid hard fit conflicts, then
+    //     highest monthly saving, then suitability score, then lowest lock-in avg rate
     return scored.sort((a, b) => {
-        if (a.projection.computable !== b.projection.computable) return a.projection.computable ? -1 : 1
-        if (a.appeal !== b.appeal) return a.appeal ? 1 : -1
+        const ya = a.projection.perYear[0]?.ratePct
+        const yb = b.projection.perYear[0]?.ratePct
+        if ((ya == null) !== (yb == null)) return ya == null ? 1 : -1
+        if (ya != null && yb != null && ya !== yb) return ya - yb
         if (a.fit.hardConflict !== b.fit.hardConflict) return a.fit.hardConflict ? 1 : -1
         const sa = a.savings?.monthlySaving ?? -Infinity
         const sb = b.savings?.monthlySaving ?? -Infinity

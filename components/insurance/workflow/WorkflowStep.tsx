@@ -1,7 +1,7 @@
 'use client'
 
 import { ReactNode, useRef, useState } from 'react'
-import { CheckCircle2, ChevronDown, AlertTriangle, Info, Lightbulb, BookOpen } from 'lucide-react'
+import { CheckCircle2, ChevronDown, AlertTriangle, Info, Lightbulb, BookOpen, StickyNote } from 'lucide-react'
 
 // ─── Step wrapper ─────────────────────────────────────────────────────────────
 
@@ -289,6 +289,30 @@ export function FieldTextarea({ value, onChange, placeholder, rows = 3 }: { valu
     return (
         <textarea value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
             className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all resize-none" style={{ fontFamily: 'inherit' }} />
+    )
+}
+
+// ─── Agent notes (internal, per-case free-text) ───────────────────────────────
+// Shown at the bottom of every workflow. Saved to workflow_data.agent_notes and
+// never surfaced in the client presentation/PDF — these are the agent's own notes.
+
+export function AgentNotesCard({ value, onChange }: { value?: string; onChange: (v: string) => void }) {
+    return (
+        <div className="card p-5 space-y-3">
+            <p className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <span className="text-[#03a9e7]"><StickyNote size={15} /></span>
+                Agent notes
+                <span className="text-xs font-normal text-slate-400">— internal, not shown to the client</span>
+            </p>
+            <textarea
+                value={value ?? ''}
+                onChange={e => onChange(e.target.value)}
+                rows={4}
+                placeholder="Any notes about this case — client context, follow-up reminders, special conditions…"
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12 transition-all resize-y"
+                style={{ fontFamily: 'inherit' }}
+            />
+        </div>
     )
 }
 

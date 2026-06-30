@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { CaseType } from '@/lib/types'
@@ -10,7 +10,7 @@ import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import {
     RefreshCcw, ShoppingCart, Users, TrendingUp, ArrowRight,
-    Clock, Trash2, FileText,
+    Clock, Trash2, FileText, Search,
 } from 'lucide-react'
 
 const CASE_OPTIONS: {
@@ -44,6 +44,17 @@ export default function MortgagePlannerPage() {
     const [creating, setCreating] = useState<CaseType | null>(null)
     const [discardingId, setDiscardingId] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
+    const [clientSearch, setClientSearch] = useState('')
+
+    // Jump straight back into an existing client's workflow — name / mobile / email.
+    const clientMatches = useMemo(() => {
+        const q = clientSearch.trim().toLowerCase()
+        if (!q) return []
+        return cases
+            .filter(c => !isDraftCase(c))
+            .filter(c => `${c.client_name ?? ''} ${c.client_mobile ?? ''} ${c.client_email ?? ''}`.toLowerCase().includes(q))
+            .slice(0, 6)
+    }, [cases, clientSearch])
 
     useEffect(() => {
         supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id ?? null))
@@ -96,6 +107,42 @@ export default function MortgagePlannerPage() {
             <div>
                 <h1 className="ios-page-title">Mortgage Planner</h1>
                 <p className="page-subtitle">Pick a case type to start planning with your client.</p>
+            </div>
+
+            {/* Quick-open an existing client's workflow — no need to dig through Cases */}
+            <div className="relative">
+                <div className="relative">
+                    <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <input
+                        type="text"
+                        value={clientSearch}
+                        onChange={e => setClientSearch(e.target.value)}
+                        placeholder="Open an existing client — name / mobile / email"
+                        className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-11 pr-4 text-sm text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12"
+                    />
+                </div>
+                {clientSearch.trim() && (
+                    <div className="absolute z-20 mt-2 w-full rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden">
+                        {clientMatches.length === 0 ? (
+                            <p className="px-4 py-3 text-sm text-slate-400">No matching client found.</p>
+                        ) : clientMatches.map(c => (
+                            <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => router.push(`/insurance/dashboard/cases/${c.id}?tab=workflow`)}
+                                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-b-0"
+                            >
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-800 truncate">{c.client_name || 'Unnamed'}</p>
+                                    <p className="text-xs text-slate-400 truncate">
+                                        {c.case_type}{c.client_mobile ? ` · ${c.client_mobile}` : ''}{c.client_email ? ` · ${c.client_email}` : ''}
+                                    </p>
+                                </div>
+                                <ArrowRight size={15} className="text-slate-300 shrink-0" />
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {error && <InlineAlert type="error" message={error} onDismiss={() => setError(null)} />}

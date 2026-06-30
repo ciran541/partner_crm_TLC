@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
-import { Case, PipelineStage } from '@/lib/types'
+import { Case, PipelineStage, ReferredBanker } from '@/lib/types'
 import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow, PurchaseWorkflow, getPurchaseWorkflow, DecoupleWorkflow, getDecoupleWorkflow, EquityLoanWorkflow, getEquityLoanWorkflow } from '@/lib/types/workflow'
 import RefinancingWorkflowPanel from '@/components/insurance/workflow/RefinancingWorkflow'
 import PurchaseWorkflowPanel from '@/components/insurance/workflow/PurchaseWorkflow'
@@ -14,9 +14,17 @@ import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import DecoupleOverview from '@/components/insurance/workflow/DecoupleOverview'
 import EquityLoanOverview from '@/components/insurance/workflow/EquityLoanOverview'
 import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
+import BankerMultiSelect from '@/components/insurance/BankerMultiSelect'
+import RateScheduleEditor from '@/components/insurance/RateScheduleEditor'
+import { loanSpecsFor, prefillLoan, closedWonTotals, packageSummary, CLOSED_LOAN_LABELS } from '@/lib/insurance/closedWon'
+import { calculateCommission } from '@/lib/property/commission'
+import type { CaseType, ClosedWonData, ClosedWonLoan, ClosedLoanKind } from '@/lib/types'
+import type { RateScheduleEntry } from '@/lib/types/rates'
+import type { SoraRates } from '@/lib/insurance/sora'
 import {
     Save, Edit2, X, User, Home, Pencil,
-    Briefcase, CheckCircle2, AlertTriangle, CalendarClock
+    Briefcase, CheckCircle2, AlertTriangle, CalendarClock,
+    Upload, Trash2, FileText, TrendingUp
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -27,8 +35,7 @@ type TabKey = 'overview' | 'workflow'
 
 const PIPELINE_STAGES: PipelineStage[] = [
     'Touched Base',
-    'Proposal Given',
-    'Referred to Bank',
+    'Pending Docs',
     'Pending Approval',
     'Pending Signature',
     'Closed Won',
@@ -90,6 +97,8 @@ export default function CaseDetailPage() {
     const [closedWonOpen, setClosedWonOpen] = useState(false)
     // Closed Lost modal
     const [closedLostOpen, setClosedLostOpen] = useState(false)
+    // Pending Docs banker-selection modal
+    const [pendingDocsOpen, setPendingDocsOpen] = useState(false)
 
     useEffect(() => {
         if (caseId) loadCase()
@@ -278,16 +287,36 @@ export default function CaseDetailPage() {
         if (!caseData) return
         if (newStage === 'Closed Won') { setClosedWonOpen(true); return }
         if (newStage === 'Closed Lost') { setClosedLostOpen(true); return }
+        // Moving to Pending Docs prompts the agent to record which banker(s) the case was referred to.
+        if (newStage === 'Pending Docs') { setPendingDocsOpen(true); return }
         handleFieldChange('stage', newStage)
     }
 
-    // Set a follow-up reminder date — set from the internal Overview tab.
+    // Assign/remove referred bankers — auto-saves immediately (no edit mode), like follow-up.
+    const handleSetBankers = useCallback(async (bankers: ReferredBanker[]) => {
+        setCaseData(prev => prev ? { ...prev, referred_bankers: bankers } : prev)
+        const err = await persistCaseUpdate({ referred_bankers: bankers })
+        if (err) setAlert({ type: 'error', message: `Banker save failed: ${err}` })
+        else refreshCases()
+    }, [persistCaseUpdate])
+
+    // Set a follow-up reminder date — routed through the API so it also syncs to
+    // the agent's Google Calendar (non-blocking) and the Follow-Up tab.
     const handleSetFollowUp = useCallback(async (date: string) => {
         setCaseData(prev => prev ? { ...prev, follow_up_date: date } : prev)
-        const err = await persistCaseUpdate({ follow_up_date: date })
-        if (err) setAlert({ type: 'error', message: `Follow-up save failed: ${err}` })
-        else { refreshCases(); setAlert({ type: 'success', message: 'Follow-up reminder set.' }) }
-    }, [persistCaseUpdate])
+        try {
+            const res = await fetch(`/api/insurance/cases/${caseId}/followup`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ follow_up_date: date }),
+            })
+            if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Failed to save') }
+            refreshCases()
+            setAlert({ type: 'success', message: 'Follow-up reminder set.' })
+        } catch (e) {
+            setAlert({ type: 'error', message: `Follow-up save failed: ${e instanceof Error ? e.message : ''}` })
+        }
+    }, [caseId])
 
     const commitNameEdit = useCallback(async () => {
         const trimmed = nameValue.trim()
@@ -318,6 +347,7 @@ export default function CaseDetailPage() {
             current_bank: caseData.current_bank,
             existing_loan_amount: caseData.existing_loan_amount,
             lock_in_end_date: caseData.lock_in_end_date,
+            referred_bankers: caseData.referred_bankers ?? [],
         })
     }
 
@@ -485,6 +515,11 @@ export default function CaseDetailPage() {
             {/* Tab: Overview */}
             {activeTab === 'overview' && (
                 <div className="space-y-5">
+                    {/* Closed-Won summary — loans, commission, and next-cycle income projection */}
+                    {isClosedWon && caseData.closed_won_data?.loans?.length ? (
+                        <ClosedWonSummaryCard data={caseData} />
+                    ) : null}
+
                     {/* Deal summary leads the tab — it's the natural "overview". */}
                     {caseData.case_type === 'Purchase' ? (
                         <PurchaseOverview
@@ -533,6 +568,9 @@ export default function CaseDetailPage() {
                                 {caseData.client_email || <span className="text-slate-400">—</span>}
                             </GridField>
                         </SectionCard>
+
+                        {/* Referred bankers — internal CRM, auto-saves on change (no edit mode needed) */}
+                        <BankerControl value={caseData.referred_bankers ?? []} onSave={handleSetBankers} />
 
                         {/* Follow-up reminder — internal CRM, never on the client-facing workflow */}
                         <FollowUpControl value={caseData.follow_up_date} onSave={handleSetFollowUp} />
@@ -635,9 +673,18 @@ export default function CaseDetailPage() {
             {closedWonOpen && (
                 <ClosedWonModal
                     initialData={caseData}
-                    onConfirm={details => {
+                    caseId={caseId}
+                    onConfirm={async details => {
                         setClosedWonOpen(false)
-                        handleUpdate({ ...details, stage: 'Closed Won' })
+                        await handleUpdate({ ...details, stage: 'Closed Won' })
+                        // Sync the follow-up to Google Calendar (non-blocking).
+                        if (details.follow_up_date) {
+                            fetch(`/api/insurance/cases/${caseId}/followup`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ follow_up_date: details.follow_up_date }),
+                            }).catch(() => {})
+                        }
                     }}
                     onCancel={() => setClosedWonOpen(false)}
                 />
@@ -651,6 +698,18 @@ export default function CaseDetailPage() {
                         handleUpdate({ stage: 'Closed Lost', closed_lost_reason: reason, closed_lost_notes: notes || undefined })
                     }}
                     onCancel={() => setClosedLostOpen(false)}
+                />
+            )}
+
+            {/* Pending Docs — record banker(s) before advancing */}
+            {pendingDocsOpen && (
+                <PendingDocsModal
+                    initialBankers={caseData.referred_bankers ?? []}
+                    onConfirm={bankers => {
+                        setPendingDocsOpen(false)
+                        handleUpdate({ stage: 'Pending Docs', referred_bankers: bankers })
+                    }}
+                    onCancel={() => setPendingDocsOpen(false)}
                 />
             )}
 
@@ -683,94 +742,353 @@ export default function CaseDetailPage() {
 
 // ─── Closed Won Modal ─────────────────────────────────────────────────────────
 
-function ClosedWonModal({ initialData, onConfirm, onCancel }: {
-    initialData: Partial<Case>
-    onConfirm: (details: Partial<Case>) => void
+// ─── Pending Docs Modal — capture banker referral ────────────────────────────
+function PendingDocsModal({ initialBankers, onConfirm, onCancel }: {
+    initialBankers: ReferredBanker[]
+    onConfirm: (bankers: ReferredBanker[]) => void
     onCancel: () => void
 }) {
-    const [details, setDetails] = useState({
-        client_name: initialData.client_name || '',
-        client_mobile: initialData.client_mobile || '',
-        client_email: initialData.client_email || '',
-        closed_package_details: initialData.closed_package_details || '',
-        closed_interest_rate: initialData.closed_interest_rate?.toString() || '',
-        closed_tenure: initialData.closed_tenure?.toString() || '',
-        subsidy_provided: initialData.subsidy_provided || '',
-        clawback_end_date: initialData.clawback_end_date || '',
-        remarks: initialData.remarks || '',
-    })
-
+    const [bankers, setBankers] = useState<ReferredBanker[]>(initialBankers)
     return (
         <ModalOverlay>
             <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
-                    <CheckCircle2 size={22} className="text-emerald-600" />
+                <div className="w-10 h-10 rounded-xl bg-sky-100 flex items-center justify-center">
+                    <Briefcase size={20} className="text-[#03a9e7]" />
                 </div>
                 <div>
-                    <h2 className="text-lg font-bold text-[#052d4a]">Closed Won Details</h2>
-                    <p className="text-sm text-slate-500">Confirm the client and loan package to close this case.</p>
+                    <h2 className="text-lg font-bold text-[#052d4a]">Refer to Banker(s)</h2>
+                    <p className="text-sm text-slate-500">Select which banker(s) this case was referred to before moving it to Pending Docs.</p>
                 </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                    <label className="label-xs">Client Name *</label>
-                    <input required type="text" value={details.client_name} onChange={e => setDetails(d => ({ ...d, client_name: e.target.value }))} placeholder="e.g. John Tan" className="input-std" autoFocus />
-                </div>
-                <div>
-                    <label className="label-xs">Mobile</label>
-                    <input type="tel" value={details.client_mobile} onChange={e => setDetails(d => ({ ...d, client_mobile: e.target.value }))} placeholder="+65 9123 4567" className="input-std" />
-                </div>
-                <div>
-                    <label className="label-xs">Email</label>
-                    <input type="email" value={details.client_email} onChange={e => setDetails(d => ({ ...d, client_email: e.target.value }))} placeholder="client@email.com" className="input-std" />
-                </div>
-                <div className="sm:col-span-2">
-                    <label className="label-xs">Package Details *</label>
-                    <input required type="text" value={details.closed_package_details} onChange={e => setDetails(d => ({ ...d, closed_package_details: e.target.value }))} placeholder="e.g. 2-Year Fixed @ 3.5%" className="input-std" />
-                </div>
-                <div>
-                    <label className="label-xs">Interest Rate (%)</label>
-                    <input type="number" step="0.01" value={details.closed_interest_rate} onChange={e => setDetails(d => ({ ...d, closed_interest_rate: e.target.value }))} className="input-std" />
-                </div>
-                <div>
-                    <label className="label-xs">Tenure (Years)</label>
-                    <input type="number" value={details.closed_tenure} onChange={e => setDetails(d => ({ ...d, closed_tenure: e.target.value }))} className="input-std" />
-                </div>
-                <div>
-                    <label className="label-xs">Subsidy Provided</label>
-                    <input type="text" value={details.subsidy_provided} onChange={e => setDetails(d => ({ ...d, subsidy_provided: e.target.value }))} placeholder="e.g. $2,000" className="input-std" />
-                </div>
-                <div>
-                    <label className="label-xs">Clawback End Date</label>
-                    <input type="date" value={details.clawback_end_date} onChange={e => setDetails(d => ({ ...d, clawback_end_date: e.target.value }))} className="input-std" />
-                </div>
-                <div className="sm:col-span-2">
-                    <label className="label-xs">Remarks</label>
-                    <textarea rows={3} value={details.remarks} onChange={e => setDetails(d => ({ ...d, remarks: e.target.value }))} className="input-std" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
-                </div>
-            </div>
+            <BankerMultiSelect value={bankers} onChange={setBankers} />
             <div className="flex gap-3 mt-6">
                 <button onClick={onCancel} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
                 <button
-                    disabled={!details.closed_package_details.trim() || !details.client_name.trim()}
-                    onClick={() => onConfirm({
-                        client_name: details.client_name.trim(),
-                        client_mobile: details.client_mobile.trim() || undefined,
-                        client_email: details.client_email.trim() || undefined,
-                        closed_package_details: details.closed_package_details,
-                        closed_interest_rate: details.closed_interest_rate ? parseFloat(details.closed_interest_rate) : undefined,
-                        closed_tenure: details.closed_tenure ? parseInt(details.closed_tenure) : undefined,
-                        subsidy_provided: details.subsidy_provided || undefined,
-                        clawback_end_date: details.clawback_end_date || undefined,
-                        remarks: details.remarks || undefined,
-                    })}
-                    className="btn-primary flex-2 py-2.5 text-sm flex items-center gap-2 justify-center"
-                    style={{ flex: 2, background: '#166534', borderColor: '#166534' }}
+                    disabled={bankers.length === 0}
+                    onClick={() => onConfirm(bankers)}
+                    className="btn-primary py-2.5 text-sm flex items-center gap-2 justify-center disabled:opacity-40"
+                    style={{ flex: 2 }}
                 >
-                    <CheckCircle2 size={16} /> Save &amp; Close Won
+                    <CheckCircle2 size={16} /> Move to Pending Docs
                 </button>
             </div>
         </ModalOverlay>
+    )
+}
+
+interface LoanFormRow { enabled: boolean; amount: string; tenure: string }
+
+function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
+    initialData: Case
+    caseId: string
+    onConfirm: (details: Partial<Case>) => void
+    onCancel: () => void
+}) {
+    const caseType = (initialData.case_type ?? 'Purchase') as CaseType
+    const specs = loanSpecsFor(caseType)
+    const existing = (initialData.closed_won_data ?? {}) as ClosedWonData
+
+    const [clientName, setClientName] = useState(initialData.client_name || '')
+    const [clientMobile, setClientMobile] = useState(initialData.client_mobile || '')
+    const [clientEmail, setClientEmail] = useState(initialData.client_email || '')
+
+    // Per-loan rows, prefilled from the workflow (or an earlier close).
+    const [loanRows, setLoanRows] = useState<Record<string, LoanFormRow>>(() => {
+        const wf = (initialData.workflow_data ?? {}) as Record<string, unknown>
+        const map: Record<string, LoanFormRow> = {}
+        for (const spec of specs) {
+            const prior = existing.loans?.find(l => l.kind === spec.kind)
+            const pf = prior ?? prefillLoan(spec.kind, initialData, wf)
+            map[spec.kind] = {
+                enabled: spec.required || !!prior || (pf.amount != null && pf.amount > 0),
+                amount: pf.amount != null ? String(Math.round(pf.amount)) : '',
+                tenure: pf.tenure != null ? String(pf.tenure) : '',
+            }
+        }
+        return map
+    })
+    const setRow = (kind: ClosedLoanKind, patch: Partial<LoanFormRow>) =>
+        setLoanRows(r => ({ ...r, [kind]: { ...r[kind], ...patch } }))
+
+    const [lockin, setLockin] = useState(existing.package?.lockin_years != null ? String(existing.package.lockin_years) : '')
+    const [schedule, setSchedule] = useState<RateScheduleEntry[]>(
+        existing.package?.schedule?.length ? existing.package.schedule : [{ year: 1, type: 'fixed' }],
+    )
+
+    const [hasSubsidy, setHasSubsidy] = useState(!!initialData.subsidy_provided)
+    const [subsidyProvided, setSubsidyProvided] = useState(initialData.subsidy_provided || '')
+    const [clawbackEnd, setClawbackEnd] = useState(initialData.clawback_end_date || '')
+    const [remarks, setRemarks] = useState(initialData.remarks || '')
+    const [followUp, setFollowUp] = useState(initialData.follow_up_date || '')
+    const [bankers, setBankers] = useState(initialData.referred_bankers ?? [])
+
+    const [keptDocs, setKeptDocs] = useState(existing.lo_documents ?? [])
+    const [files, setFiles] = useState<File[]>([])
+    const [sora, setSora] = useState<SoraRates | null>(null)
+    const [busy, setBusy] = useState(false)
+    const [err, setErr] = useState<string | null>(null)
+
+    useEffect(() => {
+        fetch('/api/insurance/rates').then(r => r.json()).then(d => { if (d.sora) setSora(d.sora) }).catch(() => {})
+    }, [])
+
+    const loans: ClosedWonLoan[] = specs
+        .filter(s => loanRows[s.kind].enabled)
+        .map(s => ({
+            kind: s.kind,
+            amount: parseFloat((loanRows[s.kind].amount || '').replace(/,/g, '')) || 0,
+            tenure: parseInt(loanRows[s.kind].tenure) || 0,
+        }))
+    const lockinYears = parseInt(lockin) || 0
+    const totals = closedWonTotals(loans, schedule, lockinYears, sora)
+
+    const enabledValid = loans.length > 0 && loans.every(l => l.amount > 0 && l.tenure > 0)
+    const canSave = !busy && clientName.trim() && enabledValid
+
+    const handleConfirm = async () => {
+        setBusy(true); setErr(null)
+        try {
+            // Upload any newly attached LO files to the agent's own folder.
+            const uploaded = [...keptDocs]
+            if (files.length) {
+                const { data: { user } } = await supabase.auth.getUser()
+                if (user) {
+                    for (const f of files) {
+                        const ext = f.name.split('.').pop()
+                        const path = `${user.id}/${caseId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+                        const { error } = await supabase.storage.from('insurance-documents').upload(path, f)
+                        if (error) throw new Error(`Upload failed: ${error.message}`)
+                        uploaded.push({ path, name: f.name, type: f.type })
+                    }
+                }
+            }
+
+            const closed_won_data: ClosedWonData = {
+                loans,
+                package: { lockin_years: lockinYears, schedule },
+                lo_documents: uploaded,
+                original_loan_total: totals.originalLoanTotal,
+                combined_outstanding: totals.combinedOutstanding ?? undefined,
+            }
+
+            const firstYear = schedule.find(e => !e.thereafter)
+            onConfirm({
+                client_name: clientName.trim(),
+                client_mobile: clientMobile.trim() || undefined,
+                client_email: clientEmail.trim() || undefined,
+                subsidy_provided: hasSubsidy ? (subsidyProvided || undefined) : undefined,
+                clawback_end_date: hasSubsidy ? (clawbackEnd || undefined) : undefined,
+                remarks: remarks || undefined,
+                referred_bankers: bankers,
+                follow_up_date: followUp || undefined,
+                closed_won_data,
+                // Legacy columns kept in sync for existing overview/list displays.
+                closed_package_details: packageSummary(schedule, lockinYears) || undefined,
+                closed_tenure: loans[0]?.tenure,
+                closed_interest_rate: firstYear?.type === 'fixed' ? firstYear.rate : undefined,
+            })
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : 'Something went wrong')
+            setBusy(false)
+        }
+    }
+
+    const sectionLabel = 'text-xs font-bold text-slate-500 uppercase tracking-wide'
+    const money = (n: number) => `$${Math.round(n).toLocaleString()}`
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(5,45,74,0.65)', backdropFilter: 'blur(4px)' }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
+                <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3 bg-emerald-50/50 shrink-0">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+                        <CheckCircle2 size={22} className="text-emerald-600" />
+                    </div>
+                    <div>
+                        <h2 className="text-lg font-bold text-[#052d4a]">Closed Won Details</h2>
+                        <p className="text-sm text-slate-500">Confirm the final loan(s) and package from the Letter of Offer.</p>
+                    </div>
+                </div>
+
+                <div className="px-6 py-5 space-y-6 overflow-y-auto">
+                    {/* Client */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="sm:col-span-2">
+                            <label className="label-xs">Client Name *</label>
+                            <input required type="text" value={clientName} onChange={e => setClientName(e.target.value)} placeholder="e.g. John Tan" className="input-std" />
+                        </div>
+                        <div>
+                            <label className="label-xs">Mobile</label>
+                            <input type="tel" value={clientMobile} onChange={e => setClientMobile(e.target.value)} placeholder="+65 9123 4567" className="input-std" />
+                        </div>
+                        <div>
+                            <label className="label-xs">Email</label>
+                            <input type="email" value={clientEmail} onChange={e => setClientEmail(e.target.value)} placeholder="client@email.com" className="input-std" />
+                        </div>
+                    </div>
+
+                    {/* Loans */}
+                    <div className="space-y-3">
+                        <p className={sectionLabel}>Loan(s) in the Letter of Offer</p>
+                        {specs.map(spec => {
+                            const row = loanRows[spec.kind]
+                            return (
+                                <div key={spec.kind} className={`rounded-lg border p-3.5 ${row.enabled ? 'border-slate-200' : 'border-slate-100 bg-slate-50/50'}`}>
+                                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                                        <input
+                                            type="checkbox"
+                                            checked={row.enabled}
+                                            disabled={spec.required}
+                                            onChange={e => setRow(spec.kind, { enabled: e.target.checked })}
+                                            className="rounded border-slate-300 accent-emerald-600 disabled:opacity-60"
+                                        />
+                                        <span className="text-sm font-semibold text-slate-700">{spec.label}</span>
+                                        {spec.required && <span className="text-[10px] text-slate-400">(required)</span>}
+                                    </label>
+                                    {row.enabled && (
+                                        <div className="grid grid-cols-2 gap-3 mt-3">
+                                            <div>
+                                                <label className="label-xs">Loan Amount</label>
+                                                <input inputMode="numeric" value={row.amount}
+                                                    onChange={e => setRow(spec.kind, { amount: e.target.value.replace(/[^\d]/g, '') })}
+                                                    placeholder="e.g. 300000" className="input-std" />
+                                            </div>
+                                            <div>
+                                                <label className="label-xs">Tenure (years)</label>
+                                                <input inputMode="numeric" value={row.tenure}
+                                                    onChange={e => setRow(spec.kind, { tenure: e.target.value.replace(/[^\d]/g, '') })}
+                                                    placeholder="e.g. 20" className="input-std" />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+
+                    {/* Package */}
+                    <div className="space-y-3">
+                        <p className={sectionLabel}>Package (applies to all loans above)</p>
+                        <div>
+                            <label className="label-xs">Lock-in Period (yrs)</label>
+                            <input inputMode="numeric" value={lockin} onChange={e => setLockin(e.target.value.replace(/[^\d]/g, ''))}
+                                placeholder="e.g. 2" className="input-std" style={{ maxWidth: 160 }} />
+                        </div>
+                        <div>
+                            <label className="label-xs">Interest Rates (p.a.)</label>
+                            <RateScheduleEditor schedule={schedule} onChange={setSchedule} />
+                        </div>
+                    </div>
+
+                    {/* Projection preview */}
+                    {totals.originalLoanTotal > 0 && (
+                        <div className="rounded-lg border border-[#03a9e7]/20 bg-sky-50/40 p-4 space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-500">Total loan (this close)</span>
+                                <span className="font-bold text-[#052d4a]">{money(totals.originalLoanTotal)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-slate-500">Commission now <span className="text-slate-400">(0.15%, agent 90%)</span></span>
+                                <span className="font-bold text-emerald-600">{money(totals.thisCommission.agent)}</span>
+                            </div>
+                            {totals.combinedOutstanding != null && (
+                                <>
+                                    <div className="flex items-center justify-between text-sm border-t border-sky-100 pt-2">
+                                        <span className="text-slate-500">Combined outstanding after {lockinYears}-yr lock-in</span>
+                                        <span className="font-bold text-[#052d4a]">{money(totals.combinedOutstanding)}</span>
+                                    </div>
+                                    {totals.nextCommission && (
+                                        <div className="flex items-center justify-between text-sm">
+                                            <span className="text-slate-500 flex items-center gap-1"><TrendingUp size={13} className="text-[#03a9e7]" /> Projected next-cycle commission</span>
+                                            <span className="font-bold text-[#03a9e7]">{money(totals.nextCommission.agent)}</span>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Subsidy */}
+                    <div className="space-y-3">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input type="checkbox" checked={hasSubsidy} onChange={e => setHasSubsidy(e.target.checked)} className="rounded border-slate-300 accent-emerald-600" />
+                            <span className="text-sm font-semibold text-slate-700">Subsidy provided</span>
+                        </label>
+                        {hasSubsidy && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="label-xs">Subsidy Provided</label>
+                                    <input type="text" value={subsidyProvided} onChange={e => setSubsidyProvided(e.target.value)} placeholder="e.g. $2,000" className="input-std" />
+                                </div>
+                                <div>
+                                    <label className="label-xs">Clawback End Date</label>
+                                    <input type="date" value={clawbackEnd} onChange={e => setClawbackEnd(e.target.value)} className="input-std" />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Letter of Offer upload */}
+                    <div className="space-y-2">
+                        <p className={sectionLabel}>Letter of Offer</p>
+                        {keptDocs.length > 0 && (
+                            <div className="space-y-1.5">
+                                {keptDocs.map((d, i) => (
+                                    <div key={i} className="flex items-center gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2">
+                                        <FileText size={14} className="text-slate-400 shrink-0" />
+                                        <span className="flex-1 truncate text-slate-700">{d.name}</span>
+                                        <button type="button" onClick={() => setKeptDocs(arr => arr.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {files.map((f, i) => (
+                            <div key={i} className="flex items-center gap-2 text-sm bg-emerald-50/60 rounded-lg px-3 py-2">
+                                <FileText size={14} className="text-emerald-500 shrink-0" />
+                                <span className="flex-1 truncate text-slate-700">{f.name}</span>
+                                <button type="button" onClick={() => setFiles(arr => arr.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                            </div>
+                        ))}
+                        <label className="flex items-center gap-2 text-sm font-medium text-[#03a9e7] cursor-pointer hover:text-[#0290c5] w-fit">
+                            <Upload size={15} /> Add PDF / images
+                            <input type="file" multiple accept="application/pdf,image/*" className="hidden"
+                                onChange={e => { setFiles(arr => [...arr, ...Array.from(e.target.files ?? [])]); e.target.value = '' }} />
+                        </label>
+                    </div>
+
+                    {/* Banker(s) */}
+                    <div className="space-y-2">
+                        <p className={sectionLabel}>Referred Banker(s)</p>
+                        <BankerMultiSelect value={bankers} onChange={setBankers} />
+                    </div>
+
+                    {/* Follow-up */}
+                    <div>
+                        <label className="label-xs">Follow-up Date <span className="text-slate-400 normal-case">(syncs to your Google Calendar)</span></label>
+                        <input type="date" value={followUp} onChange={e => setFollowUp(e.target.value)} className="input-std" style={{ maxWidth: 200 }} />
+                    </div>
+
+                    {/* Remarks */}
+                    <div>
+                        <label className="label-xs">Remarks</label>
+                        <textarea rows={3} value={remarks} onChange={e => setRemarks(e.target.value)} className="input-std" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
+                    </div>
+
+                    {err && <InlineAlert type="error" message={err} onDismiss={() => setErr(null)} />}
+                </div>
+
+                <div className="px-6 py-4 border-t border-slate-100 flex gap-3 shrink-0 bg-slate-50/50">
+                    <button onClick={onCancel} disabled={busy} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
+                    <button
+                        disabled={!canSave}
+                        onClick={handleConfirm}
+                        className="btn-primary py-2.5 text-sm flex items-center gap-2 justify-center disabled:opacity-40"
+                        style={{ flex: 2, background: '#166534', borderColor: '#166534' }}
+                    >
+                        {busy ? <Spinner size="sm" color="white" label="Saving…" /> : <><CheckCircle2 size={16} /> Save &amp; Close Won</>}
+                    </button>
+                </div>
+            </div>
+        </div>
     )
 }
 
@@ -873,6 +1191,107 @@ function GridField({ label, children, isEditing, fullWidth }: { label: string; c
                 ? <div>{childArray[0]}</div>
                 : <div className="text-sm font-medium text-slate-800 min-h-[22px]">{childArray[1]}</div>
             }
+        </div>
+    )
+}
+
+// ─── Referred bankers (internal CRM) ──────────────────────────────────────────
+// Auto-saves on every add/remove — no edit mode required.
+function BankerControl({ value, onSave }: { value: ReferredBanker[]; onSave: (v: ReferredBanker[]) => void }) {
+    return (
+        <div className="card p-6">
+            <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center">
+                    <Briefcase size={16} className="text-slate-500" />
+                </div>
+                <div>
+                    <h3 className="font-bold text-slate-800">Referred Banker(s)</h3>
+                    <p className="text-xs text-slate-400">Who this case has been referred to. Changes save automatically.</p>
+                </div>
+            </div>
+            <BankerMultiSelect value={value} onChange={onSave} />
+        </div>
+    )
+}
+
+// ─── Closed-Won summary (loans, commission, next-cycle projection) ────────────
+function ClosedWonSummaryCard({ data }: { data: Case }) {
+    const cwd = data.closed_won_data ?? {}
+    const loans = cwd.loans ?? []
+    const money = (n: number) => `$${Math.round(n).toLocaleString()}`
+    const lockin = cwd.package?.lockin_years ?? 0
+    const original = cwd.original_loan_total ?? loans.reduce((s, l) => s + l.amount, 0)
+    const outstanding = cwd.combined_outstanding
+    const now = calculateCommission(original)
+    const next = outstanding != null ? calculateCommission(outstanding) : null
+
+    const openDoc = async (path: string) => {
+        const { data: signed } = await supabase.storage.from('insurance-documents').createSignedUrl(path, 120)
+        if (signed?.signedUrl) window.open(signed.signedUrl, '_blank')
+    }
+
+    return (
+        <div className="card p-6 space-y-5">
+            <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+                    <CheckCircle2 size={16} className="text-emerald-600" />
+                </div>
+                <div>
+                    <h3 className="font-bold text-slate-800">Closed Won Summary</h3>
+                    {data.closed_package_details && <p className="text-xs text-slate-400">{data.closed_package_details}</p>}
+                </div>
+            </div>
+
+            {/* Loans */}
+            <div className="space-y-2">
+                {loans.map((l, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm">
+                        <span className="text-slate-500">{CLOSED_LOAN_LABELS[l.kind]}</span>
+                        <span className="font-semibold text-slate-700">{money(l.amount)} · {l.tenure} yrs</span>
+                    </div>
+                ))}
+                <div className="flex items-center justify-between text-sm border-t border-dashed border-slate-200 pt-2">
+                    <span className="font-semibold text-slate-600">Total loan closed</span>
+                    <span className="font-bold text-[#052d4a]">{money(original)}</span>
+                </div>
+            </div>
+
+            {/* Commission now + next cycle */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="rounded-lg bg-emerald-50/60 border border-emerald-100 p-3.5">
+                    <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Commission (this close)</p>
+                    <p className="text-xl font-bold text-emerald-700 mt-0.5">{money(now.agent)}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">0.15% of {money(original)} · agent 90%</p>
+                </div>
+                {next != null && outstanding != null ? (
+                    <div className="rounded-lg bg-sky-50/60 border border-sky-100 p-3.5">
+                        <p className="text-[11px] font-semibold text-[#0369a1] uppercase tracking-wide flex items-center gap-1">
+                            <TrendingUp size={12} /> Projected next cycle
+                        </p>
+                        <p className="text-xl font-bold text-[#03a9e7] mt-0.5">{money(next.agent)}</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                            {money(outstanding)} outstanding after {lockin}-yr lock-in · agent 90%
+                        </p>
+                    </div>
+                ) : (
+                    <div className="rounded-lg bg-slate-50 border border-slate-100 p-3.5 flex items-center">
+                        <p className="text-[11px] text-slate-400">Add a lock-in period & rates to project next-cycle income.</p>
+                    </div>
+                )}
+            </div>
+
+            {/* LO documents */}
+            {cwd.lo_documents && cwd.lo_documents.length > 0 && (
+                <div className="space-y-1.5">
+                    <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Letter of Offer</p>
+                    {cwd.lo_documents.map((d, i) => (
+                        <button key={i} type="button" onClick={() => openDoc(d.path)}
+                            className="flex items-center gap-2 text-sm text-[#03a9e7] hover:underline w-full text-left">
+                            <FileText size={14} className="shrink-0" /> <span className="truncate">{d.name}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
         </div>
     )
 }

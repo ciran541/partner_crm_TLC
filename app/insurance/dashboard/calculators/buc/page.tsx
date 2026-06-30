@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Building2 } from 'lucide-react'
+import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 import type { SoraRates } from '@/lib/insurance/sora'
 
 // ── Milestones ─────────────────────────────────────────────────────────────────
@@ -97,10 +98,7 @@ function fmt(n: number): string {
 const inp = 'px-3 py-2.5 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/10 bg-white transition-colors w-full'
 
 function moneyChange(setter: (v: string) => void) {
-    return (e: React.ChangeEvent<HTMLInputElement>) => {
-        const raw = e.target.value.replace(/[^\d]/g, '')
-        setter(raw ? parseInt(raw).toLocaleString('en-SG') : '')
-    }
+    return (e: React.ChangeEvent<HTMLInputElement>) => setter(formatMoneyInput(e.target.value))
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────────

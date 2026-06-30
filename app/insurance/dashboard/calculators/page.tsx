@@ -2,7 +2,7 @@
 
 import type React from 'react'
 import Link from 'next/link'
-import { Calculator, TrendingDown, Users, Receipt, Building2, BarChart3 } from 'lucide-react'
+import { Calculator, TrendingDown, Users, Receipt, Building2, BarChart3, Coins } from 'lucide-react'
 
 const CALCULATORS: { name: string; description: string; href?: string; icon?: React.ElementType; available: boolean }[] = [
     {
@@ -10,6 +10,13 @@ const CALCULATORS: { name: string; description: string; href?: string; icon?: Re
         description: 'Year-by-year loan breakdown with variable rates per period',
         href: '/insurance/dashboard/calculators/amortization',
         icon: TrendingDown,
+        available: true,
+    },
+    {
+        name: 'Partial Repayment',
+        description: 'Model lump-sum repayments and see the interest saved and lower instalment',
+        href: '/insurance/dashboard/calculators/partial-repayment',
+        icon: Coins,
         available: true,
     },
     {

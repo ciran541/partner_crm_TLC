@@ -21,7 +21,7 @@ import { type RateScheduleEntry } from '@/lib/types/rates'
 import RefiPackages from './RefiPackages'
 import DecouplePresentation from './DecouplePresentation'
 import MultiBankSelect from './MultiBankSelect'
-import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
+import { Question, FieldInput, AgentNotesCard } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save,
@@ -150,8 +150,23 @@ export default function DecouplingWorkflowPanel({
             },
         })
     }
-    // Loan + tenure to price packages against (scenario-dependent)
-    const pkgLoan = scenario === 'S1' ? computation.buyerLoanLiability : computation.bankLoan75
+    // Loan the buyer is responsible for post-decoupling. The package recommendation
+    // prices against the buyer's FULL obligation — buyer's share of the refinanced
+    // home loan + any new purchase loan + buyer's share of the existing equity loan
+    // + any new equity loan — not a single leg. Computed once here so the recommender
+    // and the amortisation below price the exact same amount.
+    const homeLoanBuyerShare = (data.outstanding_home_loan ?? 0) * computation.buyerShareFrac
+    const equityLoanBuyerShare = (data.outstanding_equity_loan ?? 0) * computation.buyerShareFrac
+    const newEquityAmt = data.equity_loan_amount ?? 0
+    // Refi existing home loan only / new purchase loan only / both combined,
+    // per the buyer's financing situation.
+    const homeLoanForAmort =
+        scenario === 'S1' ? homeLoanBuyerShare
+        : scenario === 'S2' ? computation.bankLoan75
+        : homeLoanBuyerShare + computation.bankLoan75
+    const equityAmt = equityLoanBuyerShare + newEquityAmt
+    // Tenure to price packages against (financing-situation dependent)
+    const pkgLoan = homeLoanForAmort + equityAmt
     const pkgTenureMin = scenario === 'S1' ? computation.refiTenureMin : computation.purchaseTenureMin
     const pkgTenure = scenario === 'S1' ? computation.refiTenureMax : computation.purchaseTenureMax
     const pkgPropertyType: 'landed' | 'private_condo' = data.property_type === 'landed' ? 'landed' : 'private_condo'
@@ -309,7 +324,6 @@ export default function DecouplingWorkflowPanel({
                     <div className="rounded-lg border border-sky-200 bg-sky-50/60 px-3 py-2.5 flex items-center gap-2">
                         <Info size={13} className="text-[#03a9e7] shrink-0" />
                         <p className="text-[12px] text-slate-600">
-                            <span className="font-bold text-[#052d4a]">{scenario}:&nbsp;</span>
                             {scenario === 'S1' && 'No new financing · Has outstanding mortgage — refi TDSR only'}
                             {scenario === 'S2' && 'New financing · No outstanding mortgage — purchase TDSR only'}
                             {scenario === 'S3' && 'New financing · Has outstanding mortgage — refi + purchase TDSR'}
@@ -1039,17 +1053,8 @@ export default function DecouplingWorkflowPanel({
 
             {/* ── 12. MONTHLY INSTALMENT ── */}
             {computation.ready && scenario !== null && scenario !== 'S4' && pkgLoan > 0 && (() => {
-                // Compute total loan amounts the buyer is responsible for post-decoupling
-                const homeLoanBuyerShare = (data.outstanding_home_loan ?? 0) * computation.buyerShareFrac
-                const equityLoanBuyerShare = (data.outstanding_equity_loan ?? 0) * computation.buyerShareFrac
-                const newEquityAmt = data.equity_loan_amount ?? 0
-                // S1: refi existing home loan only; S2: new purchase loan only (fully paid); S3: both combined
-                const homeLoanForAmort =
-                    scenario === 'S1' ? homeLoanBuyerShare
-                    : scenario === 'S2' ? computation.bankLoan75
-                    : homeLoanBuyerShare + computation.bankLoan75
-                // Equity: buyer's share of existing EL + any new equity loan requested
-                const equityAmt = equityLoanBuyerShare + newEquityAmt
+                // homeLoanForAmort / equityAmt are computed once near the top so the
+                // package recommendation and this amortisation price the same obligation.
                 const isMix = newEquityAmt > 0
 
                 // Home/refi loan tenure range
@@ -1646,6 +1651,9 @@ export default function DecouplingWorkflowPanel({
                     <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
                 )}
             </div>
+
+            {/* Agent notes — internal, per-case */}
+            <AgentNotesCard value={data.agent_notes} onChange={v => update({ agent_notes: v })} />
 
             {/* Hand-off */}
             {embedded && onContinue && (

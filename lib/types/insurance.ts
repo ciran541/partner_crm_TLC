@@ -4,18 +4,55 @@
  * Do NOT modify these without coordinating with insurance CRM changes.
  */
 
+import type { RateScheduleEntry } from './rates'
+
 // Case Types
 export type CaseType = 'Refinancing' | 'Purchase' | 'Decouple' | 'Equity Loan' | 'Divorce'
 
 // Pipeline Stages
 export type PipelineStage =
     | 'Touched Base'
-    | 'Proposal Given'
-    | 'Referred to Bank'
+    | 'Pending Docs'
     | 'Pending Approval'
     | 'Pending Signature'
     | 'Closed Won'
     | 'Closed Lost'
+
+// A banker a case has been referred to (bank + banker name, from BANKER_DATA).
+export interface ReferredBanker {
+    bank: string
+    name: string
+}
+
+// ─── Closed-Won structured data ───────────────────────────────────────────────
+// One package (lock-in + rate schedule) closes one or more loans. Which loans
+// apply depends on the case type (see CLOSED_LOAN_KINDS_BY_CASE_TYPE in
+// lib/insurance/closedWon.ts).
+export type ClosedLoanKind = 'home' | 'equity' | 'refi_home' | 'new_purchase_home'
+
+export interface ClosedWonLoan {
+    kind: ClosedLoanKind
+    amount: number
+    tenure: number   // years
+}
+
+// A Letter-of-Offer file stored in the `insurance-documents` storage bucket.
+export interface LoDocument {
+    path: string     // storage object path
+    name: string     // original filename
+    type: string     // MIME type
+}
+
+export interface ClosedWonData {
+    loans?: ClosedWonLoan[]
+    package?: {
+        lockin_years?: number
+        schedule?: RateScheduleEntry[]
+    }
+    lo_documents?: LoDocument[]
+    original_loan_total?: number    // Σ loan amounts in the LO (this close's commission base)
+    combined_outstanding?: number   // Σ per-loan balances at end of lock-in (next-cycle base)
+}
 
 // Case Interface
 export interface Case {
@@ -47,6 +84,12 @@ export interface Case {
 
     // Follow-up reminder (date column in the cases table)
     follow_up_date?: string
+
+    // Bankers this case has been referred to (jsonb array of { bank, name })
+    referred_bankers?: ReferredBanker[]
+
+    // Structured Closed-Won capture (loans, package, LO docs, computed outstanding)
+    closed_won_data?: ClosedWonData
 
     // Closure fields (only for Closed Won)
     closed_package_details?: string
@@ -123,4 +166,6 @@ export interface UpdateCaseInput {
     clawback_end_date?: string
     remarks?: string
     sales_assistant_data?: AssistantData
+    referred_bankers?: ReferredBanker[]
+    closed_won_data?: ClosedWonData
 }

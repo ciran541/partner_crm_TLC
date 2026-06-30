@@ -25,7 +25,7 @@ import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchas
 import { monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RateScheduleEntry } from '@/lib/types/rates'
-import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
+import { Question, FieldInput, AgentNotesCard } from '@/components/insurance/workflow/WorkflowStep'
 import Modal from '@/components/shared/Modal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import type { PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
@@ -63,6 +63,13 @@ const pct = (frac: number) => {
     return Number.isInteger(v) ? `${v}%` : `${v.toFixed(2)}%`
 }
 const num = (v: string) => (v.trim() === '' ? undefined : parseFloat(v.replace(/,/g, '')))
+
+// Split a cash/CPF balance into the CPF portion (capped at available CPF) and the
+// remaining cash. CPF can only cover the balance after the minimum cash downpayment.
+const splitCashCpf = (balance: number, availableCpf: number) => {
+    const cpf = Math.max(0, Math.min(availableCpf, balance))
+    return { cpf, cash: Math.max(0, balance - cpf) }
+}
 
 export default function PurchaseWorkflowPanel({
     data, onChange, clientName, clientEmail, caseId, embedded, saving, saved, hasClientName, onContinue,
@@ -164,6 +171,8 @@ export default function PurchaseWorkflowPanel({
         const next = borrowers.map((b, idx) => idx === i ? { ...b, ...patch } : b)
         update({ borrowers: next })
     }
+    // Total available CPF (OA) across all owners — applied to the cash/CPF downpayment.
+    const totalCpf = borrowers.reduce((s, b) => s + (b.cpf_oa ?? 0), 0)
 
     const foreignerBlocked = restrictsForeigner(data.property_type)
     const outstandingLocked = locksOutstandingToZero(data.property_type)
@@ -369,10 +378,28 @@ export default function PurchaseWorkflowPanel({
                         />
                     </Question>
                     {borrowers.map((b, i) => (
-                        <div key={i} className="rounded-lg border border-slate-200 p-4">
-                            <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">
-                                {borrowers.length === 1 ? 'Owner' : `Owner ${i + 1}`}
-                            </p>
+                        <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-4">
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                                    {borrowers.length === 1 ? 'Owner' : `Owner ${i + 1}`}
+                                </p>
+                                {/* Owner not on the loan — Owner 2/3/4 only (the first owner is always a borrower).
+                                    Still an owner: residency drives ABSD and CPF below counts; only income is excluded. */}
+                                {i > 0 && (
+                                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 cursor-pointer select-none">
+                                        <input type="checkbox" checked={!!b.non_borrower}
+                                            onChange={e => updateBorrower(i, { non_borrower: e.target.checked })}
+                                            className="rounded border-slate-300 accent-[#03a9e7]" />
+                                        Non-borrower (owner only)
+                                    </label>
+                                )}
+                            </div>
+                            {b.non_borrower && (
+                                <p className="text-[11px] text-amber-700 flex items-start gap-1.5 bg-amber-50/60 border border-amber-200 rounded-lg px-3 py-2">
+                                    <Info size={12} className="mt-0.5 shrink-0 text-amber-600" />
+                                    Owner but not on the loan — income excluded from eligibility &amp; IWAA. Residency and CPF below still apply.
+                                </p>
+                            )}
                             <Question label="Residency">
                                 <PillSelect
                                     value={b.residency ?? 'singaporean'}
@@ -383,8 +410,21 @@ export default function PurchaseWorkflowPanel({
                                     }))}
                                 />
                             </Question>
+                            <Question label="Available CPF (OA)">
+                                <FieldInput commas prefix="$" value={b.cpf_oa ?? ''} placeholder="e.g. 20,000"
+                                    onChange={v => updateBorrower(i, { cpf_oa: num(v) })} />
+                                <p className="text-[11px] text-slate-400 mt-1.5 flex items-start gap-1.5">
+                                    <Info size={12} className="mt-0.5 shrink-0" />
+                                    Only owners can use CPF for the downpayment. Captured here to size cash vs CPF exactly and track CPF used for future equity.
+                                </p>
+                            </Question>
                         </div>
                     ))}
+                    {totalCpf > 0 && borrowers.length > 1 && (
+                        <p className="text-[11px] font-semibold text-[#03a9e7] -mt-1">
+                            Total available CPF (OA): {money(totalCpf)}
+                        </p>
+                    )}
 
                     {/* Marriage question — only relevant for joint (2); 3+ owners can't all be a married couple */}
                     {borrowers.length === 2 && (
@@ -650,11 +690,32 @@ export default function PurchaseWorkflowPanel({
             {/* Income — only when IPA not done; residency + count come from Buyer Profile above */}
             {data.property_type && data.ipa_done === false && (
                 <Section title="Borrower Income" icon={<Wallet size={15} />}>
-                    {borrowers.map((b, i) => (
+                    {borrowers.map((b, i) => {
+                        const nonBorrower = !!b.non_borrower
+                        return (
                         <div key={i} className="rounded-lg border border-slate-200 p-4 space-y-4">
-                            <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                                {borrowers.length === 1 ? 'Borrower' : `Borrower ${i + 1}`}
-                            </p>
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                                    {borrowers.length === 1 ? 'Borrower' : `Borrower ${i + 1}`}
+                                </p>
+                                {/* Same flag as Buyer Profile — toggle it here too, so the agent doesn't
+                                    have to scroll back up while entering income. Owner 2/3/4 only. */}
+                                {i > 0 && (
+                                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 cursor-pointer select-none">
+                                        <input type="checkbox" checked={nonBorrower}
+                                            onChange={e => updateBorrower(i, { non_borrower: e.target.checked })}
+                                            className="rounded border-slate-300 accent-[#03a9e7]" />
+                                        Non-borrower (owner only)
+                                    </label>
+                                )}
+                            </div>
+                            {nonBorrower ? (
+                                <p className="text-[11px] text-amber-700 flex items-start gap-1.5 bg-amber-50/60 border border-amber-200 rounded-lg px-3 py-2">
+                                    <Info size={12} className="mt-0.5 shrink-0 text-amber-600" />
+                                    Owner but not on the loan — income excluded from eligibility &amp; IWAA. Their CPF (Buyer Profile) still counts toward the downpayment.
+                                </p>
+                            ) : (
+                            <>
                             <Question label="Employment">
                                 <PillSelect
                                     value={b.employment ?? 'employed'}
@@ -683,8 +744,11 @@ export default function PurchaseWorkflowPanel({
                                         onChange={v => updateBorrower(i, { commitments: num(v) })} />
                                 </Question>
                             </div>
+                            </>
+                            )}
                         </div>
-                    ))}
+                        )
+                    })}
 
                     {/* IWAA + Tenure Range + Preferred Tenure — shown once ages are entered */}
                     {computation.weightedAge != null && computation.tenureRange && (
@@ -765,6 +829,7 @@ export default function PurchaseWorkflowPanel({
                                     adjustedLoan={adjustedLoans[opt.key]}
                                     onAdjustLoan={v => setAdjustedLoans(prev => ({ ...prev, [opt.key]: v }))}
                                     rule={meta?.rule ?? 'tdsr'}
+                                    totalCpf={totalCpf}
                                 />
                             )
                         })}
@@ -791,6 +856,7 @@ export default function PurchaseWorkflowPanel({
                         price={effectivePrice}
                         adjustedLoans={adjustedLoans}
                         rule={meta?.rule ?? 'tdsr'}
+                        totalCpf={totalCpf}
                     />
 
                     {/* Packages — priced + filtered for the SELECTED option's loan. The loan
@@ -1353,6 +1419,9 @@ export default function PurchaseWorkflowPanel({
                 </div>
             )}
 
+            {/* Agent notes — internal, per-case */}
+            <AgentNotesCard value={data.agent_notes} onChange={v => update({ agent_notes: v })} />
+
             {/* Hand-off — leaves the client-facing advisory and goes to the internal
                 tab to capture the client's details, set the stage, or close. */}
             {embedded && onContinue && (
@@ -1485,17 +1554,32 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
     )
 }
 
-function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
+function LiquidityCard({ options, miscFees, price, adjustedLoans, rule, totalCpf = 0 }: {
     options: OptionResult[]
     miscFees: number
     price: number
     adjustedLoans?: Record<string, number | undefined>
     rule?: ServicingRule
+    totalCpf?: number
 }) {
     if (!options.length || price <= 0) return null
     const fmtFrac = (frac: number) => {
         const v = frac * 100
         return `${Number.isInteger(v) ? v : v.toFixed(1)}%`
+    }
+    // Split a balance into Available CPF + Balance Cash rows when CPF is on hand;
+    // otherwise show the original single "Cash / CPF" row.
+    const balanceRows = (balance: number, cashCpfLabel: string) => {
+        if (totalCpf <= 0) {
+            return <Row label={<>{cashCpfLabel} <span className="text-[#03a9e7]">({fmtFrac(price > 0 ? balance / price : 0)})</span></>} value={money(balance)} />
+        }
+        const { cpf, cash } = splitCashCpf(balance, totalCpf)
+        return (
+            <>
+                <Row label={<>Available CPF <span className="text-[#03a9e7]">({fmtFrac(price > 0 ? cpf / price : 0)})</span></>} value={money(cpf)} />
+                <Row label={<>Balance Cash <span className="text-[#03a9e7]">({fmtFrac(price > 0 ? cash / price : 0)})</span></>} value={money(cash)} />
+            </>
+        )
     }
     return (
         <Section title="Total Liquidity Required" icon={<Wallet size={15} />}>
@@ -1510,7 +1594,6 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
                     const hasAdjustment = adjLoan != null && adjLoan > opt.finalLoan
                     const s2s3Target = hasAdjustment ? adjLoan! : opt.ltvCeiling
                     const s2s3Balance = Math.max(0, price - s2s3Target - opt.minCashDown)
-                    const s2s3BalancePct = price > 0 ? s2s3Balance / price : 0
                     const s2s3LtvPct = price > 0 ? s2s3Target / price : opt.ltvPct
                     const s2s3Pledge: PledgeData | null = hasAdjustment && rule
                         ? computePledge(adjLoan! - opt.finalLoan, opt.tenure, rule)
@@ -1532,7 +1615,7 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
                                     No Pledging/Showing to get {money(opt.finalLoan)} loan (<span className="text-[#03a9e7]">{fmtFrac(price > 0 ? opt.finalLoan / price : opt.ltvPct)}</span>)
                                 </p>
                                 <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                <Row label={<>Balance Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(opt.cashCpfPct)})</span></>} value={money(opt.cashCpfDown)} />
+                                {balanceRows(opt.cashCpfDown, 'Balance Cash / CPF')}
                                 <Row label="Misc Fees" value={money(miscFees)} muted />
                                 <div className="border-t border-dashed border-slate-200 pt-1.5">
                                     <Row label="Total Required" value={money(s1Total)} strong />
@@ -1550,7 +1633,7 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
                                             highlight
                                         />
                                         <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(s2s3BalancePct)})</span></>} value={money(s2s3Balance)} />
+                                        {balanceRows(s2s3Balance, 'Cash / CPF')}
                                         <Row label="Misc Fees" value={money(miscFees)} muted />
                                         <div className="border-t border-dashed border-slate-200 pt-1.5">
                                             <Row label="Total Required" value={money(s2Total)} strong />
@@ -1566,7 +1649,7 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
                                             highlight
                                         />
                                         <Row label={<>Min Cash <span className="text-[#03a9e7]">({fmtFrac(opt.minCashPct)})</span></>} value={money(opt.minCashDown)} />
-                                        <Row label={<>Cash / CPF <span className="text-[#03a9e7]">({fmtFrac(s2s3BalancePct)})</span></>} value={money(s2s3Balance)} />
+                                        {balanceRows(s2s3Balance, 'Cash / CPF')}
                                         <Row label="Misc Fees" value={money(miscFees)} muted />
                                         <div className="border-t border-dashed border-slate-200 pt-1.5">
                                             <Row label="Total Required" value={money(s3Total)} strong />
@@ -1582,13 +1665,14 @@ function LiquidityCard({ options, miscFees, price, adjustedLoans, rule }: {
     )
 }
 
-function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, blocked, preferredTenure, adjustedLoan, onAdjustLoan, rule }: {
+function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, blocked, preferredTenure, adjustedLoan, onAdjustLoan, rule, totalCpf = 0 }: {
     opt: OptionResult; ipaBank?: string; price: number
     selectable?: boolean; selected?: boolean; onSelect?: () => void
     blocked?: boolean; preferredTenure?: number
     adjustedLoan?: number
     onAdjustLoan?: (v: number | undefined) => void
     rule?: ServicingRule
+    totalCpf?: number
 }) {
     const [rawLoan, setRawLoan] = useState('')
     const isIpa = opt.source === 'ipa'
@@ -1704,12 +1788,34 @@ function OptionCard({ opt, ipaBank, price, selectable, selected, onSelect, block
                         </span>
                         <span className="text-[15px] font-bold text-[#03a9e7]">{money(effectiveLoan)}</span>
                     </div>
-                    <div className="flex items-center justify-between gap-3 text-sm">
-                        <span className="text-slate-500">
-                            Balance Cash / CPF <span className="text-[#03a9e7] font-semibold">({balancePctLabel})</span>
-                        </span>
-                        <span className="font-semibold text-[#03a9e7]">{money(effectiveBalance)}</span>
-                    </div>
+                    {totalCpf > 0 ? (() => {
+                        const { cpf, cash } = splitCashCpf(effectiveBalance, totalCpf)
+                        const cpfPct = price > 0 ? fmtPct(Math.round(cpf / price * 1000) / 10) : '—'
+                        const cashPct = price > 0 ? fmtPct(Math.round(cash / price * 1000) / 10) : '—'
+                        return (
+                            <>
+                                <div className="flex items-center justify-between gap-3 text-sm">
+                                    <span className="text-slate-500">
+                                        Available CPF <span className="text-[#03a9e7] font-semibold">({cpfPct})</span>
+                                    </span>
+                                    <span className="font-semibold text-[#03a9e7]">{money(cpf)}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3 text-sm">
+                                    <span className="text-slate-500">
+                                        Balance Cash <span className="text-[#03a9e7] font-semibold">({cashPct})</span>
+                                    </span>
+                                    <span className="font-semibold text-[#03a9e7]">{money(cash)}</span>
+                                </div>
+                            </>
+                        )
+                    })() : (
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-slate-500">
+                                Balance Cash / CPF <span className="text-[#03a9e7] font-semibold">({balancePctLabel})</span>
+                            </span>
+                            <span className="font-semibold text-[#03a9e7]">{money(effectiveBalance)}</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Actual loan requirement — dedicated field + pledge/show info */}

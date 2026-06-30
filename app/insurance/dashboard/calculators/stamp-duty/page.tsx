@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Receipt, Minus, Plus } from 'lucide-react'
+import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 
 // ── BSD engine ─────────────────────────────────────────────────────────────────
 
@@ -196,10 +197,7 @@ export default function StampDutyPage() {
                                 <input
                                     type="text"
                                     value={propertyValue}
-                                    onChange={e => {
-                                    const raw = e.target.value.replace(/[^\d]/g, '')
-                                    setPropertyValue(raw ? parseInt(raw).toLocaleString('en-SG') : '')
-                                }}
+                                    onChange={e => setPropertyValue(formatMoneyInput(e.target.value))}
                                     className={`${inp} pl-7`}
                                     placeholder="1,000,000"
                                 />

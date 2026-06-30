@@ -18,7 +18,7 @@ import type { RefiProposalPackage } from '@/lib/insurance/refiProposal'
 import { buildRefiProposalText } from '@/lib/insurance/refiProposal'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
 import type { SoraRates } from '@/lib/insurance/sora'
-import { Question, FieldInput } from '@/components/insurance/workflow/WorkflowStep'
+import { Question, FieldInput, AgentNotesCard } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import Modal from '@/components/shared/Modal'
 import RefiPackages from './RefiPackages'
@@ -60,7 +60,7 @@ function interestOverPeriod(loan: number, ratePct: number, tenureYrs: number, pe
     return Math.max(p * nP - (loan - balance), 0)
 }
 
-const STAGE_ORDER = ['Touched Base', 'Proposal Given', 'Referred to Bank', 'Pending Approval', 'Pending Signature']
+const STAGE_ORDER = ['Touched Base', 'Pending Docs', 'Pending Approval', 'Pending Signature']
 const SUBSIDY_PRESETS = ['0', '2000', '2500']
 
 const money = (n: number) => `$${Math.floor(n).toLocaleString()}`
@@ -1716,6 +1716,9 @@ export default function RefinancingWorkflowPanel({
                 </div>
             )}
 
+            {/* Agent notes — internal, per-case */}
+            <AgentNotesCard value={data.agent_notes} onChange={v => update({ agent_notes: v })} />
+
             {/* Hand-off — leaves the advisory workflow and goes to the internal
                 tab to capture the client's details, set the stage, or close. */}
             {embedded && onContinue && (
@@ -1812,9 +1815,10 @@ function CheckRow({ label, hint, checked, onToggle }: { label: string; hint?: st
     )
 }
 
+// Input-driven warnings only (e.g. tenure errors). The static/dynamic advisory
+// bullets that used to live here are being woven into the workflow steps instead.
 function RemarksCard({ remarks }: { remarks: RefiRemarks }) {
-    const all = [...remarks.standard, ...remarks.conditional]
-    if (!all.length && !remarks.alerts.length) return null
+    if (!remarks.alerts.length) return null
     return (
         <div className="space-y-3">
             {remarks.alerts.map((a, i) => (
@@ -1823,21 +1827,6 @@ function RemarksCard({ remarks }: { remarks: RefiRemarks }) {
                     <p className="text-[13px] text-amber-800 leading-relaxed">{a}</p>
                 </div>
             ))}
-            {all.length > 0 && (
-                <div className="rounded-xl border border-violet-200 bg-violet-50/40 p-5">
-                    <p className="text-sm font-bold text-violet-800 flex items-center gap-2 mb-3">
-                        <Lightbulb size={15} /> Remarks — advise the client
-                    </p>
-                    <ul className="space-y-2.5">
-                        {all.map((r, i) => (
-                            <li key={i} className="flex items-start gap-2.5 text-[13px] text-violet-900 leading-relaxed">
-                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0 mt-1.5" />
-                                <span>{r}</span>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
         </div>
     )
 }

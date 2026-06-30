@@ -78,6 +78,8 @@ export interface RefinancingWorkflow {
     next_actions_done?: string[]
     completed_steps?: string[]
     flags?: WorkflowFlags
+    // Free-text internal notes the agent keeps about this case (never client-facing).
+    agent_notes?: string
 }
 
 export function getRefinancingWorkflow(data: unknown): RefinancingWorkflow {
@@ -116,6 +118,11 @@ export interface PurchaseBorrower {
     age?: number
     residency?: 'singaporean' | 'pr' | 'foreigner'
     commitments?: number
+    // Owner who is NOT on the loan (still an owner — counts for ABSD residency and can
+    // use CPF for the downpayment — but their income/age is excluded from IWAA + TDSR).
+    non_borrower?: boolean
+    // Available CPF (OA) this owner can put toward the downpayment.
+    cpf_oa?: number
 }
 
 export interface PurchaseWorkflow {
@@ -153,6 +160,8 @@ export interface PurchaseWorkflow {
     // Agent/client chosen tenure (within the computed range). When set, both options
     // re-price at min(preferred, option_max). Undefined = use each option's max tenure.
     preferred_tenure?: number
+    // Free-text internal notes the agent keeps about this case (never client-facing).
+    agent_notes?: string
 }
 
 export function getPurchaseWorkflow(data: unknown): PurchaseWorkflow {
@@ -233,6 +242,8 @@ export interface DecoupleWorkflow {
 
     completed_steps?: string[]
     flags?: WorkflowFlags
+    // Free-text internal notes the agent keeps about this case (never client-facing).
+    agent_notes?: string
 }
 
 export function getDecoupleWorkflow(data: unknown): DecoupleWorkflow {
@@ -303,6 +314,8 @@ export interface EquityLoanWorkflow {
     next_actions_done?: string[]
     completed_steps?: string[]
     flags?: WorkflowFlags
+    // Free-text internal notes the agent keeps about this case (never client-facing).
+    agent_notes?: string
 }
 
 export function getEquityLoanWorkflow(data: unknown): EquityLoanWorkflow {

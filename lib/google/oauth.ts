@@ -32,13 +32,16 @@ export function getCalendarClientForAgent(refreshToken: string): calendar_v3.Cal
 
 /**
  * Builds the Google OAuth consent URL for an agent to authorise calendar access.
+ * `state` carries which app initiated the flow ('property' | 'insurance') so the
+ * single shared callback can redirect back to the right profile page.
  */
-export function buildAuthUrl(): string {
+export function buildAuthUrl(state: 'property' | 'insurance' = 'property'): string {
     const auth = getOAuthClient()
     return auth.generateAuthUrl({
         access_type: 'offline',
         prompt: 'consent', // force refresh_token even if previously authorised
         scope: ['https://www.googleapis.com/auth/calendar.events'],
+        state,
     })
 }
 

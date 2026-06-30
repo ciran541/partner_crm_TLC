@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabaseClient'
 import { useCases, refreshCases } from '@/lib/insurance/useCases'
 import type { Case } from '@/lib/types'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
-import { Clock, CalendarDays, CheckCircle2, AlertCircle, ChevronRight } from 'lucide-react'
+import { Clock, CalendarDays, CheckCircle2, AlertCircle, ChevronRight, TrendingUp } from 'lucide-react'
+import { calculateCommission } from '@/lib/property/commission'
 
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -22,44 +22,29 @@ const caseFigure = (c: Case) => money(c.loan_size) ?? money(c.property_price) ??
 
 export default function InsuranceFollowUpPage() {
     const { cases, loading } = useCases()
-    const [isAdminUser, setIsAdminUser] = useState(false)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
     const [adjustingId, setAdjustingId] = useState<string | null>(null)
     const [newDate, setNewDate] = useState('')
     const [saving, setSaving] = useState(false)
-
-    useEffect(() => {
-        let active = true
-        supabase.auth.getUser().then(async ({ data: { user } }) => {
-            if (!user || !active) return
-            const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-            if (active) setIsAdminUser(data?.role === 'admin' || data?.role === 'super_admin')
-        })
-        return () => { active = false }
-    }, [])
 
     const withFollowUp = useMemo(() => cases.filter(c => c.follow_up_date), [cases])
     const today = new Date().toISOString().split('T')[0]
     const overdue = withFollowUp.filter(c => c.follow_up_date! <= today).sort((a, b) => b.follow_up_date!.localeCompare(a.follow_up_date!))
     const upcoming = withFollowUp.filter(c => c.follow_up_date! > today).sort((a, b) => a.follow_up_date!.localeCompare(b.follow_up_date!))
 
-    async function persist(id: string, updates: Record<string, unknown>): Promise<string | null> {
-        const payload = { ...updates, updated_at: new Date().toISOString() }
-        if (isAdminUser) {
-            const res = await fetch('/api/admin/update-case', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, updates: payload }),
-            })
-            if (!res.ok) { const d = await res.json().catch(() => ({})); return d.error || 'Failed to save' }
-            return null
-        }
-        const { error } = await supabase.from('cases').update(payload).eq('id', id)
-        return error?.message ?? null
+    // Routed through the API so the change also syncs to the agent's Google Calendar.
+    async function persist(id: string, followUpDate: string | null): Promise<string | null> {
+        const res = await fetch(`/api/insurance/cases/${id}/followup`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ follow_up_date: followUpDate }),
+        })
+        if (!res.ok) { const d = await res.json().catch(() => ({})); return d.error || 'Failed to save' }
+        return null
     }
 
     async function markDone(id: string) {
         setSaving(true)
-        const err = await persist(id, { follow_up_date: null })
+        const err = await persist(id, null)
         setSaving(false)
         if (err) { setAlert({ type: 'error', message: err }); return }
         setAlert({ type: 'success', message: 'Follow-up cleared.' })
@@ -69,7 +54,7 @@ export default function InsuranceFollowUpPage() {
     async function saveDate(id: string) {
         if (!newDate) return
         setSaving(true)
-        const err = await persist(id, { follow_up_date: newDate })
+        const err = await persist(id, newDate)
         setSaving(false)
         if (err) { setAlert({ type: 'error', message: err }); return }
         setAdjustingId(null); setNewDate('')
@@ -173,6 +158,12 @@ function FollowUpCard({ c, overdue, adjusting, newDate, saving, onStartAdjust, o
                         {figure && <span>· {figure}</span>}
                         {c.client_mobile && <span>· {c.client_mobile}</span>}
                     </div>
+                    {c.closed_won_data?.combined_outstanding ? (
+                        <p className="text-[11px] font-semibold text-[#03a9e7] mt-1 flex items-center gap-1">
+                            <TrendingUp size={11} /> Potential next-cycle income: {money(calculateCommission(c.closed_won_data.combined_outstanding).agent)}
+                            <span className="text-slate-400 font-normal">on {money(c.closed_won_data.combined_outstanding)} outstanding</span>
+                        </p>
+                    ) : null}
                 </div>
                 <div className="text-right shrink-0">
                     <div className="flex items-center gap-1.5 justify-end">

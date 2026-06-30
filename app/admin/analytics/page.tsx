@@ -20,7 +20,7 @@ export default function AdminAnalyticsPage() {
     }>({ totalCases: 0, totalVolume: 0, won: 0, lost: 0, stageCounts: {} })
 
     const pipelineStages: PipelineStage[] = [
-        'Touched Base', 'Proposal Given', 'Referred to Bank',
+        'Touched Base', 'Pending Docs',
         'Pending Approval', 'Pending Signature', 'Closed Won', 'Closed Lost',
     ]
 

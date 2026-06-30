@@ -35,37 +35,44 @@ export function parsePriorityMin(note: string | null | undefined): number | null
  * each group, keeps only the HIGHEST qualifying min-loan tier (better rate) for the
  * given loan. Packages whose minimum is up to 10% above the loan are returned as
  * `appeal: true` — the bank may still approve on appeal. Priority-banking clients
- * unlock a lower threshold from min_loan_note for the banks they hold status with.
+ * unlock a lower threshold from min_loan_note for the banks they hold status with;
+ * a package the client only reaches because of that lowered threshold (its standard
+ * min-loan exceeds the loan) is flagged `priority: true`.
  */
 export function applyLoanSizeFilter(
     pkgs: MortgagePackage[],
     loan: number,
     priorityBanks: Set<string> = new Set(),
-): { pkg: MortgagePackage; appeal: boolean }[] {
+): { pkg: MortgagePackage; appeal: boolean; priority: boolean }[] {
     const groups = new Map<string, MortgagePackage[]>()
     for (const pkg of pkgs) {
         const key = `${pkg.bank}|${pkg.category}|${pkg.property_type}|${pkg.lockin_years}`
         if (!groups.has(key)) groups.set(key, [])
         groups.get(key)!.push(pkg)
     }
-    const result: { pkg: MortgagePackage; appeal: boolean }[] = []
-    for (const [, group] of groups) {
-        const effectiveMin = (pkg: MortgagePackage): number => {
-            if (priorityBanks.has(pkg.bank)) {
-                const pm = parsePriorityMin(pkg.min_loan_note)
-                if (pm != null && pm < pkg.min_loan_size) return pm
-            }
-            return pkg.min_loan_size
+    const effectiveMin = (pkg: MortgagePackage): number => {
+        if (priorityBanks.has(pkg.bank)) {
+            const pm = parsePriorityMin(pkg.min_loan_note)
+            if (pm != null && pm < pkg.min_loan_size) return pm
         }
+        return pkg.min_loan_size
+    }
+    // True when the client only qualifies (strict or appeal) thanks to their priority
+    // status — i.e. the standard min-loan alone would exclude this package for this loan.
+    const usesPriority = (pkg: MortgagePackage): boolean =>
+        priorityBanks.has(pkg.bank) && pkg.min_loan_size > loan && effectiveMin(pkg) < pkg.min_loan_size
+
+    const result: { pkg: MortgagePackage; appeal: boolean; priority: boolean }[] = []
+    for (const [, group] of groups) {
         const strict = group.filter(p => effectiveMin(p) <= loan)
         if (strict.length > 0) {
             const maxTier = Math.max(...strict.map(p => effectiveMin(p)))
-            strict.filter(p => effectiveMin(p) === maxTier).forEach(p => result.push({ pkg: p, appeal: false }))
+            strict.filter(p => effectiveMin(p) === maxTier).forEach(p => result.push({ pkg: p, appeal: false, priority: usesPriority(p) }))
         }
         // Within 10% above the loan → bank may approve on appeal.
         const VARIANCE = 1 / 0.9
         group.filter(p => effectiveMin(p) > loan && effectiveMin(p) <= loan * VARIANCE)
-            .forEach(p => result.push({ pkg: p, appeal: true }))
+            .forEach(p => result.push({ pkg: p, appeal: true, priority: usesPriority(p) }))
     }
     return result
 }

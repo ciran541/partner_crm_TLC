@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Plus, Trash2, Calculator, Lock } from 'lucide-react'
 import { monthlyInstallment } from '@/lib/insurance/loanCalc'
+import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 
@@ -118,7 +119,7 @@ const DEFAULT_SCHEDULE: RateScheduleEntry[] = [
 ]
 
 export default function AmortizationPage() {
-    const [loanAmount, setLoanAmount] = useState('300000')
+    const [loanAmount, setLoanAmount] = useState('300,000')
     const [tenure, setTenure] = useState('25')
     const [lockInInput, setLockInInput] = useState('')
     const [compareTenure, setCompareTenure] = useState('')
@@ -265,7 +266,7 @@ export default function AmortizationPage() {
                                     <input
                                         type="text"
                                         value={loanAmount}
-                                        onChange={e => setLoanAmount(e.target.value)}
+                                        onChange={e => setLoanAmount(formatMoneyInput(e.target.value))}
                                         className={`${inp} pl-7 w-full`}
                                         placeholder="300,000"
                                     />

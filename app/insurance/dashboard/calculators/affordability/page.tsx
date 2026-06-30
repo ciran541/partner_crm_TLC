@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Users } from 'lucide-react'
 import { monthlyInstallment, TDSR_LIMIT, MSR_LIMIT, NOA_FACTOR } from '@/lib/insurance/loanCalc'
+import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 
 const STRESS_RATE = 4.0
 
@@ -180,7 +181,7 @@ function IncomeTable({
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AffordabilityPage() {
-    const [loanAmount, setLoanAmount] = useState('900000')
+    const [loanAmount, setLoanAmount] = useState('900,000')
     const [tenure, setTenure]         = useState('30')
     const [liability, setLiability]   = useState('')
 
@@ -238,7 +239,7 @@ export default function AffordabilityPage() {
                                 <input
                                     type="text"
                                     value={loanAmount}
-                                    onChange={e => setLoanAmount(e.target.value)}
+                                    onChange={e => setLoanAmount(formatMoneyInput(e.target.value))}
                                     className={`${inp} pl-7`}
                                     placeholder="900,000"
                                 />
@@ -256,7 +257,7 @@ export default function AffordabilityPage() {
                                 <input
                                     type="text"
                                     value={liability}
-                                    onChange={e => setLiability(e.target.value)}
+                                    onChange={e => setLiability(formatMoneyInput(e.target.value))}
                                     className={`${inp} pl-7 border-dashed`}
                                     placeholder="e.g. 500 for car loan"
                                 />

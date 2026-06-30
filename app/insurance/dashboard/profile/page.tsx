@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
-import { User, Mail, Shield, Lock, Check, Eye, EyeOff, Users, TrendingUp, ChevronRight } from 'lucide-react'
+import { User, Mail, Shield, Lock, Check, Eye, EyeOff, Users, TrendingUp, ChevronRight, CalendarCheck, CalendarX, X } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
@@ -21,6 +22,42 @@ export default function InsuranceProfilePage() {
     const [showCurrent, setShowCurrent] = useState(false)
     const [showNew, setShowNew] = useState(false)
     const [showConfirm, setShowConfirm] = useState(false)
+
+    // Google Calendar integration
+    const searchParams = useSearchParams()
+    const [calendarConnected, setCalendarConnected] = useState(false)
+    const [calendarLoading, setCalendarLoading] = useState(false)
+    const [calendarAlert, setCalendarAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+
+    useEffect(() => {
+        fetch('/api/insurance/google/status')
+            .then(r => r.ok ? r.json() : { connected: false })
+            .then(j => setCalendarConnected(!!j.connected))
+            .catch(() => {})
+
+        const cal = searchParams.get('calendar')
+        const calErr = searchParams.get('calendar_error')
+        if (cal === 'connected') {
+            setCalendarConnected(true)
+            setCalendarAlert({ type: 'success', message: 'Google Calendar connected — follow-up dates will sync automatically.' })
+        } else if (calErr) {
+            setCalendarAlert({ type: 'error', message: 'Google Calendar connection failed. Please try again.' })
+        }
+    }, [searchParams])
+
+    const handleDisconnectCalendar = async () => {
+        setCalendarLoading(true)
+        try {
+            const res = await fetch('/api/insurance/google/disconnect', { method: 'POST' })
+            if (!res.ok) throw new Error('Disconnect failed')
+            setCalendarConnected(false)
+            setCalendarAlert({ type: 'success', message: 'Google Calendar disconnected.' })
+        } catch {
+            setCalendarAlert({ type: 'error', message: 'Failed to disconnect. Please try again.' })
+        } finally {
+            setCalendarLoading(false)
+        }
+    }
 
     useEffect(() => {
         const load = async () => {
@@ -144,6 +181,47 @@ export default function InsuranceProfilePage() {
                             {roleLabel}
                         </span>
                     </div>
+                </div>
+            </div>
+
+            {/* Integrations — Google Calendar */}
+            <div className="card p-6 space-y-4">
+                <h2 className="text-base font-semibold text-slate-800">Integrations</h2>
+                {calendarAlert && (
+                    <InlineAlert type={calendarAlert.type} message={calendarAlert.message} onDismiss={() => setCalendarAlert(null)} />
+                )}
+                <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: '#f0fdf4' }}>
+                            {calendarConnected ? <CalendarCheck size={15} color="#059669" /> : <CalendarX size={15} color="#94a3b8" />}
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-slate-800">Google Calendar</p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                                {calendarConnected
+                                    ? 'Connected — follow-up dates sync to your calendar automatically.'
+                                    : 'Connect to auto-add follow-up dates to your Google Calendar.'}
+                            </p>
+                        </div>
+                    </div>
+                    {calendarConnected ? (
+                        <button
+                            onClick={handleDisconnectCalendar}
+                            disabled={calendarLoading}
+                            className="shrink-0 flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 transition-colors border border-red-200 rounded-lg px-3 py-2 hover:bg-red-50 disabled:opacity-60"
+                        >
+                            {calendarLoading ? <Spinner size="sm" color="#dc2626" label="" /> : <X size={13} />}
+                            Disconnect
+                        </button>
+                    ) : (
+                        <a
+                            href="/api/insurance/google/auth"
+                            className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2 transition-colors"
+                            style={{ background: '#059669' }}
+                        >
+                            <CalendarCheck size={14} /> Connect
+                        </a>
+                    )}
                 </div>
             </div>
 

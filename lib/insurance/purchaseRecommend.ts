@@ -37,6 +37,7 @@ export interface PurchaseRecommendation {
     pkg: MortgagePackage
     projection: PackageProjection
     appeal: boolean                                // min-loan up to 10% above the loan — bank may approve on appeal
+    priority: boolean                              // only qualifies because of the client's priority-banking status
 }
 
 /**
@@ -74,23 +75,25 @@ export function recommendPurchasePackages(
             matchesFeature(pkg, criteria.features ?? new Set()),
         )
 
-    const scored: PurchaseRecommendation[] = candidates.map(({ pkg, appeal }) => ({
+    const scored: PurchaseRecommendation[] = candidates.map(({ pkg, appeal, priority }) => ({
         pkg,
         projection: projectPackage(pkg, loan, tenureYears, sora),
         appeal,
+        priority,
     }))
 
-    // Rank: priceable first → strict qualifiers above appeal-eligible → cheapest
-    // lock-in average rate → lowest year-1 rate → shorter lock-in as a final tiebreak.
+    // Rank by the displayed (year-1) rate, lowest first — the list reads as a low→high
+    // ladder and appeal packages are mixed in at their true rate position (not demoted
+    // below pricier guaranteed ones). Priceable cards sit above "not auto-priced" ones;
+    // ties break on cheapest lock-in average rate, then shorter lock-in.
     return scored.sort((a, b) => {
-        if (a.projection.computable !== b.projection.computable) return a.projection.computable ? -1 : 1
-        if (a.appeal !== b.appeal) return a.appeal ? 1 : -1
+        const ya = a.projection.perYear[0]?.ratePct
+        const yb = b.projection.perYear[0]?.ratePct
+        if ((ya == null) !== (yb == null)) return ya == null ? 1 : -1
+        if (ya != null && yb != null && ya !== yb) return ya - yb
         const ra = a.projection.avgRateLockinPct ?? Infinity
         const rb = b.projection.avgRateLockinPct ?? Infinity
         if (ra !== rb) return ra - rb
-        const ya = a.projection.perYear[0]?.ratePct ?? Infinity
-        const yb = b.projection.perYear[0]?.ratePct ?? Infinity
-        if (ya !== yb) return ya - yb
         return (a.pkg.lockin_years || 0) - (b.pkg.lockin_years || 0)
     })
 }

@@ -20,21 +20,21 @@ INSERT INTO cases (
   500000, 'Touched Base', 'DBS', 480000, '2025-06-15'
 );
 
--- Test Case 2: Purchase - Proposal Given
+-- Test Case 2: Purchase - Pending Docs
 INSERT INTO cases (
   created_by, case_type, client_name, client_mobile, loan_size, stage,
   property_type, property_price
 ) VALUES (
-  user_id, 'Purchase', 'Sarah Lim', '+65 8234 5678', 750000, 'Proposal Given',
+  user_id, 'Purchase', 'Sarah Lim', '+65 8234 5678', 750000, 'Pending Docs',
   'Condo', 850000
 );
 
--- Test Case 3: Refinancing - Referred to Bank
+-- Test Case 3: Refinancing - Pending Docs
 INSERT INTO cases (
   created_by, case_type, client_name, client_email, loan_size, stage,
   current_bank, existing_loan_amount, lock_in_end_date
 ) VALUES (
-  user_id, 'Refinancing', 'Michael Wong', 'michael.w@email.com', 650000, 'Referred to Bank',
+  user_id, 'Refinancing', 'Michael Wong', 'michael.w@email.com', 650000, 'Pending Docs',
   'OCBC', 620000, '2024-12-31'
 );
 
@@ -113,11 +113,11 @@ INSERT INTO cases (
   'HDB', 550000
 );
 
--- Test Case 11: Purchase - Proposal Given (minimal data)
+-- Test Case 11: Purchase - Pending Docs (minimal data)
 INSERT INTO cases (
   created_by, case_type, loan_size, stage
 ) VALUES (
-  user_id, 'Purchase', 720000, 'Proposal Given'
+  user_id, 'Purchase', 720000, 'Pending Docs'
 );
 
 -- Test Case 12: Refinancing - Touched Base (minimal data)

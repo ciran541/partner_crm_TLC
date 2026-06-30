@@ -136,6 +136,8 @@ export interface BorrowerInput {
     age?: number
     residency?: Residency
     commitments?: number          // monthly debt commitments
+    nonBorrower?: boolean         // owner not on the loan — excluded from income/IWAA, kept for ABSD
+    cpfOa?: number                // available CPF (OA) toward the downpayment
 }
 
 export interface PurchaseInputs {
@@ -449,15 +451,18 @@ export function computePurchase(inputs: PurchaseInputs): PurchaseComputation {
     const price = inputs.propertyPrice ?? 0
     const outstanding: OutstandingLoans = locksOutstandingToZero(inputs.propertyType) ? '0' : (inputs.outstanding ?? '0')
     const borrowers = inputs.borrowers ?? []
+    // Non-borrowers are owners not on the loan — excluded from income, TDSR and IWAA,
+    // but still owners (their residency drives ABSD below).
+    const loanBorrowers = borrowers.filter(b => !b.nonBorrower)
 
-    const gross = inputs.ipaDone ? 0 : borrowers.reduce((s, b) => s + effectiveMonthlyIncome({
+    const gross = inputs.ipaDone ? 0 : loanBorrowers.reduce((s, b) => s + effectiveMonthlyIncome({
         basicMonthlySalary: b.basicSalary,
         annualVariableIncome: b.annualVariable,
         isSelfEmployed: b.employment === 'self_employed',
     }), 0)
-    const debts = inputs.ipaDone ? 0 : borrowers.reduce((s, b) => s + (b.commitments ?? 0), 0)
+    const debts = inputs.ipaDone ? 0 : loanBorrowers.reduce((s, b) => s + (b.commitments ?? 0), 0)
     // Always compute IWAA — used for display on both IPA and non-IPA paths.
-    const age = weightedAge(borrowers)
+    const age = weightedAge(loanBorrowers)
 
     const stamp = calculateABSD({
         price,
@@ -527,6 +532,8 @@ export function inputsFromWorkflow(d: PurchaseWorkflow): PurchaseInputs {
             age: b.age,
             residency: b.residency,
             commitments: b.commitments,
+            nonBorrower: b.non_borrower,
+            cpfOa: b.cpf_oa,
         })),
     }
 }
