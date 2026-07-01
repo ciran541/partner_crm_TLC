@@ -24,6 +24,9 @@ export interface ReferredBanker {
     name: string
 }
 
+// Commission payout state (only meaningful once a case is Closed Won).
+export type CommissionStatus = 'unpaid' | 'paid'
+
 // ─── Closed-Won structured data ───────────────────────────────────────────────
 // One package (lock-in + rate schedule) closes one or more loans. Which loans
 // apply depends on the case type (see CLOSED_LOAN_KINDS_BY_CASE_TYPE in
@@ -90,6 +93,9 @@ export interface Case {
 
     // Structured Closed-Won capture (loans, package, LO docs, computed outstanding)
     closed_won_data?: ClosedWonData
+
+    // Commission payout state (Closed Won cases)
+    commission_status?: CommissionStatus
 
     // Closure fields (only for Closed Won)
     closed_package_details?: string
@@ -168,4 +174,5 @@ export interface UpdateCaseInput {
     sales_assistant_data?: AssistantData
     referred_bankers?: ReferredBanker[]
     closed_won_data?: ClosedWonData
+    commission_status?: CommissionStatus
 }

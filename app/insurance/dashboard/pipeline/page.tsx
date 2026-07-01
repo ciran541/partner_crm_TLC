@@ -3,15 +3,17 @@
 import { useRouter } from 'next/navigation'
 import {
     Plus, Briefcase, TrendingUp, Clock, ChevronRight,
-    AlertTriangle, AlertCircle, ArrowRight,
+    AlertTriangle, AlertCircle, ArrowRight, DollarSign,
 } from 'lucide-react'
 import StatsCard from '@/components/shared/StatsCard'
 import UrgencyBanner from '@/components/shared/UrgencyBanner'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
 import { formatDate } from '@/lib/utils/formatDate'
+import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { useCases } from '@/lib/insurance/useCases'
 import { isDraftCase } from '@/lib/insurance/caseFilters'
+import { commissionTotals } from '@/lib/insurance/commission'
 import type { Case } from '@/lib/types'
 
 const PLANNER_ROUTE = '/insurance/dashboard'
@@ -52,6 +54,7 @@ export default function PipelineDashboard() {
     // Drafts (planner sessions with no client yet) stay out of the pipeline view.
     const cases = allCases.filter(c => !isDraftCase(c))
     const stats = computeStats(cases)
+    const comm = commissionTotals(cases)
     const recentCases = cases.slice(0, 5)
 
     const hour = new Date().getHours()
@@ -126,6 +129,35 @@ export default function PipelineDashboard() {
                             subtitle="within 90 days"
                             variant="alert"
                             onClick={() => router.push('/insurance/dashboard/cases/lock-in-end')}
+                        />
+                    </div>
+
+                    {/* Commission summary */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', gap: 14 }} className="sm:grid-cols-3">
+                        <StatsCard
+                            title="Open Commission"
+                            value={formatCurrency(comm.open)}
+                            icon={DollarSign}
+                            color="#0369a1"
+                            variant="money"
+                            subtitle={`${comm.activeCases} active case${comm.activeCases !== 1 ? 's' : ''}`}
+                            onClick={() => router.push('/insurance/dashboard/earnings')}
+                        />
+                        <StatsCard
+                            title="Closed — Unpaid"
+                            value={formatCurrency(comm.closedUnpaid)}
+                            icon={Clock}
+                            color="#d97706"
+                            variant="money"
+                            onClick={() => router.push('/insurance/dashboard/earnings')}
+                        />
+                        <StatsCard
+                            title="Closed — Paid"
+                            value={formatCurrency(comm.closedPaid)}
+                            icon={TrendingUp}
+                            color="#16a34a"
+                            variant="money"
+                            onClick={() => router.push('/insurance/dashboard/earnings')}
                         />
                     </div>
 

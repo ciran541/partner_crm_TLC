@@ -25,6 +25,7 @@ export const BANKER_DATA: Record<string, Record<CaseCategory, string[]>> = {
         residential: ['Loy Pue Jung'],
         commercial: [],
     },
+
     'HSBC': {
         residential: ['Cynthia Seow', 'Marcus Chiang'],
         commercial: [],

@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import { isAdmin as isAdminRole } from '@/lib/permissions'
 import type { Case } from '@/lib/types'
+import type { UserRole } from '@/lib/types/shared'
 
 /**
  * Shared client-side cache for the insurance agent's case list.
@@ -76,7 +78,7 @@ function fetchCases(): Promise<void> {
             lastFetched = Date.now()
             setState({
                 cases: (data as Case[]) ?? [],
-                isAdmin: profile?.role === 'admin',
+                isAdmin: isAdminRole((profile?.role ?? 'agent') as UserRole),
                 loading: false,
                 error: null,
                 loaded: true,

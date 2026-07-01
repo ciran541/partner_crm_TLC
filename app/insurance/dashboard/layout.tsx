@@ -26,6 +26,7 @@ import {
     Lock,
     X,
     BarChart2,
+    DollarSign,
 } from 'lucide-react'
 
 type NavItem = { name: string; href: string; icon: React.ElementType; soon?: boolean }
@@ -49,6 +50,7 @@ const toolsNav: NavItem[] = [
 const internalNav: NavItem[] = [
     { name: 'Dashboard', href: '/insurance/dashboard/pipeline', icon: LayoutDashboard },
     { name: 'Cases', href: '/insurance/dashboard/cases', icon: Briefcase },
+    { name: 'Earnings', href: '/insurance/dashboard/earnings', icon: DollarSign },
     { name: 'Follow ups', href: '/insurance/dashboard/followup', icon: Clock },
     { name: 'Support', href: '/insurance/dashboard/support', icon: LifeBuoy, soon: true },
     { name: 'Profile', href: '/insurance/dashboard/profile', icon: UserCircle },

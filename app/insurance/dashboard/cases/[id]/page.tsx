@@ -351,6 +351,16 @@ export default function CaseDetailPage() {
         })
     }
 
+    // Admin-only: mark this closed case's commission as paid / unpaid.
+    const handleToggleCommissionPaid = async () => {
+        if (!caseData) return
+        const next = caseData.commission_status === 'paid' ? 'unpaid' : 'paid'
+        setCaseData({ ...caseData, commission_status: next })
+        const err = await persistCaseUpdate({ commission_status: next })
+        if (err) setAlert({ type: 'error', message: `Failed to update commission: ${err}` })
+        else refreshCases()
+    }
+
     if (loading) return (
         <div className="max-w-4xl mx-auto" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <Skeleton height={18} width={130} radius={6} />
@@ -365,6 +375,7 @@ export default function CaseDetailPage() {
     const isClosedWon = caseData.stage === 'Closed Won'
     const isClosedLost = caseData.stage === 'Closed Lost'
     const isClosed = isClosedWon || isClosedLost
+    const isAdminUser = userRole === 'admin' || userRole === 'super_admin'
 
     const tabs: { key: TabKey; label: string; icon: React.ElementType }[] = [
         { key: 'overview', label: 'Overview', icon: User },
@@ -517,7 +528,7 @@ export default function CaseDetailPage() {
                 <div className="space-y-5">
                     {/* Closed-Won summary — loans, commission, and next-cycle income projection */}
                     {isClosedWon && caseData.closed_won_data?.loans?.length ? (
-                        <ClosedWonSummaryCard data={caseData} />
+                        <ClosedWonSummaryCard data={caseData} isAdmin={isAdminUser} onTogglePaid={handleToggleCommissionPaid} />
                     ) : null}
 
                     {/* Deal summary leads the tab — it's the natural "overview". */}
@@ -1215,7 +1226,7 @@ function BankerControl({ value, onSave }: { value: ReferredBanker[]; onSave: (v:
 }
 
 // ─── Closed-Won summary (loans, commission, next-cycle projection) ────────────
-function ClosedWonSummaryCard({ data }: { data: Case }) {
+function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isAdmin: boolean; onTogglePaid: () => void }) {
     const cwd = data.closed_won_data ?? {}
     const loans = cwd.loans ?? []
     const money = (n: number) => `$${Math.round(n).toLocaleString()}`
@@ -1224,6 +1235,7 @@ function ClosedWonSummaryCard({ data }: { data: Case }) {
     const outstanding = cwd.combined_outstanding
     const now = calculateCommission(original)
     const next = outstanding != null ? calculateCommission(outstanding) : null
+    const paid = data.commission_status === 'paid'
 
     const openDoc = async (path: string) => {
         const { data: signed } = await supabase.storage.from('insurance-documents').createSignedUrl(path, 120)
@@ -1259,9 +1271,22 @@ function ClosedWonSummaryCard({ data }: { data: Case }) {
             {/* Commission now + next cycle */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="rounded-lg bg-emerald-50/60 border border-emerald-100 p-3.5">
-                    <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Commission (this close)</p>
+                    <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Commission (this close)</p>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                            style={paid ? { color: '#16a34a', background: '#dcfce7' } : { color: '#d97706', background: '#fef3c7' }}>
+                            {paid ? 'Paid' : 'Unpaid'}
+                        </span>
+                    </div>
                     <p className="text-xl font-bold text-emerald-700 mt-0.5">{money(now.agent)}</p>
                     <p className="text-[11px] text-slate-400 mt-0.5">0.15% of {money(original)} · agent 90%</p>
+                    {isAdmin && (
+                        <button type="button" onClick={onTogglePaid}
+                            className="mt-2 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-colors"
+                            style={paid ? { color: '#64748b', borderColor: '#e2e8f0' } : { color: '#16a34a', borderColor: '#bbf7d0' }}>
+                            {paid ? 'Mark as unpaid' : 'Mark commission paid'}
+                        </button>
+                    )}
                 </div>
                 {next != null && outstanding != null ? (
                     <div className="rounded-lg bg-sky-50/60 border border-sky-100 p-3.5">
