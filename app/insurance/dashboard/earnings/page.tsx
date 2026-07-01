@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { DollarSign, AlertCircle, ArrowRight, ArrowLeft, Users, Check, Clock } from 'lucide-react'
 import Skeleton from '@/components/shared/Skeleton'
@@ -17,6 +17,20 @@ import type { Case } from '@/lib/types'
 const money = (n: number) => formatCurrency(n)
 
 export default function InsuranceEarningsPage() {
+    return (
+        <Suspense fallback={
+            <div className="max-w-[1200px] mx-auto flex flex-col gap-5">
+                <Skeleton height={36} width={200} radius={8} />
+                <Skeleton height={140} radius={14} />
+                <Skeleton height={320} radius={14} />
+            </div>
+        }>
+            <EarningsContent />
+        </Suspense>
+    )
+}
+
+function EarningsContent() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const agentParam = searchParams.get('agent')
