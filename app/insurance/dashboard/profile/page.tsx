@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
@@ -10,6 +10,14 @@ import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
 
 export default function InsuranceProfilePage() {
+    return (
+        <Suspense fallback={<Skeleton height={320} radius={14} />}>
+            <ProfileContent />
+        </Suspense>
+    )
+}
+
+function ProfileContent() {
     const [loading, setLoading] = useState(true)
     const [name, setName] = useState('')
     const [email, setEmail] = useState('')

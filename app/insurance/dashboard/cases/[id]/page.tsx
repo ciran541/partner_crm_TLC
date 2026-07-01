@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { Suspense, useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Case, PipelineStage, ReferredBanker } from '@/lib/types'
@@ -54,6 +54,14 @@ const CLOSED_LOST_REASONS = [
 ]
 
 export default function CaseDetailPage() {
+    return (
+        <Suspense fallback={<Skeleton height={320} radius={14} />}>
+            <CaseDetailContent />
+        </Suspense>
+    )
+}
+
+function CaseDetailContent() {
     const router = useRouter()
     const params = useParams()
     const caseId = params?.id as string
