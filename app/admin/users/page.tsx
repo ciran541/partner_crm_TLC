@@ -278,7 +278,7 @@ export default function AdminUsersPage() {
                                             </button>
                                             <button
                                                 onClick={() => {
-                                                    setEditForm({ id: p.id, name: p.name || '', role: p.role })
+                                                    setEditForm({ id: p.id, name: p.name || '', role: p.role, status: p.status ?? 'active' })
                                                     setIsEditOpen(true)
                                                 }}
                                                 className="p-2 text-slate-400 hover:text-[#8b5cf6] hover:bg-purple-50 rounded-lg transition-all"

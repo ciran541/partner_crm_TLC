@@ -10,18 +10,22 @@ import { NextResponse, type NextRequest } from 'next/server'
  * client layout can render the shell instantly without blocking on a network
  * auth check. Role/domain authorization stays in the API routes and layouts.
  *
- * Also enforces:
- * - Account activation: disabled/pending accounts are bounced with ?reason=suspended
- * - Single concurrent session: a new login from another device invalidates the previous
- *   session cookie and bounces the old session with ?reason=kicked
+ * Also enforces account activation: disabled/pending accounts are bounced with
+ * ?reason=suspended.
+ *
+ * Single concurrent session is enforced separately, at the Supabase Auth level:
+ * /api/auth/register-session calls admin.signOut(token, 'others') on every login,
+ * which revokes the previous device's refresh token server-side. That device's
+ * next supabase.auth.getUser() call below authoritatively fails, so it falls
+ * straight into the plain "no user" branch — no local session bookkeeping needed.
  */
 
-type ProfileGuard = { status: string; current_session_id: string | null }
+type ProfileGuard = { status: string }
 
 async function fetchProfileGuard(userId: string): Promise<ProfileGuard | null> {
     try {
         const res = await fetch(
-            `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=status,current_session_id&limit=1`,
+            `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=status&limit=1`,
             {
                 headers: {
                     apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -62,46 +66,45 @@ export async function middleware(request: NextRequest) {
 
     const { data: { user } } = await supabase.auth.getUser()
 
+    // Redirects must carry over any cookies `setAll` wrote onto `response` above —
+    // otherwise a session refreshed (and rotated) on this same request never reaches
+    // the browser, leaving it stuck with a dead refresh token until cookies are cleared.
+    const redirectTo = (url: URL) => {
+        const redirectResponse = NextResponse.redirect(url)
+        response.cookies.getAll().forEach(cookie => redirectResponse.cookies.set(cookie))
+        return redirectResponse
+    }
+
     const { pathname } = request.nextUrl
     const loginPath = pathname.startsWith('/property/') ? '/property/login' : '/insurance/login'
+    const isPropertyAuthPage = pathname === '/property/login' || pathname === '/property/signup'
+    const isInsuranceAuthPage = pathname === '/insurance/login' || pathname === '/insurance/forgot-password'
+    const isAuthPage = isPropertyAuthPage || isInsuranceAuthPage
 
     if (!user) {
-        const isPropertyAuthPage = pathname === '/property/login' || pathname === '/property/signup'
-        const isInsuranceAuthPage = pathname === '/insurance/login' || pathname === '/insurance/forgot-password'
-
         if (pathname.startsWith('/property/') && !isPropertyAuthPage) {
             const url = request.nextUrl.clone()
             url.pathname = '/property/login'
             url.search = ''
-            return NextResponse.redirect(url)
+            return redirectTo(url)
         }
 
         if (pathname.startsWith('/insurance/') && !isInsuranceAuthPage) {
             const url = request.nextUrl.clone()
             url.pathname = '/insurance/login'
             url.search = ''
-            return NextResponse.redirect(url)
+            return redirectTo(url)
         }
-    } else {
+    } else if (!isAuthPage) {
+        // Skip this check on the login page itself — a disabled user still holds a
+        // valid Supabase session there, and redirecting to the same page would loop.
         const profile = await fetchProfileGuard(user.id)
 
         if (profile?.status === 'disabled') {
             const url = request.nextUrl.clone()
             url.pathname = loginPath
             url.search = '?reason=suspended'
-            return NextResponse.redirect(url)
-        }
-
-        const sessionGuard = request.cookies.get('session_guard')?.value
-        if (
-            profile?.current_session_id &&
-            sessionGuard &&
-            sessionGuard !== profile.current_session_id
-        ) {
-            const url = request.nextUrl.clone()
-            url.pathname = loginPath
-            url.search = '?reason=kicked'
-            return NextResponse.redirect(url)
+            return redirectTo(url)
         }
     }
 

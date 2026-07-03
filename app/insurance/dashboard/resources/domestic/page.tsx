@@ -14,7 +14,7 @@ const YEARS = Array.from({ length: CURRENT_YEAR - 2004 }, (_, i) => CURRENT_YEAR
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 // Default selections: the SORA rates most relevant to mortgage agents
-const DEFAULT_KEYS = new Set(['sora', 'comp_sora_1m', 'comp_sora_3m', 'comp_sora_6m'])
+const DEFAULT_KEYS = new Set(['comp_sora_1m', 'comp_sora_3m'])
 
 function fmtDate(d: string) {
     const [y, m] = d.split('-')

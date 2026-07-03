@@ -9,7 +9,6 @@ import Spinner from '@/components/shared/Spinner'
 
 const REASON_MESSAGES: Record<string, string> = {
     suspended: 'Your account is pending activation. Please contact your admin.',
-    kicked: 'You were signed out because your account was accessed from another device.',
 }
 
 function PropertyLoginInner() {
