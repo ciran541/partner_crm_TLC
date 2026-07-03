@@ -16,13 +16,16 @@ interface Props {
     stage: string
     followUpDate?: string
     onOpenWorkflow: () => void
+    // Hides the workflow entry-point CTAs — used by the admin console, which
+    // monitors cases but never runs an agent's client workflow.
+    readOnly?: boolean
 }
 
 const money = (n?: number | null) => (n && n > 0 ? `$${Math.floor(n).toLocaleString()}` : '—')
 const PROPERTY_USE_LABEL: Record<string, string> = { own_stay: 'Own-Stay', investment: 'Investment' }
 const RATE_PREF_LABEL: Record<string, string> = { fixed: 'Fixed', floating: 'Floating', both: 'Both / No preference' }
 
-export default function RefiOverview({ workflow, stage, followUpDate, onOpenWorkflow }: Props) {
+export default function RefiOverview({ workflow, stage, followUpDate, onOpenWorkflow, readOnly }: Props) {
     const meta = refiPropertyMeta(workflow.property_type)
     const comp = useMemo(() => computeRefi(inputsFromWorkflow(workflow)), [workflow])
 
@@ -34,11 +37,15 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                 </div>
                 <div>
                     <p className="font-semibold text-slate-700">No refinancing details yet</p>
-                    <p className="text-sm text-slate-500 mt-0.5">Open the workflow to capture the current loan, borrower details and package recommendation.</p>
+                    <p className="text-sm text-slate-500 mt-0.5">
+                        {readOnly ? 'The agent has not started this workflow yet.' : 'Open the workflow to capture the current loan, borrower details and package recommendation.'}
+                    </p>
                 </div>
-                <button onClick={onOpenWorkflow} className="btn-primary text-sm px-5 py-2.5 inline-flex items-center gap-2">
-                    <Briefcase size={15} /> Start Workflow
-                </button>
+                {!readOnly && (
+                    <button onClick={onOpenWorkflow} className="btn-primary text-sm px-5 py-2.5 inline-flex items-center gap-2">
+                        <Briefcase size={15} /> Start Workflow
+                    </button>
+                )}
             </div>
         )
     }
@@ -227,9 +234,11 @@ export default function RefiOverview({ workflow, stage, followUpDate, onOpenWork
                         <Field label="Priority Banks" value={workflow.priority_banks.join(', ')} />
                     )}
                 </div>
-                <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
-                    Continue Workflow <ArrowRight size={15} />
-                </button>
+                {!readOnly && (
+                    <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
+                        Continue Workflow <ArrowRight size={15} />
+                    </button>
+                )}
             </Card>
         </div>
     )

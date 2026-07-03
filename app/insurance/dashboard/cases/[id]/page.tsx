@@ -24,7 +24,7 @@ import type { SoraRates } from '@/lib/insurance/sora'
 import {
     Save, Edit2, X, User, Home, Pencil,
     Briefcase, CheckCircle2, AlertTriangle, CalendarClock,
-    Upload, Trash2, FileText, TrendingUp
+    Upload, Trash2, FileText, TrendingUp, ArrowLeft
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -394,6 +394,14 @@ function CaseDetailContent() {
         <div className="max-w-4xl mx-auto space-y-5">
             {/* Back + Header */}
             <div>
+                <button
+                    type="button"
+                    onClick={() => router.push('/insurance/dashboard')}
+                    className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-[#03a9e7] transition-colors mb-3"
+                >
+                    <ArrowLeft size={15} />
+                    Back
+                </button>
                 <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
                         <div className="flex items-center gap-3 flex-wrap">

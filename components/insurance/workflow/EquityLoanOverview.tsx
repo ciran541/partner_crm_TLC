@@ -13,6 +13,9 @@ interface Props {
     stage: string
     followUpDate?: string
     onOpenWorkflow: () => void
+    // Hides the workflow entry-point CTAs — used by the admin console, which
+    // monitors cases but never runs an agent's client workflow.
+    readOnly?: boolean
 }
 
 const money = (n?: number | null) => (n && n > 0 ? `$${Math.floor(n).toLocaleString()}` : '—')
@@ -24,7 +27,7 @@ const PROPERTY_LABEL: Record<string, string> = {
     completed_ec_mop: 'Completed EC (MOP obtained)',
 }
 
-export default function EquityLoanOverview({ workflow, stage, followUpDate, onOpenWorkflow }: Props) {
+export default function EquityLoanOverview({ workflow, stage, followUpDate, onOpenWorkflow, readOnly }: Props) {
     if (!workflow.property_type) {
         return (
             <div className="card p-8 text-center space-y-3">
@@ -33,11 +36,15 @@ export default function EquityLoanOverview({ workflow, stage, followUpDate, onOp
                 </div>
                 <div>
                     <p className="font-semibold text-slate-700">No equity loan details yet</p>
-                    <p className="text-sm text-slate-500 mt-0.5">Open the workflow to capture the property, borrowers and equity loan amount.</p>
+                    <p className="text-sm text-slate-500 mt-0.5">
+                        {readOnly ? 'The agent has not started this workflow yet.' : 'Open the workflow to capture the property, borrowers and equity loan amount.'}
+                    </p>
                 </div>
-                <button onClick={onOpenWorkflow} className="btn-primary text-sm px-5 py-2.5 inline-flex items-center gap-2">
-                    <Banknote size={15} /> Start Workflow
-                </button>
+                {!readOnly && (
+                    <button onClick={onOpenWorkflow} className="btn-primary text-sm px-5 py-2.5 inline-flex items-center gap-2">
+                        <Banknote size={15} /> Start Workflow
+                    </button>
+                )}
             </div>
         )
     }
@@ -158,9 +165,11 @@ export default function EquityLoanOverview({ workflow, stage, followUpDate, onOp
                         icon={<CalendarClock size={13} />}
                     />
                 </div>
-                <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
-                    Continue Workflow <ArrowRight size={15} />
-                </button>
+                {!readOnly && (
+                    <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
+                        Continue Workflow <ArrowRight size={15} />
+                    </button>
+                )}
             </Card>
         </div>
     )

@@ -19,6 +19,9 @@ interface Props {
     stage: string
     followUpDate?: string
     onOpenWorkflow: () => void
+    // Hides the workflow entry-point CTAs — used by the admin console, which
+    // monitors cases but never runs an agent's client workflow.
+    readOnly?: boolean
 }
 
 const money = (n?: number | null) => (n && n > 0 ? `$${Math.floor(n).toLocaleString()}` : '—')
@@ -29,7 +32,7 @@ const pct = (frac: number) => {
 const OUTSTANDING_LABEL: Record<string, string> = { '0': 'None (first loan)', '1': '1 existing', '2plus': '2 or more' }
 const residencyLabel = (r?: string) => RESIDENCY_OPTIONS.find(o => o.value === r)?.label ?? '—'
 
-export default function PurchaseOverview({ workflow, stage, followUpDate, onOpenWorkflow }: Props) {
+export default function PurchaseOverview({ workflow, stage, followUpDate, onOpenWorkflow, readOnly }: Props) {
     const meta = propertyMeta(workflow.property_type)
     const comp = useMemo(() => computePurchase(inputsFromWorkflow(workflow)), [workflow])
 
@@ -41,11 +44,15 @@ export default function PurchaseOverview({ workflow, stage, followUpDate, onOpen
                 </div>
                 <div>
                     <p className="font-semibold text-slate-700">No purchase details yet</p>
-                    <p className="text-sm text-slate-500 mt-0.5">Open the workflow to capture this client&apos;s property, income and loan options.</p>
+                    <p className="text-sm text-slate-500 mt-0.5">
+                        {readOnly ? 'The agent has not started this workflow yet.' : "Open the workflow to capture this client's property, income and loan options."}
+                    </p>
                 </div>
-                <button onClick={onOpenWorkflow} className="btn-primary text-sm px-5 py-2.5 inline-flex items-center gap-2">
-                    <Briefcase size={15} /> Start Workflow
-                </button>
+                {!readOnly && (
+                    <button onClick={onOpenWorkflow} className="btn-primary text-sm px-5 py-2.5 inline-flex items-center gap-2">
+                        <Briefcase size={15} /> Start Workflow
+                    </button>
+                )}
             </div>
         )
     }
@@ -208,9 +215,11 @@ export default function PurchaseOverview({ workflow, stage, followUpDate, onOpen
                         />
                     )}
                 </div>
-                <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
-                    Continue Workflow <ArrowRight size={15} />
-                </button>
+                {!readOnly && (
+                    <button onClick={onOpenWorkflow} className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-2 mt-4">
+                        Continue Workflow <ArrowRight size={15} />
+                    </button>
+                )}
             </Card>
         </div>
     )

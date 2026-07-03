@@ -4,14 +4,12 @@ import { ReactNode, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter, usePathname } from 'next/navigation'
-import { canAccessInsurance, getSafeRoute } from '@/lib/permissions'
+import { canAccessInsurance, getSafeRoute, isAdmin as isAdminRole } from '@/lib/permissions'
 import { clearCasesCache } from '@/lib/insurance/useCases'
 import {
     LayoutDashboard,
     Briefcase,
-    Users,
     LogOut,
-    TrendingUp,
     Percent,
     UserCircle,
     BookOpen,
@@ -56,16 +54,25 @@ const internalNav: NavItem[] = [
     { name: 'Profile', href: '/insurance/dashboard/profile', icon: UserCircle },
 ]
 
-const adminNav: NavItem[] = [
-    { name: 'User Management', href: '/insurance/dashboard/users', icon: Users },
-    { name: 'Analytics', href: '/insurance/dashboard/analytics', icon: TrendingUp },
-]
+// Admin management (Users, Analytics, Cases oversight, etc.) now lives in the
+// dedicated ops console at /admin/insurance/* — admins are redirected there.
 
 // Mobile bottom tab bar shows the 4 primary client-safe tools; everything
 // internal lives behind the "More" tab.
 const mobileTabs = toolsNav.filter(t => !t.soon).slice(0, 4)
 
+// A case-detail URL (e.g. /insurance/dashboard/cases/<id>) is the client-facing
+// case screen, not the internal case list — even though it shares the /cases
+// prefix. Excluding it here keeps "Internal" from auto-expanding while an agent
+// has a case open in front of a client. The list itself and the internal utility
+// pages (/cases/new, /cases/lock-in-end) still count as internal.
+function isCaseDetailRoute(pathname: string | null) {
+    const match = pathname?.match(/^\/insurance\/dashboard\/cases\/([^/]+)/)
+    return !!match && match[1] !== 'new' && match[1] !== 'lock-in-end'
+}
+
 function isActiveHref(pathname: string | null, href: string) {
+    if (href === '/insurance/dashboard/cases' && isCaseDetailRoute(pathname)) return false
     return pathname === href || (href !== '/insurance/dashboard' && !!pathname?.startsWith(href))
 }
 
@@ -77,7 +84,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     const [displayName, setDisplayName] = useState<string | null>(null)
 
     const isAdmin = role === 'admin' || role === 'super_admin'
-    const internalItems = isAdmin ? [...internalNav, ...adminNav] : internalNav
+    const internalItems = internalNav
     const internalActive = internalItems.some(i => isActiveHref(pathname, i.href))
 
     // Internal is collapsed by default (back-of-house); it also stays expanded
@@ -125,6 +132,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             if (profile.status === 'disabled') {
                 await supabase.auth.signOut()
                 router.replace('/insurance/login?error=account_disabled')
+                return
+            }
+            // Admins run the operation from the ops console, not the agent app.
+            if (isAdminRole(profile.role)) {
+                router.replace('/admin/insurance/cases')
                 return
             }
 

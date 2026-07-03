@@ -41,7 +41,9 @@ Reply exactly: "I don't have guidance on that in our knowledge base — please c
 // Fallback chain. Primary first, then lighter / less-loaded models. If one is
 // overloaded (503) or has no free quota (429), we try the next. Override the
 // primary with GEMINI_MODEL; the rest stay as resilient fallbacks.
-const DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-lite']
+// gemini-2.0-flash-lite was deprecated and shut down 2026-06-01 (confirmed
+// against Google's own pricing docs) — not listed since calling it can only fail.
+const DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
 
 function modelChain(): string[] {
     const primary = process.env.GEMINI_MODEL
@@ -62,7 +64,10 @@ export async function composeAnswer(question: string, articles: SourceArticle[])
     const body = JSON.stringify({
         system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
         contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 3000 },
+        // thinkingBudget: 0 — 2.5-flash/flash-lite spend invisible reasoning
+        // tokens out of maxOutputTokens by default, which can silently truncate
+        // the visible answer (confirmed live in news.ts's summarizeArticle()).
+        generationConfig: { temperature: 0, maxOutputTokens: 3000, thinkingConfig: { thinkingBudget: 0 } },
     })
 
     // Try each model in the chain until one returns a usable answer.

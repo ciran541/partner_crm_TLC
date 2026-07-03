@@ -92,7 +92,7 @@ export default function AdminHomePage() {
                 </Link>
 
                 <Link
-                    href="/admin/analytics"
+                    href="/admin/insurance/analytics"
                     className="card p-6 flex items-center justify-between group hover:shadow-md transition-shadow no-underline"
                     style={{ borderLeft: '4px solid #03a9e7' }}
                 >

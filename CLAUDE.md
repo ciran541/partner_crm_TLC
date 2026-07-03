@@ -137,8 +137,10 @@ RESEND_FROM_EMAIL
 NEXT_PUBLIC_APP_URL
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
-GEMINI_API_KEY          # Google AI Studio (free tier) — knowledge assistant answer synthesis
+GEMINI_API_KEY          # Google AI Studio (free tier) — knowledge assistant answer synthesis, rate ingestion
+DEEPSEEK_API_KEY        # platform.deepseek.com — mortgage news relevance classification + summaries
 MAS_API_KEY             # MAS Data API (keyid header) — daily SORA fetch for Step 4 rate computation
+FRED_API_KEY            # St. Louis Fed — US Fed funds rate chart
 CRON_SECRET             # optional — Vercel cron auth (Bearer) for /api/cron/* routes
 ```
 
@@ -150,3 +152,14 @@ Admin-managed knowledge repository (`knowledge_articles` table) surfaced to agen
 - **Grounded RAG answers**: `/api/insurance/knowledge/ask` retrieves articles then `composeAnswer()` (`lib/insurance/askGemini.ts`) has Gemini phrase an answer ONLY from them. Strictly grounded — refuses when nothing relevant matches; degrades to article cards if `GEMINI_API_KEY` absent. Agent UI: `components/insurance/knowledge/KnowledgeAsk.tsx`.
 - Auto-embed on create/update; `/api/admin/knowledge/reindex` backfills.
 - **Deploy note**: `supabase functions deploy embed` is a separate step from `db push`.
+
+### Insurance CRM — Resources: Mortgage News (Layer 6)
+
+Auto-curated news feed (`mortgage_news_articles` table) from Business Times and CNA, filtered to mortgage/property-finance relevance, with one-click cached AI summaries. Part of the Resources area alongside Rate Comparison and Domestic Rates — first of three planned additions (Economic Calendar and CME FedWatch remain design-only, not built).
+
+- **Sourcing**: each source's genuine, official **native RSS feed** (`lib/types/news.ts`'s `NEWS_SOURCES`) — confirmed by fetching the raw XML directly (real article URLs, real content snippets, no ToS ambiguity). An earlier design used a site-scoped Google News RSS trick for a 7-source list (Business Times, EdgeProp, Bloomberg, MAS, URA, CNA, MND); that was replaced after finding it had no real content snippets, non-resolving redirect URLs, and a ToS restriction to "personal, non-commercial use." Only Business Times and CNA had a working native feed with real news content — EdgeProp's only feed was property listings not news, MAS/URA/MND block automated requests, and Bloomberg has no free feed — so scope was narrowed to these two rather than falling back to a lower-quality mechanism for the rest.
+- Business Times' feed carries genuine `<category>` tags — `BT_RELEVANT_CATEGORIES` in `news.ts` pre-filters to plausibly-relevant categories (Property, Banking & Finance, etc.) before anything reaches the classifier, for free and with no API cost. CNA's feed carries a genuine `<media:thumbnail>` (real photo) on every item, captured via `rss-parser`'s `customFields`; CNA has no comparable category field, so it relies on classification alone.
+- **AI provider: DeepSeek, not Gemini** (`callDeepSeek()` in `news.ts`) — deliberately different from every other AI feature in this codebase (Knowledge Engine, rate ingestion both still use Gemini). Switched after finding Gemini's free tier caps at **20 requests/day per model** (confirmed against a real key's error response — far tighter than general documentation suggests), and DeepSeek is cheaper per token besides. OpenAI-compatible chat completions API (`deepseek-v4-flash` primary, `deepseek-v4-pro` fallback), `response_format: {type:'json_object'}` for the classification step. Also fixed in passing: Gemini's 2.5-flash/flash-lite are "thinking" models whose invisible reasoning tokens can silently truncate a response mid-sentence unless `thinkingConfig: {thinkingBudget:0}` is set — this was missing in `askGemini.ts` (Knowledge Engine still uses Gemini) and has been added there too.
+- **Ingestion** (`ingestAll()`, daily cron `/api/cron/news`): fetch both sources → **date-filter to the last 7 days** → dedupe by URL → classifies new items for relevance (JSON mode, refuses-safe — never assumes relevant on failure) → stored. Respects a wall-clock time budget separate from the item cap, since a fully rate-limited key still burns through the full retry cascade per item.
+- **Summaries**: on-demand only (`getOrCreateSummary()`, `POST /api/insurance/resources/news/[id]/summarize`), generated from the RSS title+snippet only — never scrapes article HTML (avoids paywall/ToS issues) — and cached in the `summary` column so repeat clicks don't re-generate.
+- Admin console (`/admin/insurance/news`, `components/insurance/news/NewsAdminView.tsx`) is QA-only (hide/unhide, delete, manual one-off add, "Refresh now") — the pipeline needs zero manual data entry to function day-to-day.

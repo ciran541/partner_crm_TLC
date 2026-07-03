@@ -13,9 +13,13 @@ import {
     Menu,
     X,
     Shield,
-    Briefcase,
     Building2,
     Bell,
+    ClipboardList,
+    Percent,
+    BookOpen,
+    Clock,
+    Newspaper,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 
@@ -74,17 +78,22 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const coreNavItems = [
         { name: 'Admin Home', href: '/admin', icon: LayoutDashboard },
         { name: 'Users', href: '/admin/users', icon: Users },
-        { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
+    ]
+
+    const insuranceNavItems = [
+        { name: 'Insurance Cases', href: '/admin/insurance/cases', icon: ClipboardList },
+        { name: 'Insurance Earnings', href: '/admin/insurance/earnings', icon: BarChart2 },
+        { name: 'Insurance Analytics', href: '/admin/insurance/analytics', icon: BarChart3 },
+        { name: 'Insurance Follow-ups', href: '/admin/insurance/follow-ups', icon: Clock },
+        { name: 'Insurance Rates', href: '/admin/insurance/rates', icon: Percent },
+        { name: 'Insurance Knowledge', href: '/admin/insurance/knowledge', icon: BookOpen },
+        { name: 'Mortgage News', href: '/admin/insurance/news', icon: Newspaper },
     ]
 
     const propertyNavItems = [
         { name: 'Property Cases', href: '/admin/property/cases', icon: Building2 },
         { name: 'Property Analytics', href: '/admin/property/analytics', icon: BarChart2 },
         { name: 'Property Reminders', href: '/admin/property/reminders', icon: Bell },
-    ]
-
-    const quickLinks = [
-        { name: 'Insurance CRM', href: '/insurance/dashboard', icon: Briefcase },
     ]
 
     return (
@@ -114,13 +123,13 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
             {/* Sidebar */}
             <aside
-                className={`fixed inset-y-0 left-0 z-50 w-[260px] transform transition-transform duration-300 ease-in-out md:translate-x-0 ${
+                className={`fixed inset-y-0 left-0 z-50 w-[260px] flex flex-col overflow-hidden transform transition-transform duration-300 ease-in-out md:translate-x-0 ${
                     sidebarOpen ? 'translate-x-0' : '-translate-x-full'
                 }`}
                 style={{ background: '#1e1b4b', color: 'white' }}
             >
                 {/* Brand Header */}
-                <div className="p-6 border-b border-white/10">
+                <div className="p-6 border-b border-white/10 shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
                             <Shield size={20} className="text-purple-300" />
@@ -133,7 +142,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3 py-6 overflow-y-auto">
+                <nav className="flex-1 min-h-0 px-3 py-6 overflow-y-auto">
                     <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
                         Core
                     </p>
@@ -155,6 +164,34 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                                         onClick={() => {
                                             if (window.innerWidth < 768) setSidebarOpen(false)
                                         }}
+                                    >
+                                        <item.icon size={18} />
+                                        <span>{item.name}</span>
+                                    </a>
+                                </li>
+                            )
+                        })}
+                    </ul>
+
+                    <hr className="border-white/10 my-4" />
+
+                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
+                        Insurance Platform
+                    </p>
+                    <ul className="space-y-1">
+                        {insuranceNavItems.map((item) => {
+                            const isActive = pathname?.startsWith(item.href)
+                            return (
+                                <li key={item.name}>
+                                    <a
+                                        href={item.href}
+                                        className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                                            isActive
+                                                ? 'bg-purple-500/20 text-white border-l-[3px] border-purple-400 pr-4'
+                                                : 'text-slate-300 hover:text-white hover:bg-white/10 px-4'
+                                        }`}
+                                        style={isActive ? { paddingLeft: 13 } : undefined}
+                                        onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false) }}
                                     >
                                         <item.icon size={18} />
                                         <span>{item.name}</span>
@@ -194,28 +231,10 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                         })}
                     </ul>
 
-                    <hr className="border-white/10 my-4" />
-
-                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                        Quick Links
-                    </p>
-                    <ul className="space-y-1">
-                        {quickLinks.map((item) => (
-                            <li key={item.name}>
-                                <a
-                                    href={item.href}
-                                    className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:text-white hover:bg-white/10 transition-all"
-                                >
-                                    <item.icon size={18} />
-                                    <span>{item.name}</span>
-                                </a>
-                            </li>
-                        ))}
-                    </ul>
                 </nav>
 
                 {/* User Footer */}
-                <div className="p-5 border-t border-white/10" style={{ background: 'rgba(0,0,0,0.15)' }}>
+                <div className="p-5 border-t border-white/10 shrink-0" style={{ background: 'rgba(0,0,0,0.15)' }}>
                     <div className="flex items-center gap-3 mb-4">
                         <div className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center text-white text-sm font-bold shrink-0">
                             {email ? email[0].toUpperCase() : 'A'}

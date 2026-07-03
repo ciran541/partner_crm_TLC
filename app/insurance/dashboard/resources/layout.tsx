@@ -8,6 +8,7 @@ import { BarChart2 } from 'lucide-react'
 const TABS = [
     { label: 'Rate Comparison',  href: '/insurance/dashboard/resources/rates' },
     { label: 'Domestic Rates',   href: '/insurance/dashboard/resources/domestic' },
+    { label: 'Mortgage News',    href: '/insurance/dashboard/resources/news' },
 ]
 
 export default function ResourcesLayout({ children }: { children: ReactNode }) {
