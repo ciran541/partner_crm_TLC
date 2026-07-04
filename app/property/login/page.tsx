@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 import { Lock, Mail, ArrowRight } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
+import { saveLinkedAccount } from '@/lib/auth/accountSwitcher'
 
 const REASON_MESSAGES: Record<string, string> = {
     suspended: 'Your account is pending activation. Please contact your admin.',
@@ -38,7 +39,7 @@ function PropertyLoginInner() {
 
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('app_type, status')
+                .select('app_type, status, role, name')
                 .eq('id', data.user.id)
                 .single()
 
@@ -53,6 +54,18 @@ function PropertyLoginInner() {
             }
 
             await fetch('/api/auth/register-session', { method: 'POST' })
+
+            if (data.session) {
+                saveLinkedAccount({
+                    userId: data.user.id,
+                    email: data.user.email ?? email,
+                    name: profile.name ?? null,
+                    role: profile.role,
+                    appType: profile.app_type,
+                    accessToken: data.session.access_token,
+                    refreshToken: data.session.refresh_token,
+                })
+            }
 
             router.push('/property/dashboard')
         } catch (err: any) {

@@ -6,9 +6,10 @@ import { usePathname } from 'next/navigation'
 import { BarChart2 } from 'lucide-react'
 
 const TABS = [
-    { label: 'Rate Comparison',  href: '/insurance/dashboard/resources/rates' },
-    { label: 'Domestic Rates',   href: '/insurance/dashboard/resources/domestic' },
-    { label: 'Mortgage News',    href: '/insurance/dashboard/resources/news' },
+    { label: 'Rate Comparison',    href: '/insurance/dashboard/resources/rates' },
+    { label: 'Domestic Rates',     href: '/insurance/dashboard/resources/domestic' },
+    { label: 'Mortgage News',      href: '/insurance/dashboard/resources/news' },
+    { label: 'Economic Calendar',  href: '/insurance/dashboard/resources/calendar' },
 ]
 
 export default function ResourcesLayout({ children }: { children: ReactNode }) {

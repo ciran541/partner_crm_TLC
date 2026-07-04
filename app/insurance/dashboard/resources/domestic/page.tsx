@@ -283,6 +283,10 @@ export default function DomesticRatesPage() {
                     <p className="text-sm font-medium">Select a date range and fields, then click Display</p>
                 </div>
             )}
+
+            <p className="text-xs text-slate-400 mt-4 text-center">
+                Source: Monetary Authority of Singapore (MAS) — Domestic Interest Rates, Daily
+            </p>
         </div>
     )
 }

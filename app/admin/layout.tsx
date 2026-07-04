@@ -20,14 +20,18 @@ import {
     BookOpen,
     Clock,
     Newspaper,
+    CalendarClock,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
+import AccountSwitcher from '@/components/shared/AccountSwitcher'
+import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
     const router = useRouter()
     const pathname = usePathname()
     const [role, setRole] = useState<string | null>(null)
     const [email, setEmail] = useState<string | null>(null)
+    const [displayName, setDisplayName] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
     const [sidebarOpen, setSidebarOpen] = useState(true)
 
@@ -46,7 +50,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('role, app_type')
+                .select('role, app_type, name')
                 .eq('id', user.id)
                 .single()
 
@@ -55,7 +59,24 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                 return
             }
 
+            // Seed/refresh the account switcher cache on every load (not just at
+            // login) — otherwise a session that was already active before this
+            // feature shipped never gets captured.
+            const { data: { session } } = await supabase.auth.getSession()
+            if (session) {
+                saveLinkedAccount({
+                    userId: user.id,
+                    email: user.email ?? '',
+                    name: profile.name ?? null,
+                    role: profile.role,
+                    appType: profile.app_type,
+                    accessToken: session.access_token,
+                    refreshToken: session.refresh_token,
+                })
+            }
+
             setRole(profile.role)
+            setDisplayName(profile.name ?? null)
             setLoading(false)
         }
 
@@ -63,6 +84,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     }, [router])
 
     const handleSignOut = async () => {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) removeLinkedAccount(user.id)
         await supabase.auth.signOut()
         router.push('/login')
     }
@@ -88,6 +111,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         { name: 'Insurance Rates', href: '/admin/insurance/rates', icon: Percent },
         { name: 'Insurance Knowledge', href: '/admin/insurance/knowledge', icon: BookOpen },
         { name: 'Mortgage News', href: '/admin/insurance/news', icon: Newspaper },
+        { name: 'Economic Calendar', href: '/admin/insurance/calendar', icon: CalendarClock },
     ]
 
     const propertyNavItems = [
@@ -235,14 +259,18 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
                 {/* User Footer */}
                 <div className="p-5 border-t border-white/10 shrink-0" style={{ background: 'rgba(0,0,0,0.15)' }}>
-                    <div className="flex items-center gap-3 mb-4">
-                        <div className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center text-white text-sm font-bold shrink-0">
-                            {email ? email[0].toUpperCase() : 'A'}
-                        </div>
-                        <div className="min-w-0">
-                            <p className="text-sm font-medium text-white truncate">{email?.split('@')[0]}</p>
-                            <p className="text-[11px] text-purple-300">Super Admin</p>
-                        </div>
+                    <div className="mb-4">
+                        <AccountSwitcher
+                            email={email}
+                            displayName={displayName}
+                            roleLabel="Super Admin"
+                            avatarColor="#a855f7"
+                            onSignOut={handleSignOut}
+                            addAccountLinks={[
+                                { label: 'Add admin login', href: '/login' },
+                                { label: 'Add insurance agent login', href: '/insurance/login' },
+                            ]}
+                        />
                     </div>
                     <button
                         onClick={handleSignOut}

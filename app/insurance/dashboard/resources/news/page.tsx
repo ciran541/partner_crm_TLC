@@ -67,6 +67,10 @@ export default function NewsPage() {
                     {filtered.map(a => <NewsListItem key={a.id} article={a} />)}
                 </div>
             )}
+
+            <p className="text-xs text-slate-400 mt-4 text-center">
+                Sources: Business Times · CNA &nbsp;·&nbsp; AI relevance filtering and summaries by DeepSeek
+            </p>
         </div>
     )
 }

@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabaseClient'
 import { useRouter, usePathname } from 'next/navigation'
 import { canAccessInsurance, getSafeRoute, isAdmin as isAdminRole } from '@/lib/permissions'
 import { clearCasesCache } from '@/lib/insurance/useCases'
+import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
+import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import {
     LayoutDashboard,
     Briefcase,
@@ -38,7 +40,7 @@ const toolsNav: NavItem[] = [
     { name: 'Knowledge', href: '/insurance/dashboard/knowledge', icon: BookOpen },
     { name: 'Rates', href: '/insurance/dashboard/rates', icon: Percent },
     { name: 'Resources', href: '/insurance/dashboard/resources', icon: BarChart2 },
-    { name: 'Valuation Fees', href: '/insurance/dashboard/valuation', icon: Receipt, soon: true },
+    { name: 'Valuation Fees', href: '/insurance/dashboard/valuation', icon: Receipt },
     { name: 'Legal', href: '/insurance/dashboard/legal', icon: Scale, soon: true },
 ]
 
@@ -129,6 +131,23 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                 router.replace(profile ? getSafeRoute(profile.role, profile.app_type) : '/insurance/login')
                 return
             }
+
+            // Seed/refresh the account switcher cache on every load (not just at
+            // login) — otherwise a session that was already active before this
+            // feature shipped never gets captured.
+            const { data: { session } } = await supabase.auth.getSession()
+            if (active && session) {
+                saveLinkedAccount({
+                    userId: user.id,
+                    email: user.email ?? '',
+                    name: profile.name ?? null,
+                    role: profile.role,
+                    appType: profile.app_type,
+                    accessToken: session.access_token,
+                    refreshToken: session.refresh_token,
+                })
+            }
+
             if (profile.status === 'disabled') {
                 await supabase.auth.signOut()
                 router.replace('/insurance/login?error=account_disabled')
@@ -150,11 +169,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
     const handleSignOut = async () => {
         clearCasesCache()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) removeLinkedAccount(user.id)
         await supabase.auth.signOut()
         router.push('/insurance/login')
     }
-
-    const initials = (displayName || email || 'U')[0].toUpperCase()
 
     const renderToolLink = (item: NavItem) => (
         <li key={item.name}>
@@ -224,18 +243,18 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
                 {/* User Footer */}
                 <div className="p-5 border-t border-white/10 bg-black/10">
-                    <div className="flex items-center gap-3 mb-4">
-                        <div className="w-8 h-8 rounded-full bg-[#03a9e7] flex items-center justify-center text-white text-sm font-bold shrink-0">
-                            {initials}
-                        </div>
-                        <div className="min-w-0">
-                            <p className="text-sm font-medium text-white truncate">
-                                {displayName || email?.split('@')[0] || ' '}
-                            </p>
-                            <p className="text-[11px] text-slate-400">
-                                {isAdmin ? 'Administrator' : 'Partner Agent'}
-                            </p>
-                        </div>
+                    <div className="mb-4">
+                        <AccountSwitcher
+                            email={email}
+                            displayName={displayName}
+                            roleLabel={isAdmin ? 'Administrator' : 'Partner Agent'}
+                            avatarColor="#03a9e7"
+                            onSignOut={handleSignOut}
+                            addAccountLinks={[
+                                { label: 'Add insurance agent login', href: '/insurance/login' },
+                                { label: 'Add admin login', href: '/login' },
+                            ]}
+                        />
                     </div>
                     <button
                         onClick={handleSignOut}
