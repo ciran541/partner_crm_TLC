@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Sparkles, ExternalLink } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
-import type { NewsArticle } from '@/lib/types/news'
+import { safeHttpUrl, type NewsArticle } from '@/lib/types/news'
 
 function formatRelativeTime(iso: string): string {
     const date = new Date(iso)
@@ -74,11 +74,15 @@ export default function NewsListItem({ article }: { article: NewsArticle }) {
                         <span className="text-xs text-slate-400 shrink-0">{formatRelativeTime(article.published_at)}</span>
                     </div>
 
-                    <a href={article.url} target="_blank" rel="noopener noreferrer"
-                        className="font-semibold text-sm text-[#052d4a] hover:text-[#03a9e7] transition-colors flex items-start gap-1.5 mb-1.5">
-                        {article.title}
-                        <ExternalLink size={13} className="shrink-0 mt-0.5 text-slate-300" />
-                    </a>
+                    {safeHttpUrl(article.url) ? (
+                        <a href={safeHttpUrl(article.url)!} target="_blank" rel="noopener noreferrer"
+                            className="font-semibold text-sm text-[#052d4a] hover:text-[#03a9e7] transition-colors flex items-start gap-1.5 mb-1.5">
+                            {article.title}
+                            <ExternalLink size={13} className="shrink-0 mt-0.5 text-slate-300" />
+                        </a>
+                    ) : (
+                        <p className="font-semibold text-sm text-[#052d4a] mb-1.5">{article.title}</p>
+                    )}
 
                     {article.description && !summary && (
                         <p className="text-xs text-slate-500 line-clamp-2 mb-3">{article.description}</p>

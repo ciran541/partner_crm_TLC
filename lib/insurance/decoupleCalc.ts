@@ -14,24 +14,30 @@
 
 import {
     effectiveMonthlyIncome,
+    incomeWeightedAge,
     maxLoanFromPayment,
     monthlyInstallment as calcInstallment,
     tdsrAvailable,
     STRESS_TEST_RATE,
+    DEFAULT_REFERENCE_RATE,
+    MIN_TENURE,
+    CANCELLATION_FEE_RATE,
 } from '@/lib/insurance/loanCalc'
+import { calculateBSD, absdRate, type Residency } from '@/lib/insurance/stampDuty'
 import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Cross-engine constants live in loanCalc.ts; re-exported for existing callers.
+export { DEFAULT_REFERENCE_RATE, MIN_TENURE, CANCELLATION_FEE_RATE } from '@/lib/insurance/loanCalc'
+export { calculateBSD } from '@/lib/insurance/stampDuty'
+
 export const CURRENT_YEAR           = new Date().getFullYear()
-export const DEFAULT_REFERENCE_RATE = 2.5
 export const LEGAL_FEE              = 3_000
 export const MIN_EQUITY_LOAN        = 50_000
-export const MIN_TENURE             = 5
 export const AGE_CAP_REFI           = 75
 export const AGE_CAP_PURCHASE       = 65
 export const MAX_PURCHASE_TENURE    = 30
-export const CANCELLATION_FEE_RATE  = 0.0075
 export const TDSR_DIVISOR           = 0.55   // pledge formula divisor for TDSR cases
 export const SHOW_DIVISOR           = 0.30   // showFund = pledgeFund × this
 
@@ -59,25 +65,13 @@ export function propertyTenureCap(_type?: string): number {
 }
 
 // ─── Stamp duties ─────────────────────────────────────────────────────────────
-
-export function calculateBSD(price: number): number {
-    if (price <= 0) return 0
-    let bsd = 0
-    if (price <= 180_000)   return price * 0.01
-    bsd += 180_000 * 0.01
-    if (price <= 360_000)   return bsd + (price - 180_000) * 0.02
-    bsd += 180_000 * 0.02
-    if (price <= 1_000_000) return bsd + (price - 360_000) * 0.03
-    bsd += 640_000 * 0.03
-    if (price <= 1_500_000) return bsd + (price - 1_000_000) * 0.04
-    bsd += 500_000 * 0.04
-    if (price <= 3_000_000) return bsd + (price - 1_500_000) * 0.05
-    bsd += 1_500_000 * 0.05
-    return bsd + (price - 3_000_000) * 0.06
-}
+// BSD comes from stampDuty.ts (re-exported above). ABSD here is the decoupling
+// special case: the buying party takes over as sole owner, so this is always
+// their FIRST property (propertyCount = 1) — only PR/foreigner rates apply.
 
 export function calculateABSD(price: number, residency?: string): { amount: number; ratePct: number } {
-    const rate = residency === 'pr' ? 0.05 : residency === 'foreigner' ? 0.60 : 0
+    const res: Residency = residency === 'pr' || residency === 'foreigner' ? residency : 'singaporean'
+    const rate = absdRate(res, 1)
     return { amount: price * rate, ratePct: rate * 100 }
 }
 
@@ -99,18 +93,19 @@ export function calculateSSD(
 
 // ─── Income helpers ───────────────────────────────────────────────────────────
 
+/** Income-weighted average age (rounded up) — shared engine in loanCalc.ts. */
 export function decoupleWeightedAge(borrowers: DecoupleBorrower[]): number | null {
-    const valid = borrowers.filter(b => typeof b.age === 'number' && b.age! > 0)
-    if (!valid.length) return null
-    if (valid.length === 1) return valid[0].age!
-    const incomes = valid.map(b => effectiveMonthlyIncome({
-        basicMonthlySalary:   b.basic_salary,
-        annualVariableIncome: b.annual_variable,
-        isSelfEmployed:       b.employment === 'self_employed',
-    }))
-    const total = incomes.reduce((a, x) => a + x, 0)
-    if (total <= 0) return Math.ceil(valid.reduce((s, b) => s + b.age!, 0) / valid.length)
-    return Math.ceil(valid.reduce((s, b, i) => s + b.age! * incomes[i], 0) / total)
+    return incomeWeightedAge(
+        borrowers.map(b => ({
+            age: b.age,
+            monthlyIncome: effectiveMonthlyIncome({
+                basicMonthlySalary:   b.basic_salary,
+                annualVariableIncome: b.annual_variable,
+                isSelfEmployed:       b.employment === 'self_employed',
+            }),
+        })),
+        { roundUp: true, zeroIncomeFallback: 'simple-average' },
+    )
 }
 
 // ─── Inputs / Outputs ─────────────────────────────────────────────────────────

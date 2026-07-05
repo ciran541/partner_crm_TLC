@@ -8,11 +8,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev          # Start dev server (localhost:3000)
 npm run build        # Production build
 npm run lint         # ESLint
-npm run sync-schema  # Regenerate supabase/migrations/20260101000000_initial_schema.sql from live DB
+npm test             # Vitest — unit tests for the financial calc core (lib/insurance/__tests__)
+npm run sync-schema  # Regenerate supabase/schema/full_current_schema.sql from live DB (tables + RLS policies)
 npx supabase db push # Apply pending migration files to remote Supabase
 ```
 
-No test suite exists. TypeScript checking: `npx tsc --noEmit` (one pre-existing Next.js internal error is expected and can be ignored).
+TypeScript checking: `npx tsc --noEmit`. Tests cover the pure financial engines (BSD/ABSD tiers, IWAA, annuity math, Step 4 effective rates) — run them after touching `lib/insurance/*Calc.ts`, `stampDuty.ts`, `loanCalc.ts` or `rateRecommend.ts`.
 
 ## Architecture
 
@@ -64,7 +65,9 @@ Schema changes must go through migration files in `supabase/migrations/`. Filena
 
 After writing a migration: `npx supabase db push`
 
-After any SQL Editor change (emergency only): `npm run sync-schema` to update the reference schema file.
+After any SQL Editor change (emergency only): `npm run sync-schema` to update the reference schema file (it dumps tables, FKs **and RLS policies**, so policy drift is visible in the repo).
+
+**RLS notes** (see `20260705000000_rls_hardening.sql`): admin checks in policies use the `is_admin_user()` SECURITY DEFINER function (never subquery `profiles` directly inside a `profiles` policy — infinite recursion). The client's UPDATE grant on `profiles` is **column-restricted** to identity fields (`name`, `full_name`, `mobile`, `cea_registration_no`, `agency_name`) — `role` / `app_type` / `status` / Google-token / session columns are writable only via service-role API routes; do not widen that grant. Insurance content tables (knowledge, rates, news, calendar, SORA) have RLS on with **no client policies** by design — all access goes through guarded server routes.
 
 ### Types
 
@@ -112,7 +115,16 @@ Phase 2 of rates: structured packages become *computable*.
 
 - **Daily SORA** from the MAS "Domestic Interest Rates – Daily" API (`lib/insurance/sora.ts`, `sora_rates` table). Auth = `keyid` header (`MAS_API_KEY`). The gateway ignores field/date filters and returns the full history, so we fetch all and take the latest non-null compounded row. A daily Vercel cron (`/api/cron/sora`, `vercel.json`) upserts it; admins can also "Refresh SORA" from the Rates page (`POST /api/admin/rates/sora`). Reads are instant via `getCurrentSora()`, and it travels with `GET /api/insurance/rates` so Step 4 gets packages + SORA in one call.
 - **Rate computation** (`lib/insurance/rateRecommend.ts`): `effectiveRate(entry, sora)` (fixed→rate; floating→SORA+spread; `1M/3M`→**lower** of 1M/3M; FD-pegged→not computed), `projectPackage()` re-amortises per-year installments, `recommendPackages()` filters by loan/tenure/property/preference, computes net savings (`computeRefiSavings` in `loanCalc.ts`) + TDSR eligibility, and ranks best-first.
-- **Step 4 UI**: `Step4Recommendations.tsx` shows the ranked list; selecting one fills the proposal and stores a **frozen `selected_package_snapshot`** in `workflow_data` (so an admin editing the package later can't silently change a client's proposal). Dual-benchmark / FD packages degrade gracefully (shown, not auto-priced).
+- **Step 4 UI**: `RefiPackages.tsx` / `PurchasePackages.tsx` show the ranked list; selecting one fills the proposal and stores a **frozen `selected_package_snapshot`** in `workflow_data` (so an admin editing the package later can't silently change a client's proposal). Dual-benchmark / FD packages degrade gracefully (shown, not auto-priced). Both (and the Rates page) show an amber warning when the stored SORA is stale (`isSoraStale()` in `rateSchedule.ts`, > 5 days old).
+
+### Shared financial core
+
+The regulated, client-facing numbers each live in exactly ONE module — never re-implement them locally:
+
+- `lib/insurance/stampDuty.ts` — BSD tiers (`BSD_TIERS`, `calculateBSD`, `computeBsdBreakdown`) and ABSD (`absdRate`, `worstResidency`, `Residency`). The purchase/decoupling engines and the stamp-duty calculator all derive from it.
+- `lib/insurance/loanCalc.ts` — annuity/TDSR/MSR math, **`incomeWeightedAge()`** (the one IWAA implementation; per-engine wrappers in `refiCalc`/`purchaseCalc`/`decoupleCalc` state their rounding + zero-income semantics via options), and cross-engine constants (`CANCELLATION_FEE_RATE`, `MIN_TENURE`, `DEFAULT_REFERENCE_RATE`).
+
+`lib/insurance/__tests__/financialCore.test.ts` pins tier boundaries and wrapper semantics — update the tests together with any IRAS/MAS rate change.
 
 ### Emails
 
@@ -141,15 +153,15 @@ GEMINI_API_KEY          # Google AI Studio (free tier) — knowledge assistant a
 DEEPSEEK_API_KEY        # platform.deepseek.com — mortgage news relevance classification + summaries
 MAS_API_KEY             # MAS Data API (keyid header) — daily SORA fetch for Step 4 rate computation
 FRED_API_KEY            # St. Louis Fed — US Fed funds rate chart
-CRON_SECRET             # optional — Vercel cron auth (Bearer) for /api/cron/* routes
+CRON_SECRET             # Vercel cron auth (Bearer) for /api/cron/* — REQUIRED in production (fail-closed via lib/auth/requireCron.ts); optional locally
 ```
 
 ### Insurance CRM — Knowledge Engine (Layer 4)
 
 Admin-managed knowledge repository (`knowledge_articles` table) surfaced to agents only via search/contextual APIs (never an unfiltered list — RLS on, all access through service-role server routes).
 
-- **Semantic search**: `embedText()` (`lib/insurance/embed.ts`) calls the Supabase `embed` Edge Function (`supabase/functions/embed`, free `gte-small`, 384-dim) → `match_knowledge_articles` RPC (pgvector cosine). Falls back to Postgres full-text then ILIKE.
-- **Grounded RAG answers**: `/api/insurance/knowledge/ask` retrieves articles then `composeAnswer()` (`lib/insurance/askGemini.ts`) has Gemini phrase an answer ONLY from them. Strictly grounded — refuses when nothing relevant matches; degrades to article cards if `GEMINI_API_KEY` absent. Agent UI: `components/insurance/knowledge/KnowledgeAsk.tsx`.
+- **Retrieval cascade**: `retrieveArticles()` (`lib/insurance/retrieveKnowledge.ts`) is the ONE implementation of semantic → full-text → substring retrieval, shared by the `/search` and `/ask` routes (each passes its own threshold/count). Semantic tier: `embedText()` (`lib/insurance/embed.ts`) calls the Supabase `embed` Edge Function (`supabase/functions/embed`, free `gte-small`, 384-dim) → `match_knowledge_articles` RPC (pgvector cosine, HNSW-indexed).
+- **Grounded RAG answers**: `/api/insurance/knowledge/ask` retrieves articles then `composeAnswer()` (`lib/insurance/askGemini.ts`) has Gemini phrase an answer ONLY from them. Strictly grounded — refuses when nothing relevant matches; degrades to article cards if `GEMINI_API_KEY` absent. Agent UI: `components/insurance/knowledge/KnowledgeAsk.tsx`. Gemini model names live ONLY in `askGemini.ts`'s `modelChain()` (shared by `normalizeQuery.ts`) — a model name hardcoded elsewhere once kept calling a retired model for a month, silently degrading retrieval.
 - Auto-embed on create/update; `/api/admin/knowledge/reindex` backfills.
 - **Deploy note**: `supabase functions deploy embed` is a separate step from `db push`.
 

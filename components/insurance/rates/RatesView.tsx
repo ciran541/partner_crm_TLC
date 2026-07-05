@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MortgagePackage, MortgagePackageInput, RateScheduleEntry, RateCategory } from '@/lib/types/rates'
-import { formatRateEntry } from '@/lib/insurance/rateSchedule'
+import { formatRateEntry, isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
 import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, shortLoan, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
@@ -276,6 +276,12 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                         {sora
                             ? <span className="text-slate-600 tabular-nums">1M {sora.comp_sora_1m}% · 3M {sora.comp_sora_3m}% <span className="text-slate-400">({sora.published_date ?? sora.value_date})</span></span>
                             : <span className="text-amber-600">not fetched</span>}
+                        {sora && isSoraStale(sora.value_date) && (
+                            <span className="font-semibold text-amber-600"
+                                title="The daily SORA refresh appears to be failing — floating rates are computed from this old value.">
+                                {soraAgeDays(sora.value_date)}d old
+                            </span>
+                        )}
                         {admin && (
                             <button onClick={handleRefreshSora} disabled={refreshingSora} title="Fetch latest SORA"
                                 className="ml-0.5 text-slate-400 hover:text-[#03a9e7] disabled:opacity-50 transition-colors">

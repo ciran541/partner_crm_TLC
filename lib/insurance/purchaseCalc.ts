@@ -15,10 +15,13 @@ import {
     monthlyInstallment,
     maxLoanFromPayment,
     effectiveMonthlyIncome,
+    incomeWeightedAge,
     tdsrAvailable,
     msrAvailable,
     STRESS_TEST_RATE,
+    DEFAULT_REFERENCE_RATE,
 } from '@/lib/insurance/loanCalc'
+import { calculateBSD, absdRate, worstResidency, type Residency } from '@/lib/insurance/stampDuty'
 import type { PurchaseWorkflow } from '@/lib/types/workflow'
 
 // ─── Property types ───────────────────────────────────────────────────────────
@@ -85,7 +88,9 @@ export function restrictsForeigner(type?: PurchasePropertyType | null): boolean 
 
 // ─── Residency ────────────────────────────────────────────────────────────────
 
-export type Residency = 'singaporean' | 'pr' | 'foreigner'
+// Residency + stamp-duty primitives live in stampDuty.ts (single source for the
+// IRAS tiers/rates); re-exported here for existing callers.
+export { calculateBSD, absdRate, worstResidency, type Residency } from '@/lib/insurance/stampDuty'
 
 export const RESIDENCY_OPTIONS: { value: Residency; label: string }[] = [
     { value: 'singaporean', label: 'Singapore Citizen' },
@@ -156,27 +161,24 @@ export interface PurchaseInputs {
 }
 
 /** Default rate used for the headline installment estimate when none entered. */
-export const DEFAULT_REFERENCE_RATE = 2.5
+export { DEFAULT_REFERENCE_RATE } from '@/lib/insurance/loanCalc'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Income-weighted average age, rounded up (falls back to simple average when income is 0). */
+/** Income-weighted average age, rounded up (falls back to simple average when
+ *  income is 0). Delegates to the shared engine in loanCalc.ts. */
 export function weightedAge(borrowers: BorrowerInput[]): number | null {
-    const valid = borrowers.filter(b => typeof b.age === 'number' && b.age! > 0)
-    if (!valid.length) return null
-    if (valid.length === 1) return valid[0].age!
-
-    const incomes = valid.map(b => effectiveMonthlyIncome({
-        basicMonthlySalary: b.basicSalary,
-        annualVariableIncome: b.annualVariable,
-        isSelfEmployed: b.employment === 'self_employed',
-    }))
-    const totalIncome = incomes.reduce((a, b) => a + b, 0)
-    if (totalIncome <= 0) {
-        return Math.ceil(valid.reduce((s, b) => s + b.age!, 0) / valid.length)
-    }
-    const weighted = valid.reduce((s, b, i) => s + b.age! * incomes[i], 0) / totalIncome
-    return Math.ceil(weighted)
+    return incomeWeightedAge(
+        borrowers.map(b => ({
+            age: b.age,
+            monthlyIncome: effectiveMonthlyIncome({
+                basicMonthlySalary: b.basicSalary,
+                annualVariableIncome: b.annualVariable,
+                isSelfEmployed: b.employment === 'self_employed',
+            }),
+        })),
+        { roundUp: true, zeroIncomeFallback: 'simple-average' },
+    )
 }
 
 /** Monthly servicing capacity for the property's servicing rule. */
@@ -195,41 +197,9 @@ export function optionTenure(option: FinancingOption, hdbClass: boolean, age: nu
     return Math.max(0, Math.min(option.ageCap - age, propertyCap))
 }
 
-// ─── Stamp duty & fees (ported verbatim, current tiers) ───────────────────────
-
-/** Buyer's Stamp Duty (BSD) — residential tiers incl. the 2023 >$1.5M 5%/6% bands. */
-export function calculateBSD(price: number): number {
-    let bsd = 0
-    if (price <= 180000) return price * 0.01
-    bsd += 180000 * 0.01
-    if (price <= 360000) return bsd + (price - 180000) * 0.02
-    bsd += 180000 * 0.02
-    if (price <= 1000000) return bsd + (price - 360000) * 0.03
-    bsd += 640000 * 0.03
-    if (price <= 1500000) return bsd + (price - 1000000) * 0.04
-    bsd += 500000 * 0.04
-    if (price <= 3000000) return bsd + (price - 1500000) * 0.05
-    bsd += 1500000 * 0.05
-    return bsd + (price - 3000000) * 0.06
-}
-
-/**
- * ABSD rate by buyer profile and the property count being purchased.
- * propertyCount = existing housing loans + 1 (the property being bought).
- * NOTE: ABSD rates change — verify against current IRAS rates before relying on these.
- */
-export function absdRate(residency: Residency, propertyCount: 1 | 2 | 3): number {
-    if (residency === 'foreigner') return 0.60
-    if (residency === 'pr') return propertyCount === 1 ? 0.05 : propertyCount === 2 ? 0.30 : 0.35
-    /* singaporean */              return propertyCount === 1 ? 0.00 : propertyCount === 2 ? 0.20 : 0.30
-}
-
-/** Worst-case residency across all buyers (foreigner > PR > citizen). */
-export function worstResidency(residencies: (Residency | undefined)[]): Residency {
-    if (residencies.includes('foreigner')) return 'foreigner'
-    if (residencies.includes('pr')) return 'pr'
-    return 'singaporean'
-}
+// ─── Stamp duty & fees ────────────────────────────────────────────────────────
+// BSD tiers + ABSD rate primitives come from stampDuty.ts (re-exported above);
+// this module keeps only the purchase-specific composition.
 
 export function outstandingToCount(outstanding: OutstandingLoans): 1 | 2 | 3 {
     return outstanding === '0' ? 1 : outstanding === '1' ? 2 : 3

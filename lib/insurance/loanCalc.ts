@@ -23,6 +23,13 @@ export const MSR_LIMIT = 0.30           // 30% of gross income (HDB/EC only)
 export const STRESS_TEST_RATE = 0.04    // 4.0% p.a. floor for eligibility
 export const NOA_FACTOR = 0.7           // variable income haircut to 70%
 
+// Shared across the refinancing / purchase / decoupling / equity engines —
+// defined once here so a rate change can never update one workflow and miss
+// another (each calc module re-exports these for its own callers).
+export const CANCELLATION_FEE_RATE = 0.0075   // 0.75% on the undisbursed amount
+export const MIN_TENURE = 5                    // years — standard across banks
+export const DEFAULT_REFERENCE_RATE = 2.5      // % p.a. — planning default before a package is chosen
+
 // Property types as stored in the workflow (RefinancingStep2_FactFind.property_type)
 export type WorkflowPropertyType = 'hdb' | 'private_condo' | 'landed' | 'ec'
 
@@ -81,6 +88,47 @@ export function effectiveMonthlyIncome(args: {
     const basic = args.isSelfEmployed ? 0 : (args.basicMonthlySalary ?? 0)
     const variableMonthly = ((args.annualVariableIncome ?? 0) * NOA_FACTOR) / 12
     return basic + variableMonthly
+}
+
+/** One borrower's age + income, ready for IWAA weighting. */
+export interface AgeIncomeEntry {
+    age?: number | null
+    monthlyIncome: number
+}
+
+/**
+ * Income-Weighted Average Age (IWAA) — the age banks use for max-tenure rules
+ * when there are multiple borrowers. Only borrowers with an entered age count,
+ * each weighted by their effective monthly income.
+ *
+ * This is the ONE implementation — five near-identical copies used to live in
+ * refiCalc / purchaseCalc / decoupleCalc / EquityLoanWorkflow / the TDSR
+ * calculator, with silently different rounding and zero-income behavior. The
+ * differences are now explicit options; callers state what they want:
+ *
+ * - `roundUp` — banks quote whole years; the purchase/decouple engines ceil,
+ *   the refi engine keeps the raw value and ceils only at display time.
+ * - `zeroIncomeFallback` — with no income captured the weighting is undefined:
+ *   'simple-average' degrades to the plain mean; 'null' returns null so the
+ *   caller can fall back itself (and e.g. label the result "Age", not "IWAA").
+ */
+export function incomeWeightedAge(
+    entries: AgeIncomeEntry[],
+    opts: { roundUp?: boolean; zeroIncomeFallback?: 'simple-average' | 'null' } = {},
+): number | null {
+    const { roundUp = false, zeroIncomeFallback = 'null' } = opts
+    const valid = entries.filter(e => typeof e.age === 'number' && e.age! > 0)
+    if (!valid.length) return null
+
+    const totalIncome = valid.reduce((s, e) => s + (e.monthlyIncome > 0 ? e.monthlyIncome : 0), 0)
+    if (totalIncome <= 0) {
+        if (zeroIncomeFallback === 'null') return null
+        const avg = valid.reduce((s, e) => s + e.age!, 0) / valid.length
+        return roundUp ? Math.ceil(avg) : avg
+    }
+
+    const weighted = valid.reduce((s, e) => s + e.age! * Math.max(e.monthlyIncome, 0), 0) / totalIncome
+    return roundUp ? Math.ceil(weighted) : weighted
 }
 
 /** Monthly amount available for mortgage servicing under TDSR. */

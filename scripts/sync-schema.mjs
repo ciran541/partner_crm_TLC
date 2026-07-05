@@ -140,6 +140,27 @@ WHERE tc.constraint_type = 'UNIQUE' AND tc.table_schema = 'public'
 ORDER BY tc.table_name, kcu.column_name;
 `
 
+const RLS_SQL = `
+SELECT tablename, rowsecurity
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY tablename;
+`
+
+const POLICY_SQL = `
+SELECT
+    tablename,
+    policyname,
+    permissive,
+    array_to_string(roles, ', ') AS roles,
+    cmd,
+    qual,
+    with_check
+FROM pg_policies
+WHERE schemaname = 'public'
+ORDER BY tablename, policyname;
+`
+
 // ── SQL generation helpers ───────────────────────────────────
 
 function pgType(col) {
@@ -220,17 +241,39 @@ function buildFKs(rows) {
         .join('\n') + '\n'
 }
 
+function buildRls(rlsRows, policyRows) {
+    const enables = rlsRows
+        .filter(r => r.rowsecurity)
+        .map(r => `ALTER TABLE public.${r.tablename} ENABLE ROW LEVEL SECURITY;`)
+        .join('\n')
+
+    const policies = policyRows
+        .map(p => {
+            const lines = [`CREATE POLICY "${p.policyname}" ON public.${p.tablename}`]
+            if (p.permissive !== 'PERMISSIVE') lines.push(`    AS ${p.permissive}`)
+            lines.push(`    FOR ${p.cmd} TO ${p.roles}`)
+            if (p.qual) lines.push(`    USING (${p.qual})`)
+            if (p.with_check) lines.push(`    WITH CHECK (${p.with_check})`)
+            return lines.join('\n') + ';'
+        })
+        .join('\n\n')
+
+    return `${enables}\n\n${policies}\n`
+}
+
 // ── Main ─────────────────────────────────────────────────────
 
 async function main() {
     console.log(`Fetching schema from project ${PROJECT_REF}...`)
 
-    const [enums, columns, fks, pks, uniques] = await Promise.all([
+    const [enums, columns, fks, pks, uniques, rlsFlags, policies] = await Promise.all([
         query(ENUM_SQL),
         query(TABLE_SQL),
         query(FK_SQL),
         query(PK_SQL),
         query(UNIQUE_SQL),
+        query(RLS_SQL),
+        query(POLICY_SQL),
     ])
 
     const now = new Date().toISOString()
@@ -251,6 +294,9 @@ async function main() {
         buildTables(columns, pks, uniques),
         `-- Foreign Keys`,
         buildFKs(fks),
+        `-- Row Level Security (policies live in the DB — schema changes to them`,
+        `-- must still go through migration files, this section is reference only)`,
+        buildRls(rlsFlags, policies),
     ].join('\n')
 
     const outPath = resolve(ROOT, 'supabase/schema/full_current_schema.sql')
@@ -261,6 +307,7 @@ async function main() {
     console.log(`  Tables:  ${[...new Set(columns.map(r => r.table_name))].length}`)
     console.log(`  Columns: ${columns.length}`)
     console.log(`  FKs:     ${fks.length}`)
+    console.log(`  RLS policies: ${policies.length}`)
 }
 
 main().catch(err => {

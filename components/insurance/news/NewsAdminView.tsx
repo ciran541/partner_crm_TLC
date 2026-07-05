@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Newspaper, Plus, Trash2, EyeOff, Eye, RefreshCcw, Search } from 'lucide-react'
-import { NewsArticle, NewsArticleInput, NEWS_SOURCES } from '@/lib/types/news'
+import { NewsArticle, NewsArticleInput, NEWS_SOURCES, safeHttpUrl } from '@/lib/types/news'
 import NewsArticleModal from '@/components/insurance/news/NewsArticleModal'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
@@ -148,7 +148,11 @@ export default function NewsAdminView() {
                             {filtered.map(a => (
                                 <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50/50">
                                     <td className="px-4 py-3">
-                                        <a href={a.url} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-800 hover:text-[#03a9e7] line-clamp-1">{a.title}</a>
+                                        {safeHttpUrl(a.url) ? (
+                                            <a href={safeHttpUrl(a.url)!} target="_blank" rel="noopener noreferrer" className="font-medium text-slate-800 hover:text-[#03a9e7] line-clamp-1">{a.title}</a>
+                                        ) : (
+                                            <span className="font-medium text-slate-800 line-clamp-1">{a.title}</span>
+                                        )}
                                         {a.relevance_reason && <p className="text-xs text-slate-400 line-clamp-1">{a.relevance_reason}</p>}
                                     </td>
                                     <td className="px-4 py-3 hidden sm:table-cell">

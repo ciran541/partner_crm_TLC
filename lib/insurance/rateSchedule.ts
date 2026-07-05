@@ -7,6 +7,28 @@
 
 import type { RateScheduleEntry } from '@/lib/types/rates'
 
+// ── SORA freshness ────────────────────────────────────────────────────────────
+// MAS publishes SORA every business day and our cron stores it daily; if the
+// stored row is older than this many days the pipeline has been failing and
+// floating-rate computations are silently running on stale data. Client-safe
+// (unlike sora.ts, which pulls in the service-role client).
+
+export const SORA_STALE_AFTER_DAYS = 5   // > weekend + public holiday span
+
+/** Whole days since an ISO date (YYYY-MM-DD); null when absent/unparseable. */
+export function soraAgeDays(valueDate?: string | null): number | null {
+    if (!valueDate) return null
+    const t = Date.parse(valueDate)
+    if (Number.isNaN(t)) return null
+    return Math.max(0, Math.floor((Date.now() - t) / 86_400_000))
+}
+
+/** True when the stored SORA is old enough that agents should be warned. */
+export function isSoraStale(valueDate?: string | null): boolean {
+    const days = soraAgeDays(valueDate)
+    return days != null && days > SORA_STALE_AFTER_DAYS
+}
+
 /** Normalize a floating benchmark string: "3MSORA" → "3M SORA", collapse spaces. */
 export function cleanReference(raw: string): string {
     return raw

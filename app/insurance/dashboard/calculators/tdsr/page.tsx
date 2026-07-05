@@ -4,13 +4,11 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, BarChart3, Plus, Minus } from 'lucide-react'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
+import { TDSR_LIMIT, MSR_LIMIT, NOA_FACTOR, STRESS_TEST_RATE, incomeWeightedAge } from '@/lib/insurance/loanCalc'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STRESS_RATE = 4.0   // % p.a. — used only for PV calculation
-const TDSR_LIMIT  = 0.55
-const MSR_LIMIT   = 0.30
-const NOA_FACTOR  = 0.70
+const STRESS_RATE = STRESS_TEST_RATE * 100   // % p.a. — used only for PV calculation
 
 // Property type → two tenure options (maxAge cap, maxTenure)
 const PROP_OPTS = {
@@ -44,12 +42,14 @@ function effectiveIncome(b: Borrower): number {
     return parseMoney(b.annualNOA) * NOA_FACTOR / 12
 }
 
+// Shared IWAA engine (loanCalc) — also fixes a bug the local copy had: a
+// borrower with income but a blank age used to count as age 0 and drag the
+// weighted average toward zero; the engine only counts borrowers with an age.
 function computeIWAA(borrowers: Borrower[]): number {
-    const incomes = borrowers.map(effectiveIncome)
-    const ages    = borrowers.map(b => parseInt(b.age) || 0)
-    const total   = incomes.reduce((s, v) => s + v, 0)
-    if (total === 0) return ages[0] || 0
-    return Math.ceil(incomes.reduce((s, inc, i) => s + inc * ages[i], 0) / total)
+    return incomeWeightedAge(
+        borrowers.map(b => ({ age: parseInt(b.age) || 0, monthlyIncome: effectiveIncome(b) })),
+        { roundUp: true, zeroIncomeFallback: 'simple-average' },
+    ) ?? 0
 }
 
 function pvCalc(months: number, payment: number): number {

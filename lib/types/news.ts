@@ -48,3 +48,19 @@ export interface NewsArticleInput {
     description?: string | null
     published_at: string
 }
+
+/**
+ * Only render a stored article URL as a link when it is a real http(s) URL.
+ * URLs enter the table from RSS feeds and admin manual adds; a hostile or
+ * malformed value (e.g. a javascript: URI) must never become a clickable href.
+ * Returns the URL unchanged when safe, null otherwise.
+ */
+export function safeHttpUrl(url: string | null | undefined): string | null {
+    if (!url) return null
+    try {
+        const parsed = new URL(url)
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : null
+    } catch {
+        return null
+    }
+}

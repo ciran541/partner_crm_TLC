@@ -45,7 +45,9 @@ Reply exactly: "I don't have guidance on that in our knowledge base — please c
 // against Google's own pricing docs) — not listed since calling it can only fail.
 const DEFAULT_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
 
-function modelChain(): string[] {
+/** Exported so every Gemini caller (normalizeQuery, etc.) shares ONE list of
+ *  live models — a retired model name hardcoded elsewhere fails silently. */
+export function modelChain(): string[] {
     const primary = process.env.GEMINI_MODEL
     const chain = primary ? [primary, ...DEFAULT_MODELS] : DEFAULT_MODELS
     return [...new Set(chain)] // dedupe while preserving order

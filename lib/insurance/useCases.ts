@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabaseClient'
+import { supabase } from '@/lib/supabase/client'
 import { isAdmin as isAdminRole } from '@/lib/permissions'
 import type { Case } from '@/lib/types'
 import type { UserRole } from '@/lib/types/shared'
@@ -68,16 +68,30 @@ function fetchCases(): Promise<void> {
                 .eq('id', user.id)
                 .single()
 
+            // Every column EXCEPT workflow_data — the per-case workflow JSONB blob
+            // can be tens of KB and no list screen reads it (the case detail page
+            // fetches its own row with select('*')). With select('*') an admin's
+            // case list was downloading every workflow of every case in the
+            // company on each 30s revalidation. If you add a cases column that a
+            // list screen needs, add it here too.
+            const LIST_COLUMNS =
+                'id, created_by, stage, case_type, client_name, client_mobile, client_email, ' +
+                'loan_size, property_type, property_price, current_bank, existing_loan_amount, ' +
+                'lock_in_end_date, closed_package_details, closed_interest_rate, closed_tenure, ' +
+                'subsidy_provided, clawback_end_date, remarks, created_at, updated_at, ' +
+                'closed_lost_reason, closed_lost_notes, follow_up_date, referred_bankers, ' +
+                'closed_won_data, commission_status'
+
             const { data, error } = await supabase
                 .from('cases')
-                .select('*, profiles ( id, name, role )')
+                .select(`${LIST_COLUMNS}, profiles ( id, name, role )`)
                 .order('updated_at', { ascending: false })
 
             if (error) throw error
 
             lastFetched = Date.now()
             setState({
-                cases: (data as Case[]) ?? [],
+                cases: (data as unknown as Case[]) ?? [],
                 isAdmin: isAdminRole((profile?.role ?? 'agent') as UserRole),
                 loading: false,
                 error: null,

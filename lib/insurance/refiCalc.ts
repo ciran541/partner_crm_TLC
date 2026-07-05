@@ -12,7 +12,7 @@
  * Pure functions, no DOM / framework deps. Reuses neutral math from loanCalc.ts.
  */
 
-import { effectiveMonthlyIncome } from '@/lib/insurance/loanCalc'
+import { effectiveMonthlyIncome, incomeWeightedAge, CANCELLATION_FEE_RATE, MIN_TENURE } from '@/lib/insurance/loanCalc'
 import type { RefinancingWorkflow } from '@/lib/types/workflow'
 
 // ─── Property types ───────────────────────────────────────────────────────────
@@ -68,8 +68,8 @@ export function ratesPropertyType(type?: RefiPropertyType | null): 'hdb' | 'priv
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-export const CANCELLATION_FEE_RATE = 0.0075   // 0.75% on the undisbursed amount
-export const MIN_TENURE = 5                    // years — standard across banks
+// Cross-engine constants live in loanCalc.ts; re-exported for existing callers.
+export { CANCELLATION_FEE_RATE, MIN_TENURE } from '@/lib/insurance/loanCalc'
 export const MAX_AGE = 75                      // tenure cannot take age beyond this
 const HDB_SMALL_LOAN = 250_000                 // below this an HDB may get no subsidy
 const PRIVATE_SMALL_LOAN = 500_000             // below this a private property may get no subsidy
@@ -118,21 +118,22 @@ export function averageAge(ages: number[]): number | null {
 }
 
 /**
- * Income-Weighted Average Age — only the borrowers whose age was entered count,
- * each weighted by their effective monthly income. Returns null if no income is
- * available (caller then falls back to the simple average).
+ * Income-Weighted Average Age — delegates to the shared engine in loanCalc.ts.
+ * Refi semantics: raw (un-rounded) value, and null when no income is available
+ * (the caller then falls back to the simple average and labels it "Age").
  */
 export function iwaa(borrowers: RefiBorrowerInput[]): number | null {
-    const valid = borrowers.filter(b => typeof b.age === 'number' && b.age! > 0)
-    if (!valid.length) return null
-    const incomes = valid.map(b => effectiveMonthlyIncome({
-        basicMonthlySalary: b.basicSalary,
-        annualVariableIncome: b.annualVariable,
-        isSelfEmployed: b.employment === 'self_employed',
-    }))
-    const total = incomes.reduce((a, b) => a + b, 0)
-    if (total <= 0) return null
-    return valid.reduce((s, b, i) => s + b.age! * incomes[i], 0) / total
+    return incomeWeightedAge(
+        borrowers.map(b => ({
+            age: b.age,
+            monthlyIncome: effectiveMonthlyIncome({
+                basicMonthlySalary: b.basicSalary,
+                annualVariableIncome: b.annualVariable,
+                isSelfEmployed: b.employment === 'self_employed',
+            }),
+        })),
+        { roundUp: false, zeroIncomeFallback: 'null' },
+    )
 }
 
 // ─── Tenure range ─────────────────────────────────────────────────────────────

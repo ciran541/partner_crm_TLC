@@ -4,37 +4,21 @@ import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Receipt, Minus, Plus } from 'lucide-react'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
+import { computeBsdBreakdown, absdRate, worstResidency, type Residency } from '@/lib/insurance/stampDuty'
 
-// ── BSD engine ─────────────────────────────────────────────────────────────────
+// BSD tiers + ABSD rate ladder come from lib/insurance/stampDuty.ts — the same
+// source the purchase and decoupling workflow engines compute from, so this
+// calculator can never disagree with a workflow.
 
-const BSD_TIERS = [
-    { label: 'First $180,000',   floor: 0,       ceiling: 180000,  rate: 0.01 },
-    { label: 'Next $180,000',    floor: 180000,   ceiling: 360000,  rate: 0.02 },
-    { label: 'Next $640,000',    floor: 360000,   ceiling: 1000000, rate: 0.03 },
-    { label: 'Next $500,000',    floor: 1000000,  ceiling: 1500000, rate: 0.04 },
-    { label: 'Next $1,500,000',  floor: 1500000,  ceiling: 3000000, rate: 0.05 },
-    { label: 'Above $3,000,000', floor: 3000000,  ceiling: null,    rate: 0.06 },
-]
-
-interface BsdTierRow { label: string; rate: number; taxable: number; amount: number }
-
-function computeBSD(value: number): { total: number; tiers: BsdTierRow[] } {
-    const tiers: BsdTierRow[] = []
-    let total = 0
-    for (const t of BSD_TIERS) {
-        if (value <= t.floor) break
-        const taxable = Math.min(value, t.ceiling ?? Infinity) - t.floor
-        const amount = taxable * t.rate
-        total += amount
-        tiers.push({ label: t.label, rate: t.rate, taxable, amount })
-    }
-    return { total, tiers }
-}
+const computeBSD = computeBsdBreakdown
 
 // ── ABSD engine ────────────────────────────────────────────────────────────────
 
 type PurchaseType = 'single' | 'jointMarried' | 'jointOther'
 type Status = 'sc' | 'pr' | 'foreigner'
+
+const toResidency = (s: Status): Residency => (s === 'sc' ? 'singaporean' : s)
+const countFor = (existing: number): 1 | 2 | 3 => (existing <= 0 ? 1 : existing === 1 ? 2 : 3)
 
 function computeABSD(
     value: number,
@@ -44,11 +28,10 @@ function computeABSD(
     existingCount: number,
 ): { rate: number; amount: number } {
     let rate = 0
+    const count = countFor(existingCount)
 
     if (purchaseType === 'single') {
-        if (yourStatus === 'foreigner')  rate = 0.60
-        else if (yourStatus === 'pr')    rate = existingCount === 0 ? 0.05 : existingCount === 1 ? 0.30 : 0.35
-        else                             rate = existingCount === 0 ? 0    : existingCount === 1 ? 0.20 : 0.30
+        rate = absdRate(toResidency(yourStatus), count)
     } else if (purchaseType === 'jointMarried') {
         // SC + PR/Foreigner married couple: first-property remission applies
         const mixedWithSC =
@@ -57,23 +40,17 @@ function computeABSD(
 
         if (mixedWithSC) {
             if (existingCount === 0) {
-                rate = 0
+                rate = 0   // remission — treated as SC first property
             } else {
                 const hasForeigner = yourStatus === 'foreigner' || partnerStatus === 'foreigner'
-                rate = hasForeigner ? 0.60 : (existingCount === 1 ? 0.30 : 0.35)
+                rate = hasForeigner ? absdRate('foreigner', count) : absdRate('pr', count)
             }
-        } else if (yourStatus === 'foreigner' || partnerStatus === 'foreigner') {
-            rate = 0.60
-        } else if (yourStatus === 'pr' || partnerStatus === 'pr') {
-            rate = existingCount === 0 ? 0.05 : existingCount === 1 ? 0.30 : 0.35
         } else {
-            rate = existingCount === 0 ? 0 : existingCount === 1 ? 0.20 : 0.30
+            rate = absdRate(worstResidency([toResidency(yourStatus), toResidency(partnerStatus)]), count)
         }
     } else {
         // Joint (not married) — worst status applies
-        if (yourStatus === 'foreigner' || partnerStatus === 'foreigner')     rate = 0.60
-        else if (yourStatus === 'pr' || partnerStatus === 'pr')              rate = existingCount === 0 ? 0.05 : existingCount === 1 ? 0.30 : 0.35
-        else                                                                 rate = existingCount === 0 ? 0    : existingCount === 1 ? 0.20 : 0.30
+        rate = absdRate(worstResidency([toResidency(yourStatus), toResidency(partnerStatus)]), count)
     }
 
     return { rate, amount: Math.round(value * rate) }

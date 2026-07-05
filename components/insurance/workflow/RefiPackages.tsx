@@ -5,7 +5,7 @@ import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPackages, type RecommendedPackage } from '@/lib/insurance/rateRecommend'
 import { workflowPropType, packageStyle, stripBankPrefix, shortLoan, groupByRateTypeColumn, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
-import { formatRateSchedule } from '@/lib/insurance/rateSchedule'
+import { formatRateSchedule, isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
 import Spinner from '@/components/shared/Spinner'
 import PackageCompareModal, { type ComparePackageItem } from './PackageCompareModal'
 import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, TrendingDown, SlidersHorizontal, RefreshCcw, Columns2, CheckSquare, Square, Crown } from 'lucide-react'
@@ -228,6 +228,12 @@ export default function RefiPackages({
                 <div className="mx-4 mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800 flex items-start gap-1.5">
                     <AlertTriangle size={13} className="mt-0.5 shrink-0" />
                     No live SORA yet — floating rates can&apos;t be priced. Ask an admin to hit &ldquo;Refresh SORA&rdquo; on the Rates page. Fixed packages still compute.
+                </div>
+            )}
+            {sora && isSoraStale(sora.value_date) && (
+                <div className="mx-4 mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800 flex items-start gap-1.5">
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                    Stored SORA is {soraAgeDays(sora.value_date)} days old — the daily refresh may be failing, so floating rates below use a stale benchmark. Ask an admin to hit &ldquo;Refresh SORA&rdquo; on the Rates page.
                 </div>
             )}
 

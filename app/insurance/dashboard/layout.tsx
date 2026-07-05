@@ -2,9 +2,10 @@
 
 import { ReactNode, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabaseClient'
+import { supabase } from '@/lib/supabase/client'
 import { useRouter, usePathname } from 'next/navigation'
 import { canAccessInsurance, getSafeRoute, isAdmin as isAdminRole } from '@/lib/permissions'
+import type { UserRole } from '@/lib/types/shared'
 import { clearCasesCache } from '@/lib/insurance/useCases'
 import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
@@ -85,7 +86,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     const [email, setEmail] = useState<string | null>(null)
     const [displayName, setDisplayName] = useState<string | null>(null)
 
-    const isAdmin = role === 'admin' || role === 'super_admin'
+    const isAdmin = role != null && isAdminRole(role as UserRole)
     const internalItems = internalNav
     const internalActive = internalItems.some(i => isActiveHref(pathname, i.href))
 

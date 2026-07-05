@@ -2,7 +2,7 @@
 
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import type { EquityLoanWorkflow, ELPropertyType, RefiBorrower } from '@/lib/types/workflow'
-import { effectiveMonthlyIncome, monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
+import { effectiveMonthlyIncome, incomeWeightedAge, monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
@@ -111,17 +111,19 @@ export default function EquityLoanWorkflowPanel({
         ? agedBorrowers.reduce((s, { b }) => s + (b.age ?? 0), 0) / agedBorrowers.length
         : null
 
-    // IWAA: income-weighted average age — uses effective monthly income per borrower
-    const grossPerBorrower = agedBorrowers.map(({ b }) => effectiveMonthlyIncome({
-        basicMonthlySalary: b.basic_salary,
-        annualVariableIncome: b.annual_variable,
-        isSelfEmployed: b.employment === 'self_employed',
-    }))
-    const totalIncomeForIwaa = grossPerBorrower.reduce((s, g) => s + g, 0)
-    const iwaa = totalIncomeForIwaa > 0 && agedBorrowers.length > 0
-        ? agedBorrowers.reduce((s, { b }, i) => s + (b.age ?? 0) * grossPerBorrower[i], 0) / totalIncomeForIwaa
-        : null
-    // When income is captured use IWAA for tenure (mirrors refiCalc: usingIwaa = weighted != null)
+    // IWAA via the shared engine (loanCalc) — refi semantics: raw value, null when
+    // no income is captured (then the simple average is used and labelled "Age").
+    const iwaa = incomeWeightedAge(
+        borrowers.map(b => ({
+            age: b.age,
+            monthlyIncome: effectiveMonthlyIncome({
+                basicMonthlySalary: b.basic_salary,
+                annualVariableIncome: b.annual_variable,
+                isSelfEmployed: b.employment === 'self_employed',
+            }),
+        })),
+        { roundUp: false, zeroIncomeFallback: 'null' },
+    )
     const ageForTenure = iwaa ?? averageAge
     const usingIwaa = iwaa != null
 
