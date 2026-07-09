@@ -8,6 +8,7 @@ import { useCases, refreshCases } from '@/lib/insurance/useCases'
 import { isDraftCase } from '@/lib/insurance/caseFilters'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
+import WelcomeChecklist from '@/components/insurance/onboarding/WelcomeChecklist'
 import {
     RefreshCcw, ShoppingCart, Users, TrendingUp, ArrowRight,
     Clock, Trash2, FileText, Search,
@@ -104,6 +105,8 @@ export default function MortgagePlannerPage() {
 
     return (
         <div className="max-w-4xl mx-auto space-y-7">
+            <WelcomeChecklist />
+
             <div>
                 <h1 className="ios-page-title">Mortgage Planner</h1>
                 <p className="page-subtitle">Pick a case type to start planning with your client.</p>

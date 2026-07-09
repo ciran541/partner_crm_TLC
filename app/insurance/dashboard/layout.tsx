@@ -28,6 +28,7 @@ import {
     X,
     BarChart2,
     DollarSign,
+    Landmark,
 } from 'lucide-react'
 
 type NavItem = { name: string; href: string; icon: React.ElementType; soon?: boolean }
@@ -41,6 +42,7 @@ const toolsNav: NavItem[] = [
     { name: 'Knowledge', href: '/insurance/dashboard/knowledge', icon: BookOpen },
     { name: 'Rates', href: '/insurance/dashboard/rates', icon: Percent },
     { name: 'Resources', href: '/insurance/dashboard/resources', icon: BarChart2 },
+    { name: "Banks' Insights", href: '/insurance/dashboard/bank-intelligence', icon: Landmark },
     { name: 'Valuation Fees', href: '/insurance/dashboard/valuation', icon: Receipt },
     { name: 'Legal', href: '/insurance/dashboard/legal', icon: Scale, soon: true },
 ]
@@ -123,7 +125,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('role, app_type, name, status')
+                .select('role, app_type, name, status, onboarding')
                 .eq('id', user.id)
                 .single()
             if (!active) return
@@ -157,6 +159,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             // Admins run the operation from the ops console, not the agent app.
             if (isAdminRole(profile.role)) {
                 router.replace('/admin/insurance/cases')
+                return
+            }
+
+            // First-login onboarding — walk new agents through profile completion
+            // and a product tour before they reach the dashboard.
+            if (!profile.onboarding?.completed_at) {
+                router.replace('/insurance/onboarding')
                 return
             }
 

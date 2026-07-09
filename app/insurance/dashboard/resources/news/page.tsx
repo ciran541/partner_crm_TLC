@@ -60,7 +60,7 @@ export default function NewsPage() {
                     icon={Newspaper}
                     iconColor="#03a9e7"
                     title="No mortgage-related news right now"
-                    description="We check Business Times and CNA daily for anything relevant to mortgages and the property market."
+                    description="We check Business Times, CNA, Financial Times, The Edge Singapore, MAS, URA and HDB daily for anything relevant to mortgages and the property market."
                 />
             ) : (
                 <div className="space-y-3">
@@ -69,7 +69,7 @@ export default function NewsPage() {
             )}
 
             <p className="text-xs text-slate-400 mt-4 text-center">
-                Sources: Business Times · CNA &nbsp;·&nbsp; AI relevance filtering and summaries by DeepSeek
+                Sources: Business Times · CNA · Financial Times · The Edge Singapore · MAS · URA · HDB &nbsp;·&nbsp; AI relevance filtering and summaries by DeepSeek
             </p>
         </div>
     )

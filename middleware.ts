@@ -78,7 +78,7 @@ export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl
     const loginPath = pathname.startsWith('/property/') ? '/property/login' : '/insurance/login'
     const isPropertyAuthPage = pathname === '/property/login' || pathname === '/property/signup'
-    const isInsuranceAuthPage = pathname === '/insurance/login' || pathname === '/insurance/forgot-password'
+    const isInsuranceAuthPage = pathname === '/insurance/login' || pathname === '/insurance/forgot-password' || pathname === '/insurance/signup'
     const isAuthPage = isPropertyAuthPage || isInsuranceAuthPage
 
     if (!user) {

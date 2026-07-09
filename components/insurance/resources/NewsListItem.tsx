@@ -25,6 +25,11 @@ function formatRelativeTime(iso: string): string {
 const SOURCE_COLORS: Record<string, string> = {
     business_times: 'bg-blue-50 text-blue-700',
     cna:            'bg-cyan-50 text-cyan-700',
+    ft:             'bg-rose-50 text-rose-700',
+    edge_sg:        'bg-indigo-50 text-indigo-700',
+    mas:            'bg-amber-50 text-amber-700',
+    ura:            'bg-violet-50 text-violet-700',
+    hdb:            'bg-emerald-50 text-emerald-700',
 }
 
 export default function NewsListItem({ article }: { article: NewsArticle }) {

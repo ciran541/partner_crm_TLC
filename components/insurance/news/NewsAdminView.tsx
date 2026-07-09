@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Newspaper, Plus, Trash2, EyeOff, Eye, RefreshCcw, Search } from 'lucide-react'
+import { Newspaper, Plus, Trash2, EyeOff, Eye, RefreshCcw, Search, CheckCircle2, XCircle } from 'lucide-react'
 import { NewsArticle, NewsArticleInput, NEWS_SOURCES, safeHttpUrl } from '@/lib/types/news'
 import NewsArticleModal from '@/components/insurance/news/NewsArticleModal'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -61,6 +61,16 @@ export default function NewsAdminView() {
         else setAlert({ type: 'error', message: 'Update failed.' })
     }
 
+    // Fixes a wrong or missed AI relevance call without deleting + retyping the article.
+    const handleToggleRelevant = async (a: NewsArticle) => {
+        const res = await fetch('/api/admin/insurance/news', {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: a.id, isRelevant: a.is_relevant !== true }),
+        })
+        if (res.ok) await load()
+        else setAlert({ type: 'error', message: 'Update failed.' })
+    }
+
     const handleDelete = async (a: NewsArticle) => {
         if (!confirm(`Delete "${a.title}"? This cannot be undone.`)) return
         const res = await fetch(`/api/admin/insurance/news?id=${a.id}`, { method: 'DELETE' })
@@ -92,7 +102,7 @@ export default function NewsAdminView() {
                     <h1 className="ios-page-title flex items-center gap-2">
                         <Newspaper size={24} className="text-[#03a9e7]" /> Mortgage News
                     </h1>
-                    <p className="page-subtitle">Auto-ingested daily from Business Times and CNA&apos;s official RSS feeds. Hide/delete for QA — the feed itself needs no manual upkeep.</p>
+                    <p className="page-subtitle">Auto-ingested daily from Business Times, CNA, Financial Times, The Edge Singapore, MAS, URA and HDB. Hide/delete for QA, or override a wrong AI relevance call — the feed itself needs no manual upkeep.</p>
                 </div>
                 <div className="flex items-center gap-2">
                     <button onClick={handleRefresh} disabled={refreshing} title="Fetch new articles now"
@@ -171,6 +181,9 @@ export default function NewsAdminView() {
                                     </td>
                                     <td className="px-4 py-3">
                                         <div className="flex items-center gap-1 justify-end">
+                                            <button onClick={() => handleToggleRelevant(a)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500" title={a.is_relevant === true ? 'Mark not relevant' : 'Mark relevant (fixes a wrong/missed AI call)'}>
+                                                {a.is_relevant === true ? <XCircle size={15} /> : <CheckCircle2 size={15} />}
+                                            </button>
                                             <button onClick={() => handleToggleHidden(a)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500" title={a.hidden ? 'Unhide' : 'Hide'}>
                                                 {a.hidden ? <Eye size={15} /> : <EyeOff size={15} />}
                                             </button>

@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { getSafeRoute } from '@/lib/permissions'
-import { Profile, CreateUserInput, UpdateUserInput } from '@/lib/types/shared'
+import { Profile, CreateUserInput, UpdateUserInput, AgentInvite } from '@/lib/types/shared'
 import Modal from '@/components/shared/Modal'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
-import { Plus, Search, Edit2, User, Shield, Mail, Calendar, Lock } from 'lucide-react'
+import { Plus, Search, Edit2, User, Shield, Mail, Calendar, Lock, Link2, Copy, Ban, Check } from 'lucide-react'
 
 export default function AdminUsersPage() {
     const router = useRouter()
@@ -35,6 +35,12 @@ export default function AdminUsersPage() {
     const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null)
     const [resetPassword, setResetPassword] = useState('')
 
+    const [invites, setInvites] = useState<AgentInvite[]>([])
+    const [isInviteOpen, setIsInviteOpen] = useState(false)
+    const [inviteForm, setInviteForm] = useState({ invited_name: '', invited_email: '' })
+    const [generatedInviteUrl, setGeneratedInviteUrl] = useState<string | null>(null)
+    const [copied, setCopied] = useState(false)
+
     useEffect(() => {
         checkAdminAndLoad()
     }, [])
@@ -48,7 +54,18 @@ export default function AdminUsersPage() {
             router.replace(getSafeRoute(profile?.role, profile?.app_type))
             return
         }
-        await loadProfiles()
+        await Promise.all([loadProfiles(), loadInvites()])
+    }
+
+    const loadInvites = async () => {
+        try {
+            const res = await fetch('/api/admin/insurance/invites')
+            if (res.ok) {
+                setInvites(await res.json())
+            }
+        } catch (error) {
+            console.error(error)
+        }
     }
 
     const loadProfiles = async () => {
@@ -90,6 +107,58 @@ export default function AdminUsersPage() {
             setPageAlert({ type: 'error', message: 'An unexpected error occurred.' })
         }
         setIsSubmitting(false)
+    }
+
+    const handleCreateInvite = async (e: React.FormEvent) => {
+        e.preventDefault()
+        setIsSubmitting(true)
+        try {
+            const res = await fetch('/api/admin/insurance/invites', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(inviteForm),
+            })
+            const data = await res.json()
+            if (!res.ok) {
+                setPageAlert({ type: 'error', message: data.error || 'Failed to create invite.' })
+            } else {
+                setGeneratedInviteUrl(data.url)
+                loadInvites()
+            }
+        } catch {
+            setPageAlert({ type: 'error', message: 'An unexpected error occurred.' })
+        }
+        setIsSubmitting(false)
+    }
+
+    const handleRevokeInvite = async (id: string) => {
+        try {
+            const res = await fetch('/api/admin/insurance/invites', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, status: 'revoked' }),
+            })
+            if (res.ok) {
+                loadInvites()
+            } else {
+                setPageAlert({ type: 'error', message: 'Failed to revoke invite.' })
+            }
+        } catch {
+            setPageAlert({ type: 'error', message: 'An unexpected error occurred.' })
+        }
+    }
+
+    const copyInviteUrl = (url: string) => {
+        navigator.clipboard.writeText(url)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+    }
+
+    const closeInviteModal = () => {
+        setIsInviteOpen(false)
+        setInviteForm({ invited_name: '', invited_email: '' })
+        setGeneratedInviteUrl(null)
+        setCopied(false)
     }
 
     const handleResetPassword = async (e: React.FormEvent) => {
@@ -170,14 +239,61 @@ export default function AdminUsersPage() {
                     </h1>
                     <p className="text-slate-500 text-sm mt-1">Manage all agents and administrators across all domains.</p>
                 </div>
-                <button
-                    onClick={() => setIsCreateOpen(true)}
-                    className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto"
-                >
-                    <Plus size={18} />
-                    <span>Add User</span>
-                </button>
+                <div className="flex gap-2 w-full sm:w-auto">
+                    <button
+                        onClick={() => setIsInviteOpen(true)}
+                        className="btn-ghost flex items-center justify-center gap-2 flex-1 sm:flex-none"
+                    >
+                        <Link2 size={18} />
+                        <span>Invite Agent</span>
+                    </button>
+                    <button
+                        onClick={() => setIsCreateOpen(true)}
+                        className="btn-primary flex items-center justify-center gap-2 flex-1 sm:flex-none"
+                    >
+                        <Plus size={18} />
+                        <span>Add User</span>
+                    </button>
+                </div>
             </div>
+
+            {invites.filter(i => i.status === 'pending').length > 0 && (
+                <div className="card p-4">
+                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-3">
+                        Pending Invites — sent, not yet signed up
+                    </p>
+                    <div className="space-y-2">
+                        {invites.filter(i => i.status === 'pending').map(invite => (
+                            <div key={invite.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
+                                <div className="min-w-0">
+                                    <p className="text-sm font-semibold text-slate-700 truncate">
+                                        {invite.invited_name || invite.invited_email || 'Unnamed invite'}
+                                    </p>
+                                    <p className="text-xs text-slate-400">
+                                        Expires {new Date(invite.expires_at).toLocaleDateString()}
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                        onClick={() => copyInviteUrl(`${window.location.origin}/insurance/signup?token=${invite.token}`)}
+                                        className="p-2 text-slate-400 hover:text-[#03a9e7] hover:bg-sky-50 rounded-lg transition-all"
+                                        title="Copy Link"
+                                    >
+                                        <Copy size={16} />
+                                    </button>
+                                    <button
+                                        onClick={() => handleRevokeInvite(invite.id)}
+                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                        title="Revoke"
+                                    >
+                                        <Ban size={16} />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="card p-4 flex flex-col sm:flex-row sm:items-center gap-4">
                 <div className="relative flex-1 group">
@@ -294,6 +410,66 @@ export default function AdminUsersPage() {
                     </table>
                 </div>
             </div>
+
+            {/* Invite Modal */}
+            {isInviteOpen && (
+                <Modal title="Invite Agent" onClose={closeInviteModal}>
+                    {generatedInviteUrl ? (
+                        <div className="space-y-4">
+                            <p className="text-sm text-slate-600">
+                                Send this link to the agent <span className="font-semibold">after payment is confirmed</span> —
+                                it's single-use and lets them sign up with their own email and password. Their account will
+                                be active as soon as they finish.
+                            </p>
+                            <div className="flex items-center gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                                <input
+                                    readOnly
+                                    value={generatedInviteUrl}
+                                    className="flex-1 min-w-0 bg-transparent text-xs text-slate-600 outline-none truncate"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => copyInviteUrl(generatedInviteUrl)}
+                                    className="shrink-0 px-3 py-1.5 rounded-md bg-[#03a9e7] hover:bg-[#0398d1] text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                                >
+                                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                                    {copied ? 'Copied' : 'Copy'}
+                                </button>
+                            </div>
+                            <div className="flex justify-end pt-2 border-t border-slate-100">
+                                <button type="button" onClick={closeInviteModal} className="btn-primary px-6 py-2">Done</button>
+                            </div>
+                        </div>
+                    ) : (
+                        <form onSubmit={handleCreateInvite} className="space-y-4">
+                            <p className="text-sm text-slate-600">
+                                Only generate this after the agent has paid — the link itself is what activates their account.
+                            </p>
+                            <div>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Agent&apos;s Name (optional)</label>
+                                <input type="text"
+                                    className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm"
+                                    value={inviteForm.invited_name}
+                                    onChange={(e) => setInviteForm({ ...inviteForm, invited_name: e.target.value })} />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Agent&apos;s Email (optional)</label>
+                                <input type="email"
+                                    className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm"
+                                    value={inviteForm.invited_email}
+                                    onChange={(e) => setInviteForm({ ...inviteForm, invited_email: e.target.value })} />
+                                <p className="mt-1 text-xs text-slate-400">If set, this locks the email field on their signup form.</p>
+                            </div>
+                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                                <button type="button" onClick={closeInviteModal} className="btn-ghost px-6 py-2">Cancel</button>
+                                <button type="submit" disabled={isSubmitting} className="btn-primary px-6 py-2 flex items-center gap-2">
+                                    {isSubmitting ? <Spinner size="sm" color="white" label="Generating…" /> : 'Generate Link'}
+                                </button>
+                            </div>
+                        </form>
+                    )}
+                </Modal>
+            )}
 
             {/* Create Modal */}
             {isCreateOpen && (

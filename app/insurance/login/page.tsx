@@ -19,12 +19,16 @@ function InsuranceLoginInner() {
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [error, setError] = useState<string | null>(null)
+    const [success, setSuccess] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
 
     useEffect(() => {
         const reason = searchParams.get('reason')
         if (reason && REASON_MESSAGES[reason]) {
             setError(REASON_MESSAGES[reason])
+        }
+        if (searchParams.get('registered') === 'true') {
+            setSuccess('Account created — you can sign in now.')
         }
     }, [searchParams])
 
@@ -105,6 +109,12 @@ function InsuranceLoginInner() {
                     {error && (
                         <div style={{ marginBottom: 20 }}>
                             <InlineAlert type="error" message={error} onDismiss={() => setError(null)} />
+                        </div>
+                    )}
+
+                    {success && (
+                        <div style={{ marginBottom: 20 }}>
+                            <InlineAlert type="success" message={success} onDismiss={() => setSuccess(null)} />
                         </div>
                     )}
 

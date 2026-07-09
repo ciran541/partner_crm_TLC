@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
-import { getAllArticles, createManualArticle, setHidden, deleteArticle } from '@/lib/insurance/news'
+import { getAllArticles, createManualArticle, setHidden, setRelevant, deleteArticle } from '@/lib/insurance/news'
 import type { NewsArticleInput } from '@/lib/types/news'
 
 // Admin QA for mortgage news. Guarded by requireAdminUser().
-//   GET                          → list all articles (incl. unclassified/hidden)
-//   POST   { input }             → one-off manual addition (QA use only — not the ingestion path)
-//   PATCH  { id, hidden }        → hide/unhide
-//   DELETE ?id=                  → delete
+//   GET                                → list all articles (incl. unclassified/hidden)
+//   POST   { input }                   → one-off manual addition (QA use only — not the ingestion path)
+//   PATCH  { id, hidden }               → hide/unhide
+//   PATCH  { id, isRelevant }           → override a wrong/missed AI relevance call
+//   DELETE ?id=                        → delete
 
 export async function GET() {
     const auth = await requireAdminUser()
@@ -37,12 +38,12 @@ export async function PATCH(request: Request) {
     if (!auth.authorized) return auth.response
 
     const body = await request.json().catch(() => ({}))
-    const { id, hidden } = body as { id?: string; hidden?: boolean }
-    if (!id || typeof hidden !== 'boolean') {
-        return NextResponse.json({ error: 'Missing id or hidden' }, { status: 400 })
+    const { id, hidden, isRelevant } = body as { id?: string; hidden?: boolean; isRelevant?: boolean }
+    if (!id || (typeof hidden !== 'boolean' && typeof isRelevant !== 'boolean')) {
+        return NextResponse.json({ error: 'Missing id, or missing hidden/isRelevant' }, { status: 400 })
     }
 
-    const ok = await setHidden(id, hidden)
+    const ok = typeof hidden === 'boolean' ? await setHidden(id, hidden) : await setRelevant(id, isRelevant as boolean)
     if (!ok) return NextResponse.json({ error: 'Update failed' }, { status: 500 })
     return NextResponse.json({ success: true })
 }

@@ -1,22 +1,29 @@
 /**
  * Mortgage News — ingestion, relevance classification, and AI summaries.
  *
- * Sourcing: NEWS_SOURCES (lib/types/news.ts) lists each publisher's genuine
- * native RSS feed, confirmed working by fetching the raw XML directly (real
- * article URLs, real content snippets, official publisher-run endpoints — no
- * ToS ambiguity, unlike the Google News site-scoped search trick this replaced).
- * Scope was deliberately narrowed to Business Times + CNA rather than padding
- * the source list with a lower-quality/riskier mechanism for publishers that
- * don't have a working native feed (EdgeProp's only feed is property listings
- * not news; MAS/URA/MND block automated requests; Bloomberg has no free feed).
+ * Sourcing: NEWS_SOURCES (lib/types/news.ts) lists each publisher's genuine feed,
+ * confirmed working by fetching it directly (real article URLs, real content
+ * snippets, official endpoints — no ToS ambiguity, unlike the Google News
+ * site-scoped search trick this replaced). Scope was deliberately narrowed to
+ * Business Times + CNA + MAS rather than padding the list with a lower-quality/
+ * riskier mechanism for publishers that don't have a working feed (EdgeProp's
+ * only feed is property listings not news; URA/HDB/SRX/99.co block automated
+ * requests site-wide; Bloomberg/Reuters have no free feed; a WSJ feed exists but
+ * is dead — every item over a year stale).
+ *
+ * MAS is not RSS — it's fetched from their own site-search JSON API (the same
+ * one that powers the search box on mas.gov.sg/news), found by inspecting the
+ * real browser network request behind that page and confirmed public with a
+ * bare curl (no cookies/session/auth needed). See fetchMasFeed() below.
  *
  * Business Times' feed carries genuine per-item <category> tags (confirmed via
  * the raw XML), so BT_RELEVANT_CATEGORIES pre-filters to only categories that
  * could plausibly be mortgage-relevant before anything reaches DeepSeek — cuts
  * obvious noise (Arts & Design, Sports, etc.) for free and reduces DeepSeek call
- * volume. CNA's feed has no comparably useful category scoping available, so it
- * relies on DeepSeek classification alone, same as every candidate that passes
- * the category pre-filter.
+ * volume. CNA and MAS have no comparably reliable category scoping to pre-filter
+ * on (MAS's content types are a mix of clearly-relevant and ambiguous — e.g.
+ * "Parliamentary Replies" spans everything from property cooling measures to
+ * unrelated topics), so both rely on DeepSeek classification alone.
  *
  * DeepSeek is used two ways here, both degrading to null on any failure so a bad
  * API call never blocks ingestion or shows a false positive:
@@ -57,6 +64,12 @@ const FEED_TIMEOUT_MS = 15000
 const MAX_NEW_PER_RUN = 30
 const RUN_TIME_BUDGET_MS = 40000   // leaves headroom under maxDuration=60 for feed fetching + DB writes
 
+// MAS and HDB's WAFs return a decoy/error page instead of real content to
+// requests without a browser-like User-Agent (confirmed live per-site: Node's
+// default fetch UA gets blocked, this exact header gets the real page back).
+// URA doesn't need this (a bare fetch works), but it's harmless to send anyway.
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
+
 // media:thumbnail isn't one of rss-parser's standard fields, so it needs an
 // explicit customFields entry — confirmed via a live test fetch that CNA's feed
 // carries a real photo (830x468, their own CDN) on every item this way.
@@ -77,8 +90,11 @@ interface FeedItem {
 }
 
 async function fetchFeed(source: (typeof NEWS_SOURCES)[number]): Promise<FeedItem[]> {
+    if (source.key === 'mas') return fetchMasFeed(source.feedUrl)
+    if (source.key === 'ura') return fetchUraFeed(source.feedUrl)
+    if (source.key === 'hdb') return fetchHdbFeed(source.feedUrl)
     try {
-        const feed = await parser.parseURL(source.rssUrl)
+        const feed = await parser.parseURL(source.feedUrl)
         let items = feed.items ?? []
         if (source.key === 'business_times') {
             items = items.filter(item => (item.categories ?? []).some(c => BT_RELEVANT_CATEGORIES.has(c)))
@@ -96,6 +112,173 @@ async function fetchFeed(source: (typeof NEWS_SOURCES)[number]): Promise<FeedIte
             .filter(i => i.title && i.link)
     } catch (e) {
         console.error(`[news] fetchFeed(${source.key}) threw:`, String(e))
+        return []
+    }
+}
+
+// MAS's own site-search API (Sitecore/Solr-backed — same endpoint that powers
+// the search box on mas.gov.sg/news), not RSS, so it gets its own fetch path
+// rather than going through rss-parser. Confirmed via a live browser DevTools
+// inspection + a follow-up bare curl (no cookies/session) that it's a plain
+// public JSON endpoint — it's the same data already shown on MAS's own public
+// news page, just fetched directly instead of via their frontend JS.
+interface MasSearchDoc {
+    document_title_string_s?: string
+    page_url_s?: string
+    itemid_s?: string
+    mas_date_tdt?: string
+    document_shortsummary_t?: string[] | string
+    mas_contenttype_s?: string
+}
+
+async function fetchMasFeed(apiUrl: string): Promise<FeedItem[]> {
+    try {
+        const res = await fetch(apiUrl, {
+            // MAS's WAF returns a decoy HTML page instead of JSON to requests without
+            // a browser-like User-Agent (confirmed live: Node's default fetch UA gets
+            // "<!DOCTYPE ..." back, the same request with this header gets real JSON).
+            headers: {
+                Accept: 'application/json',
+                'User-Agent': BROWSER_UA,
+                Referer: 'https://www.mas.gov.sg/news',
+            },
+            signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const json = await res.json()
+        const docs: MasSearchDoc[] = json?.response?.docs ?? []
+        return docs
+            .map(doc => {
+                const summary = Array.isArray(doc.document_shortsummary_t)
+                    ? doc.document_shortsummary_t[0]
+                    : doc.document_shortsummary_t
+                return {
+                    title: (doc.document_title_string_s ?? '').trim(),
+                    link: doc.page_url_s ? `https://www.mas.gov.sg${doc.page_url_s}` : '',
+                    guid: doc.itemid_s ?? null,
+                    publishedAt: doc.mas_date_tdt ?? null,
+                    description: (summary ?? '').trim() || null,
+                    imageUrl: null,
+                    category: doc.mas_contenttype_s ?? null,
+                }
+            })
+            .filter(i => i.title && i.link)
+    } catch (e) {
+        console.error('[news] fetchMasFeed threw:', String(e))
+        return []
+    }
+}
+
+// A JSON string value's raw text, still escaped (e.g. "&" for "&") — used
+// to unescape values pulled out of embedded framework JSON with plain regexes
+// below, rather than hand-rolling entity decoding.
+function jsonUnescape(raw: string): string {
+    try {
+        return JSON.parse(`"${raw}"`)
+    } catch {
+        return raw
+    }
+}
+
+// URA's news/media page embeds its full recent press-release list directly in
+// the page's server-rendered HTML as Next.js React Server Component state —
+// not a separate API call, and no WAF/User-Agent gotcha like MAS or HDB below.
+// Confirmed live: 300+ items in one fetch, dates within days of today. The data
+// sits inside a <script> tag as an escaped JSON string, e.g.
+//   \"id\":\"/news/media/pr26-53\",\"date\":\"$D2026-07-03T00:00:00.000Z\",\"category\":\"Press Releases\",\"title\":\"...\"
+// so it's pulled out with a plain regex rather than a proper parser (there's no
+// clean boundary to hand to JSON.parse) — fragile to a URA frontend redesign,
+// same trade-off already accepted for MAS's search API.
+async function fetchUraFeed(pageUrl: string): Promise<FeedItem[]> {
+    try {
+        const res = await fetch(pageUrl, {
+            headers: { 'User-Agent': BROWSER_UA },
+            signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const html = await res.text()
+
+        const re = /\\"id\\":\\"(\/news\/media\/[a-z0-9-]+)\\",\\"date\\":\\"\$D([^\\]+)\\",\\"category\\":\\"([^\\]*)\\",\\"title\\":\\"([^\\]*)\\"/g
+        const seen = new Set<string>()
+        const items: FeedItem[] = []
+        let m: RegExpExecArray | null
+        while ((m = re.exec(html)) !== null) {
+            const [, path, date, category, rawTitle] = m
+            if (seen.has(path)) continue
+            seen.add(path)
+            const title = jsonUnescape(rawTitle).trim()
+            if (!title) continue
+            items.push({
+                title,
+                link: `https://www.ura.gov.sg${path}`,
+                guid: path,
+                publishedAt: date,
+                description: null,
+                imageUrl: null,
+                category: jsonUnescape(category) || null,
+            })
+        }
+        return items
+    } catch (e) {
+        console.error('[news] fetchUraFeed threw:', String(e))
+        return []
+    }
+}
+
+// HDB's news listing embeds its article list the same way URA's does (framework
+// state in the page HTML, not a separate call), but in a different shape —
+// Sitecore-style {"url":{"path":...},"fields":[{"name":"publishedDate","value":
+// "20260630T160000Z"},{"name":"metaDescription","value":"..."},{"name":
+// "navigationTitle"|"pageTitle","value":"..."}]} — and it needs the same bare
+// User-Agent workaround as MAS (a header-less fetch gets a 403). Each item's
+// search window is bounded to the next item's start so a malformed/sparse entry
+// can't accidentally pick up a neighbouring item's fields.
+function hdbDateToIso(raw: string): string {
+    const y = raw.slice(0, 4), mo = raw.slice(4, 6), d = raw.slice(6, 8)
+    const hh = raw.slice(9, 11), mi = raw.slice(11, 13), ss = raw.slice(13, 15)
+    return `${y}-${mo}-${d}T${hh}:${mi}:${ss}Z`
+}
+
+async function fetchHdbFeed(pageUrl: string): Promise<FeedItem[]> {
+    try {
+        const res = await fetch(pageUrl, {
+            headers: { 'User-Agent': BROWSER_UA },
+            signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+        })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const html = await res.text()
+
+        const urlRe = /"url":\{"path":"(\/hdb-pulse\/news\/[^"]+)"/g
+        const matches: { path: string; start: number }[] = []
+        let m: RegExpExecArray | null
+        while ((m = urlRe.exec(html)) !== null) matches.push({ path: m[1], start: m.index })
+
+        const seen = new Set<string>()
+        const items: FeedItem[] = []
+        matches.forEach(({ path, start }, i) => {
+            if (seen.has(path)) return
+            const end = matches[i + 1]?.start ?? start + 2000
+            const windowText = html.slice(start, end)
+            const dateM = windowText.match(/"publishedDate","value":"(\d{8}T\d{6}Z)"/)
+            const titleM = windowText.match(/"(?:navigationTitle|pageTitle)","value":"([^"]*)"/)
+            if (!dateM || !titleM) return
+            const title = jsonUnescape(titleM[1]).trim()
+            if (!title) return
+            seen.add(path)
+            const descM = windowText.match(/"metaDescription","value":"([^"]*)"/)
+            items.push({
+                title,
+                link: `https://www.hdb.gov.sg${path}`,
+                guid: path,
+                publishedAt: hdbDateToIso(dateM[1]),
+                description: jsonUnescape(descM?.[1] ?? '').trim() || null,
+                imageUrl: null,
+                category: null,
+            })
+        })
+        return items
+    } catch (e) {
+        console.error('[news] fetchHdbFeed threw:', String(e))
         return []
     }
 }
@@ -347,6 +530,21 @@ export async function setHidden(id: string, hidden: boolean): Promise<boolean> {
     const { error } = await admin
         .from('mortgage_news_articles')
         .update({ hidden, updated_at: new Date().toISOString() })
+        .eq('id', id)
+    return !error
+}
+
+// Override an AI classification that missed or over-included an article — the
+// only way to fix one short of deleting + manually retyping it via Add Article.
+export async function setRelevant(id: string, isRelevant: boolean): Promise<boolean> {
+    const admin = createAdminClient()
+    const { error } = await admin
+        .from('mortgage_news_articles')
+        .update({
+            is_relevant: isRelevant,
+            relevance_reason: 'Manually overridden by admin',
+            updated_at: new Date().toISOString(),
+        })
         .eq('id', id)
     return !error
 }
