@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { useRouter, usePathname } from 'next/navigation'
 import { canAccessProperty, getSafeRoute } from '@/lib/permissions'
 import { clearCasesCache } from '@/lib/property/useCases'
+import { needsReconsent } from '@/lib/legal/checkConsent'
 import {
     LayoutDashboard,
     Briefcase,
@@ -81,6 +82,8 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
             } else if (profile.status === 'disabled') {
                 await supabase.auth.signOut()
                 router.replace('/property/login?error=account_disabled')
+            } else if (await needsReconsent(supabase, user.id)) {
+                router.replace('/consent/renew')
             }
         }
         run()

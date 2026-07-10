@@ -9,6 +9,7 @@ import type { UserRole } from '@/lib/types/shared'
 import { clearCasesCache } from '@/lib/insurance/useCases'
 import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
+import { needsReconsent } from '@/lib/legal/checkConsent'
 import {
     LayoutDashboard,
     Briefcase,
@@ -156,6 +157,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                 router.replace('/insurance/login?error=account_disabled')
                 return
             }
+
+            if (await needsReconsent(supabase, user.id)) {
+                router.replace('/consent/renew')
+                return
+            }
+
             // Admins run the operation from the ops console, not the agent app.
             if (isAdminRole(profile.role)) {
                 router.replace('/admin/insurance/cases')

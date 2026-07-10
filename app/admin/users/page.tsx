@@ -39,6 +39,7 @@ export default function AdminUsersPage() {
     const [isInviteOpen, setIsInviteOpen] = useState(false)
     const [inviteForm, setInviteForm] = useState({ invited_name: '', invited_email: '' })
     const [generatedInviteUrl, setGeneratedInviteUrl] = useState<string | null>(null)
+    const [generatedInviteEmailed, setGeneratedInviteEmailed] = useState(false)
     const [copied, setCopied] = useState(false)
 
     useEffect(() => {
@@ -123,6 +124,7 @@ export default function AdminUsersPage() {
                 setPageAlert({ type: 'error', message: data.error || 'Failed to create invite.' })
             } else {
                 setGeneratedInviteUrl(data.url)
+                setGeneratedInviteEmailed(!!data.emailed)
                 loadInvites()
             }
         } catch {
@@ -158,6 +160,7 @@ export default function AdminUsersPage() {
         setIsInviteOpen(false)
         setInviteForm({ invited_name: '', invited_email: '' })
         setGeneratedInviteUrl(null)
+        setGeneratedInviteEmailed(false)
         setCopied(false)
     }
 
@@ -416,11 +419,17 @@ export default function AdminUsersPage() {
                 <Modal title="Invite Agent" onClose={closeInviteModal}>
                     {generatedInviteUrl ? (
                         <div className="space-y-4">
-                            <p className="text-sm text-slate-600">
-                                Send this link to the agent <span className="font-semibold">after payment is confirmed</span> —
-                                it's single-use and lets them sign up with their own email and password. Their account will
-                                be active as soon as they finish.
-                            </p>
+                            {generatedInviteEmailed ? (
+                                <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
+                                    Emailed to the agent — no need to send it yourself. Keep the link below as a backup.
+                                </p>
+                            ) : (
+                                <p className="text-sm text-slate-600">
+                                    Send this link to the agent <span className="font-semibold">after payment is confirmed</span> —
+                                    it's single-use and lets them sign up with their own email and password. Their account will
+                                    be active as soon as they finish.
+                                </p>
+                            )}
                             <div className="flex items-center gap-2 p-2.5 rounded-lg border border-slate-200 bg-slate-50">
                                 <input
                                     readOnly
@@ -453,12 +462,12 @@ export default function AdminUsersPage() {
                                     onChange={(e) => setInviteForm({ ...inviteForm, invited_name: e.target.value })} />
                             </div>
                             <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Agent&apos;s Email (optional)</label>
-                                <input type="email"
+                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Agent&apos;s Email</label>
+                                <input required type="email"
                                     className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm"
                                     value={inviteForm.invited_email}
                                     onChange={(e) => setInviteForm({ ...inviteForm, invited_email: e.target.value })} />
-                                <p className="mt-1 text-xs text-slate-400">If set, this locks the email field on their signup form.</p>
+                                <p className="mt-1 text-xs text-slate-400">Required — the invite only works for this exact email, even if the link is shared.</p>
                             </div>
                             <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                                 <button type="button" onClick={closeInviteModal} className="btn-ghost px-6 py-2">Cancel</button>
@@ -507,18 +516,24 @@ export default function AdminUsersPage() {
                                 <option value="super_admin">Super Admin</option>
                             </select>
                         </div>
-                        <div>
-                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Temporary Password</label>
-                            <div className="relative">
-                                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input required type="text"
-                                    className="w-full p-2.5 pl-10 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm"
-                                    value={createForm.password ?? ''}
-                                    onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                                    placeholder="Set a temporary password" />
+                        {(createForm.app_type ?? 'insurance') === 'insurance' ? (
+                            <div className="p-3 rounded-lg bg-sky-50 border border-sky-100 text-xs text-sky-800">
+                                A secure &quot;set your password&quot; link will be emailed to them automatically — no temporary password needed.
                             </div>
-                            <p className="mt-1 text-xs text-slate-400">The user should change this after first login.</p>
-                        </div>
+                        ) : (
+                            <div>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Temporary Password</label>
+                                <div className="relative">
+                                    <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input required type="text"
+                                        className="w-full p-2.5 pl-10 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm"
+                                        value={createForm.password ?? ''}
+                                        onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                                        placeholder="Set a temporary password" />
+                                </div>
+                                <p className="mt-1 text-xs text-slate-400">The user should change this after first login.</p>
+                            </div>
+                        )}
                         <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                             <button type="button" onClick={() => setIsCreateOpen(false)} className="btn-ghost px-6 py-2">Cancel</button>
                             <button type="submit" disabled={isSubmitting} className="btn-primary px-6 py-2 flex items-center gap-2">

@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { PropertySignupInput } from '@/lib/types/property'
+import { rateLimitOrResponse } from '@/lib/rateLimit'
 
 export async function POST(request: Request) {
+    const limited = await rateLimitOrResponse(request, 'property-signup')
+    if (limited) return limited
+
     try {
         const body: PropertySignupInput = await request.json()
         const { email, password, name, terms_accepted, privacy_accepted, terms_version, privacy_version } = body

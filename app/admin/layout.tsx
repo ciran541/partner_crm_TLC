@@ -22,6 +22,7 @@ import {
     Newspaper,
     CalendarClock,
     Landmark,
+    History,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
@@ -102,6 +103,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const coreNavItems = [
         { name: 'Admin Home', href: '/admin', icon: LayoutDashboard },
         { name: 'Users', href: '/admin/users', icon: Users },
+        { name: 'Audit Log', href: '/admin/audit-log', icon: History },
     ]
 
     const insuranceNavItems = [

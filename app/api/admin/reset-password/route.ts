@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
+import { logAdminAction } from '@/lib/auth/auditLog'
 
 export async function POST(request: Request) {
     const auth = await requireAdminUser()
@@ -29,6 +30,14 @@ export async function POST(request: Request) {
     if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    // Never log the password itself — just that a reset happened, by whom, for whom.
+    await logAdminAction({
+        actorId: auth.userId,
+        action: 'password_reset',
+        targetType: 'profile',
+        targetId: id,
+    })
 
     return NextResponse.json({ success: true })
 }

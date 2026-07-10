@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { rateLimitOrResponse } from '@/lib/rateLimit'
 
 async function loadValidInvite(supabaseAdmin: ReturnType<typeof createAdminClient>, token: string) {
     const { data: invite } = await supabaseAdmin
@@ -39,6 +40,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    const limited = await rateLimitOrResponse(request, 'insurance-signup')
+    if (limited) return limited
+
     try {
         const body = await request.json()
         const { token, email, password, name, terms_accepted, privacy_accepted, terms_version, privacy_version } = body
@@ -58,6 +62,14 @@ export async function POST(request: Request) {
         const { invite } = await loadValidInvite(supabaseAdmin, token)
         if (!invite) {
             return NextResponse.json({ error: 'This invite link is invalid or has expired.' }, { status: 400 })
+        }
+
+        // The signup page pre-fills and disables the email field when the
+        // invite has one, but that's a browser-side convenience only — a
+        // shared/leaked link could otherwise be completed with a different
+        // email entirely by calling this API directly. Enforce the match here.
+        if (invite.invited_email && invite.invited_email.toLowerCase() !== email.toLowerCase()) {
+            return NextResponse.json({ error: 'This invite is registered to a different email address.' }, { status: 400 })
         }
 
         // 1. Create Auth User — the agent's own chosen password, no admin-set temp password.

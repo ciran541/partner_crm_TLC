@@ -2,6 +2,8 @@ import crypto from 'crypto'
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
+import { sendAgentInviteEmail } from '@/lib/email/sendAgentAuthEmail'
+import { logAdminAction } from '@/lib/auth/auditLog'
 
 export async function GET() {
     const auth = await requireAdminUser()
@@ -29,6 +31,13 @@ export async function POST(request: Request) {
         const invited_name: string | null = body.invited_name || null
         const invited_email: string | null = body.invited_email || null
 
+        // Required — an invite with no email attached could be claimed by
+        // anyone who gets hold of the link, active immediately, with zero
+        // identity check. The admin already knows who paid by this point.
+        if (!invited_email) {
+            return NextResponse.json({ error: "The agent's email is required to generate an invite." }, { status: 400 })
+        }
+
         const token = crypto.randomBytes(24).toString('hex')
         const supabaseAdmin = createAdminClient()
 
@@ -50,7 +59,26 @@ export async function POST(request: Request) {
         }
 
         const url = `${process.env.NEXT_PUBLIC_APP_URL}/insurance/signup?token=${token}`
-        return NextResponse.json({ invite: data, url })
+
+        let emailed = false
+        if (invited_email) {
+            try {
+                await sendAgentInviteEmail({ to: invited_email, name: invited_name, inviteUrl: url })
+                emailed = true
+            } catch (emailError) {
+                console.error('Failed to send invite email:', emailError)
+            }
+        }
+
+        await logAdminAction({
+            actorId: auth.userId,
+            action: 'invite_created',
+            targetType: 'agent_invite',
+            targetId: data.id,
+            details: { invited_email, invited_name, emailed },
+        })
+
+        return NextResponse.json({ invite: data, url, emailed })
     } catch (error: any) {
         console.error('Create Invite API Error:', error)
         return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 })
@@ -78,6 +106,13 @@ export async function PATCH(request: Request) {
         if (error) {
             return NextResponse.json({ error: error.message }, { status: 500 })
         }
+
+        await logAdminAction({
+            actorId: auth.userId,
+            action: 'invite_revoked',
+            targetType: 'agent_invite',
+            targetId: id,
+        })
 
         return NextResponse.json({ success: true })
     } catch (error: any) {

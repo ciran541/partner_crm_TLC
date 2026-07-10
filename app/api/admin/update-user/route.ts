@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
 import { UpdateUserInput } from '@/lib/types/shared'
 import { syncProfileToSheets } from '@/lib/services/sheets-sync'
+import { logAdminAction } from '@/lib/auth/auditLog'
 
 export async function POST(request: Request) {
     // 🔒 Server-side admin guard — verifies caller is authenticated admin
@@ -65,6 +66,14 @@ export async function POST(request: Request) {
                 created_at: profile.created_at ?? null,
             })
         }
+
+        await logAdminAction({
+            actorId: auth.userId,
+            action: 'user_updated',
+            targetType: 'profile',
+            targetId: id,
+            details: updates,
+        })
 
         return NextResponse.json({ success: true })
     } catch (error: any) {

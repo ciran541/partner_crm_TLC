@@ -150,6 +150,9 @@ function PropertyLoginInner() {
                         <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                                 <label className="form-label" style={{ margin: 0 }}>Password</label>
+                                <Link href="/property/forgot-password" style={{ fontSize: 13, color: '#059669', fontWeight: 500, textDecoration: 'none' }}>
+                                    Forgot password?
+                                </Link>
                             </div>
                             <div style={{ position: 'relative' }}>
                                 <Lock
