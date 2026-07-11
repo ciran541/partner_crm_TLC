@@ -18,6 +18,12 @@ interface AccountSwitcherProps {
     avatarColor: string
     onSignOut: () => void
     addAccountLinks: { label: string; href: string }[]
+    // Admin footers pass true: only the boss ever sees the admin layout, so the
+    // "add another account" menu can stay visible even before a second account
+    // is cached (otherwise there's no way to discover it on a fresh device/PWA
+    // install — the menu that reveals it is the thing being gated). Regular
+    // agent footers leave this false so the feature stays invisible to them.
+    alwaysShowMenu?: boolean
 }
 
 export default function AccountSwitcher({
@@ -27,6 +33,7 @@ export default function AccountSwitcher({
     avatarColor,
     onSignOut,
     addAccountLinks,
+    alwaysShowMenu = false,
 }: AccountSwitcherProps) {
     // Starts empty on both server and client — reading localStorage during the
     // initial render (e.g. via a lazy useState initializer) would make the
@@ -64,7 +71,7 @@ export default function AccountSwitcher({
     const others = accounts.filter(a => a.userId !== currentUserId)
 
     // Nothing to switch to — render the plain footer, same as before this feature existed.
-    if (others.length === 0) {
+    if (others.length === 0 && !alwaysShowMenu) {
         return (
             <div className="flex items-center gap-3">
                 <div

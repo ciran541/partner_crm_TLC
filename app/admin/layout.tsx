@@ -270,6 +270,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                             roleLabel="Super Admin"
                             avatarColor="#a855f7"
                             onSignOut={handleSignOut}
+                            alwaysShowMenu
                             addAccountLinks={[
                                 { label: 'Add admin login', href: '/login' },
                                 { label: 'Add insurance agent login', href: '/insurance/login' },
