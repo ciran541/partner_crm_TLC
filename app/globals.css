@@ -149,6 +149,31 @@ body {
   padding-left: 13px;
 }
 
+.sidebar-sublink {
+  display: flex;
+  align-items: center;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 16px 7px 44px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.sidebar-sublink:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-sublink.active {
+  color: white;
+  background: rgba(3, 169, 231, 0.12);
+  border-left: 3px solid var(--brand-cyan);
+  padding-left: 41px;
+}
+
 /* ─── Cards ───────────────────────────────────────────────── */
 
 .card {

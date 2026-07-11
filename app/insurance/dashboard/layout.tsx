@@ -32,17 +32,45 @@ import {
     Landmark,
 } from 'lucide-react'
 
-type NavItem = { name: string; href: string; icon: React.ElementType; soon?: boolean }
+type NavChild = { name: string; href: string }
+type NavItem = { name: string; href: string; icon: React.ElementType; soon?: boolean; children?: NavChild[] }
 
 // ── Front-of-house ("Tools") — client-safe. These are the screens an agent uses
 //    WHILE sitting with a client. Nothing here reveals other clients or the
 //    agent's own sales pipeline, so the app is safe to leave open on a tablet.
+//
+// Calculators/Resources carry `children` so their sub-pages are reachable
+// directly from the sidebar (desktop) instead of only via an intermediate
+// gallery/tab page. Mobile keeps using the parent href as a bottom tab, which
+// still lands on that gallery/tab page — nesting only changes desktop nav.
 const toolsNav: NavItem[] = [
     { name: 'Mortgage Planner', href: '/insurance/dashboard', icon: LayoutGrid },
-    { name: 'Calculators', href: '/insurance/dashboard/calculators', icon: Calculator },
+    {
+        name: 'Calculators',
+        href: '/insurance/dashboard/calculators',
+        icon: Calculator,
+        children: [
+            { name: 'Amortization', href: '/insurance/dashboard/calculators/amortization' },
+            { name: 'Partial Repayment', href: '/insurance/dashboard/calculators/partial-repayment' },
+            { name: 'Reverse Affordability', href: '/insurance/dashboard/calculators/affordability' },
+            { name: 'Stamp Duty', href: '/insurance/dashboard/calculators/stamp-duty' },
+            { name: 'BUC', href: '/insurance/dashboard/calculators/buc' },
+            { name: 'Technical TDSR', href: '/insurance/dashboard/calculators/tdsr' },
+        ],
+    },
     { name: 'Knowledge', href: '/insurance/dashboard/knowledge', icon: BookOpen },
     { name: 'Rates', href: '/insurance/dashboard/rates', icon: Percent },
-    { name: 'Resources', href: '/insurance/dashboard/resources', icon: BarChart2 },
+    {
+        name: 'Resources',
+        href: '/insurance/dashboard/resources',
+        icon: BarChart2,
+        children: [
+            { name: 'Rate Comparison', href: '/insurance/dashboard/resources/rates' },
+            { name: 'Domestic Rates', href: '/insurance/dashboard/resources/domestic' },
+            { name: 'Mortgage News', href: '/insurance/dashboard/resources/news' },
+            { name: 'Economic Calendar', href: '/insurance/dashboard/resources/calendar' },
+        ],
+    },
     { name: "Banks' Insights", href: '/insurance/dashboard/bank-intelligence', icon: Landmark },
     { name: 'Valuation Fees', href: '/insurance/dashboard/valuation', icon: Receipt },
     { name: 'Legal', href: '/insurance/dashboard/legal', icon: Scale, soon: true },
@@ -82,6 +110,15 @@ function isActiveHref(pathname: string | null, href: string) {
     return pathname === href || (href !== '/insurance/dashboard' && !!pathname?.startsWith(href))
 }
 
+// A group (Calculators/Resources) is active if the current route is any of its
+// children, or the parent itself — checked separately from isActiveHref because
+// Resources' parent href redirects elsewhere, so pathname never literally
+// equals/starts-with it once a child page loads.
+function isGroupActive(pathname: string | null, item: NavItem) {
+    if (item.children?.some(c => isActiveHref(pathname, c.href))) return true
+    return isActiveHref(pathname, item.href)
+}
+
 export default function DashboardLayout({ children }: { children: ReactNode }) {
     const router = useRouter()
     const pathname = usePathname()
@@ -99,6 +136,19 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     const [internalOpen, setInternalOpen] = useState(false)
     const internalExpanded = internalOpen || internalActive
     const [moreOpen, setMoreOpen] = useState(false)
+
+    // Which Calculators/Resources-style groups are manually expanded. A group
+    // also auto-expands whenever the active route already lives inside it
+    // (see isGroupActive), same as the Internal section above.
+    const [openGroups, setOpenGroups] = useState<Set<string>>(new Set())
+    const toggleGroup = (name: string) => {
+        setOpenGroups(prev => {
+            const next = new Set(prev)
+            if (next.has(name)) next.delete(name)
+            else next.add(name)
+            return next
+        })
+    }
 
     // Instant shell: read the email from the LOCAL session (no network round-trip)
     // so the chrome renders immediately instead of behind a full-screen spinner.
@@ -192,23 +242,69 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         router.push('/insurance/login')
     }
 
-    const renderToolLink = (item: NavItem) => (
-        <li key={item.name}>
-            <Link
-                href={item.href}
-                prefetch
-                className={`sidebar-link ${isActiveHref(pathname, item.href) ? 'active' : ''}`}
-            >
-                <item.icon size={20} />
-                <span className="flex-1">{item.name}</span>
-                {item.soon && (
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 bg-white/5 px-1.5 py-0.5 rounded">
-                        Soon
-                    </span>
+    const renderToolLink = (item: NavItem) => {
+        const hasChildren = !!item.children?.length
+        if (!hasChildren) {
+            return (
+                <li key={item.name}>
+                    <Link
+                        href={item.href}
+                        prefetch
+                        className={`sidebar-link ${isActiveHref(pathname, item.href) ? 'active' : ''}`}
+                    >
+                        <item.icon size={20} />
+                        <span className="flex-1">{item.name}</span>
+                        {item.soon && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 bg-white/5 px-1.5 py-0.5 rounded">
+                                Soon
+                            </span>
+                        )}
+                    </Link>
+                </li>
+            )
+        }
+
+        const active = isGroupActive(pathname, item)
+        const expanded = openGroups.has(item.name) || active
+        return (
+            <li key={item.name}>
+                <div className={`sidebar-link ${active ? 'active' : ''}`} style={{ paddingRight: 6 }}>
+                    <Link
+                        href={item.href}
+                        prefetch
+                        className="flex items-center gap-3 flex-1 min-w-0 text-inherit no-underline"
+                    >
+                        <item.icon size={20} />
+                        <span className="flex-1 truncate">{item.name}</span>
+                    </Link>
+                    <button
+                        type="button"
+                        onClick={() => toggleGroup(item.name)}
+                        aria-label={expanded ? `Collapse ${item.name}` : `Expand ${item.name}`}
+                        aria-expanded={expanded}
+                        className="p-1 -mr-1 shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+                    >
+                        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                </div>
+                {expanded && (
+                    <ul className="mt-0.5 mb-1 space-y-0.5">
+                        {item.children!.map(child => (
+                            <li key={child.href}>
+                                <Link
+                                    href={child.href}
+                                    prefetch
+                                    className={`sidebar-sublink ${isActiveHref(pathname, child.href) ? 'active' : ''}`}
+                                >
+                                    {child.name}
+                                </Link>
+                            </li>
+                        ))}
+                    </ul>
                 )}
-            </Link>
-        </li>
-    )
+            </li>
+        )
+    }
 
     return (
         <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
