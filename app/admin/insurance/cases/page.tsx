@@ -1,14 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ClipboardList, AlertCircle, ArrowRight, ChevronDown, Search } from 'lucide-react'
-import { supabase } from '@/lib/supabaseClient'
+import { useCases } from '@/lib/insurance/useCases'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { isDraftCase } from '@/lib/insurance/caseFilters'
 import { caseCommission, caseLoanBase, commissionBucket } from '@/lib/insurance/commission'
-import type { Case, CaseType, PipelineStage } from '@/lib/types'
+import type { CaseType, PipelineStage } from '@/lib/types'
 
 const STAGES: PipelineStage[] = [
     'Touched Base', 'Pending Docs', 'Pending Approval', 'Pending Signature', 'Closed Won', 'Closed Lost',
@@ -23,29 +23,15 @@ const STAGE_BADGE: Record<string, { bg: string; text: string }> = {
 }
 const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
 
-type CaseRow = Case & { profiles?: { id: string; name: string } | null }
-
 export default function AdminInsuranceCasesPage() {
     const router = useRouter()
-    const [cases, setCases] = useState<CaseRow[]>([])
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
+    const { cases: allCases, loading, error } = useCases()
     const [stageFilter, setStageFilter] = useState('')
     const [typeFilter, setTypeFilter] = useState('')
     const [agentFilter, setAgentFilter] = useState('')
     const [search, setSearch] = useState('')
 
-    useEffect(() => {
-        supabase
-            .from('cases')
-            .select('*, profiles ( id, name )')
-            .order('updated_at', { ascending: false })
-            .then(({ data, error }) => {
-                if (error) setError('Failed to load cases. Please refresh.')
-                else setCases((data as CaseRow[] ?? []).filter(c => !isDraftCase(c)))
-                setLoading(false)
-            })
-    }, [])
+    const cases = useMemo(() => allCases.filter(c => !isDraftCase(c)), [allCases])
 
     const agents = useMemo(() => {
         const map = new Map<string, string>()

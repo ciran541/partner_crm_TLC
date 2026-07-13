@@ -82,10 +82,14 @@ function fetchCases(): Promise<void> {
                 'closed_lost_reason, closed_lost_notes, follow_up_date, referred_bankers, ' +
                 'closed_won_data, commission_status'
 
+            // Safety cap — an admin's query has no RLS row limit (sees every case
+            // company-wide). Ordered by most-recently-updated so a cap only ever
+            // drops the oldest, least-relevant rows first.
             const { data, error } = await supabase
                 .from('cases')
                 .select(`${LIST_COLUMNS}, profiles ( id, name, role )`)
                 .order('updated_at', { ascending: false })
+                .limit(1000)
 
             if (error) throw error
 

@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireInsuranceUser } from '@/lib/auth/requireInsuranceUser'
 import { syncInsuranceFollowUp } from '@/lib/google/syncFollowUpInsurance'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+
+const followupSchema = z.object({
+    follow_up_date: z.union([
+        z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format'),
+        z.literal(''),
+    ]).nullable().optional(),
+})
 
 /**
  * PATCH /api/insurance/cases/[id]/followup
@@ -34,12 +42,11 @@ export async function PATCH(
         return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
-    let body: { follow_up_date?: string | null }
-    try {
-        body = await request.json()
-    } catch {
-        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+    const parsed = followupSchema.safeParse(await request.json().catch(() => null))
+    if (!parsed.success) {
+        return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' }, { status: 400 })
     }
+    const body = parsed.data
 
     const clearing = body.follow_up_date === null || body.follow_up_date === ''
     const newDate = clearing ? null : body.follow_up_date

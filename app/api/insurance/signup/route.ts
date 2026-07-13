@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { rateLimitOrResponse } from '@/lib/rateLimit'
+
+const signupSchema = z.object({
+    token: z.string().min(1),
+    email: z.string().trim().email(),
+    password: z.string().min(8, 'Password must be at least 8 characters'),
+    name: z.string().trim().min(1).max(200),
+    terms_accepted: z.boolean(),
+    privacy_accepted: z.boolean(),
+    terms_version: z.string().optional(),
+    privacy_version: z.string().optional(),
+})
 
 async function loadValidInvite(supabaseAdmin: ReturnType<typeof createAdminClient>, token: string) {
     const { data: invite } = await supabaseAdmin
@@ -44,12 +56,11 @@ export async function POST(request: Request) {
     if (limited) return limited
 
     try {
-        const body = await request.json()
-        const { token, email, password, name, terms_accepted, privacy_accepted, terms_version, privacy_version } = body
-
-        if (!token || !email || !password || !name) {
-            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+        const parsed = signupSchema.safeParse(await request.json().catch(() => null))
+        if (!parsed.success) {
+            return NextResponse.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 })
         }
+        const { token, email, password, name, terms_accepted, privacy_accepted, terms_version, privacy_version } = parsed.data
 
         if (!terms_accepted || !privacy_accepted) {
             return NextResponse.json({ error: 'You must accept the Terms and Privacy Policy' }, { status: 400 })

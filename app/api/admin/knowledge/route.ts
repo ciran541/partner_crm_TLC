@@ -16,9 +16,15 @@ export async function GET(request: Request) {
         .from('knowledge_articles')
         .select('*')
         .order('updated_at', { ascending: false })
+        .limit(500)
 
     if (category) query = query.eq('category', category)
-    if (q) query = query.or(`title.ilike.%${q}%,content.ilike.%${q}%`)
+    if (q) {
+        // Strip PostgREST filter-syntax characters so a search term can't break out
+        // of the ilike pattern and inject extra .or() clauses.
+        const safeQ = q.replace(/[,()]/g, '')
+        query = query.or(`title.ilike.%${safeQ}%,content.ilike.%${safeQ}%`)
+    }
 
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

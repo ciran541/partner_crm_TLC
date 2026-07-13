@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
 import { deriveFirstYearRate } from '@/lib/insurance/rateSchedule'
+import { invalidatePackagesCache } from '@/lib/insurance/ratesCache'
 import type { MortgagePackageInput } from '@/lib/types/rates'
 
 // POST /api/admin/rates/replace  { bank, categories: string[], packages: MortgagePackageInput[] }
@@ -52,5 +53,6 @@ export async function POST(request: Request) {
     })
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    invalidatePackagesCache()
     return NextResponse.json({ success: true, inserted: data ?? rows.length })
 }

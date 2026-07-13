@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getServerUser } from '@/lib/auth/getUser'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { canAccessInsurance } from '@/lib/permissions'
+import { canAccessInsurance, isAdmin } from '@/lib/permissions'
 
 import { computeRefi, inputsFromWorkflow as refiInputsFromWorkflow, refiPropertyMeta } from '@/lib/insurance/refiCalc'
 import { buildRefiRemarks } from '@/lib/insurance/refiRemarks'
@@ -45,7 +45,7 @@ export async function POST(
     // user (user.email), so we only join the agent's name here.
     const { data: row, error } = await admin
         .from('cases')
-        .select('id, case_type, client_name, client_email, workflow_data, profiles(name)')
+        .select('id, created_by, case_type, client_name, client_email, workflow_data, profiles(name)')
         .eq('id', caseId)
         .maybeSingle()
 
@@ -55,6 +55,12 @@ export async function POST(
     }
     if (!row) {
         return NextResponse.json({ error: 'Case not found' }, { status: 404 })
+    }
+    // Uses the admin client to bypass RLS for the workflow read, so ownership
+    // must be checked explicitly here — otherwise any insurance agent could
+    // trigger another agent's client report by guessing/enumerating a case id.
+    if (row.created_by !== user.id && !isAdmin(profile.role)) {
+        return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
     if (!row.client_email) {
         return NextResponse.json({ error: 'No client email on this case. Add it in the case details first.' }, { status: 422 })

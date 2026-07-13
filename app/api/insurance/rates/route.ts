@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { getServerUser } from '@/lib/auth/getUser'
 import { canAccessInsurance, canAccessProperty, isAdmin } from '@/lib/permissions'
 import { getCurrentSora } from '@/lib/insurance/sora'
+import { loadPackages } from '@/lib/insurance/ratesCache'
+import type { MortgagePackage } from '@/lib/types/rates'
 
 // GET /api/insurance/rates
 // Shared resource: any authenticated insurance OR property user can read.
@@ -24,26 +25,24 @@ export async function GET(request: Request) {
     const bank = searchParams.get('bank')
     const propertyType = searchParams.get('property_type')
     const category = searchParams.get('category')
-    const q = searchParams.get('q')?.trim()
+    const q = searchParams.get('q')?.trim().toLowerCase()
 
-    const admin = createAdminClient()
-    let query = admin
-        .from('mortgage_packages')
-        .select('*')
-        .order('bank', { ascending: true })
-        .order('first_year_rate', { ascending: true, nullsFirst: false })
+    let data: MortgagePackage[]
+    let sora
+    try {
+        [data, sora] = await Promise.all([loadPackages(), getCurrentSora()])
+    } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to load rates' }, { status: 500 })
+    }
 
-    if (!isAdmin(profile.role)) query = query.eq('status', 'published')
-    if (bank) query = query.eq('bank', bank)
-    if (propertyType) query = query.eq('property_type', propertyType)
-    if (category) query = query.eq('category', category)
-    if (q) query = query.ilike('package_name', `%${q}%`)
+    const admin_ = isAdmin(profile.role)
+    data = data.filter(p =>
+        (admin_ || p.status === 'published') &&
+        (!bank || p.bank === bank) &&
+        (!propertyType || p.property_type === propertyType) &&
+        (!category || p.category === category) &&
+        (!q || p.package_name.toLowerCase().includes(q)),
+    )
 
-    const [{ data, error }, sora] = await Promise.all([
-        query,
-        getCurrentSora(),
-    ])
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-    return NextResponse.json({ data: data ?? [], isAdmin: isAdmin(profile.role), sora })
+    return NextResponse.json({ data, isAdmin: admin_, sora })
 }

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
 import { deriveFirstYearRate } from '@/lib/insurance/rateSchedule'
+import { invalidatePackagesCache } from '@/lib/insurance/ratesCache'
 import type { MortgagePackageInput, RateScheduleEntry } from '@/lib/types/rates'
 
 // Admin CRUD for mortgage rate packages. Guarded by requireAdminUser().
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
         }
         const { data, error } = await admin.from('mortgage_packages').insert(clone).select().single()
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        invalidatePackagesCache()
         return NextResponse.json({ data })
     }
 
@@ -62,6 +64,7 @@ export async function POST(request: Request) {
 
     const { data, error } = await admin.from('mortgage_packages').insert(toRow(input)).select().single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    invalidatePackagesCache()
     return NextResponse.json({ data })
 }
 
@@ -77,6 +80,7 @@ export async function PATCH(request: Request) {
     const { data, error } = await admin
         .from('mortgage_packages').update(toRow(input)).eq('id', id).select().single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    invalidatePackagesCache()
     return NextResponse.json({ data })
 }
 
@@ -91,5 +95,6 @@ export async function DELETE(request: Request) {
     const admin = createAdminClient()
     const { error } = await admin.from('mortgage_packages').delete().eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    invalidatePackagesCache()
     return NextResponse.json({ success: true })
 }
