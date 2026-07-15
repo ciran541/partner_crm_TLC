@@ -1083,6 +1083,9 @@ export default function RefinancingWorkflowPanel({
                     priorityBanks={data.priority_client ? data.priority_banks : undefined}
                     currentBank={data.current_bank}
                     selectedId={selectedPkgId}
+                    caseId={caseId}
+                    clientEmail={clientEmail}
+                    clientName={clientName}
                     onSelect={onSelectPackage}
                 />
             )}

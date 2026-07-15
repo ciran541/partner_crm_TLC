@@ -7,10 +7,11 @@ import { effectiveRate } from '@/lib/insurance/rateRecommend'
 import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, shortLoan, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
 import RateIngestionModal from '@/components/insurance/rates/RateIngestionModal'
+import RateCompareModal from '@/components/insurance/rates/RateCompareModal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
-import { Percent, Plus, Pencil, Copy, Trash2, Search, Lock, LockOpen, Wallet, Building2, X, ChevronDown, RefreshCcw, Upload, Eye } from 'lucide-react'
+import { Percent, Plus, Pencil, Copy, Trash2, Search, Lock, LockOpen, Wallet, Building2, X, ChevronDown, RefreshCcw, Upload, Eye, Check, GitCompare } from 'lucide-react'
 import type { SoraRates } from '@/lib/insurance/sora'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -104,6 +105,8 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
 
     const [editorOpen, setEditorOpen] = useState(false)
     const [ingestOpen, setIngestOpen] = useState(false)
+    const [compareIds, setCompareIds] = useState<Set<string>>(new Set())
+    const [compareOpen, setCompareOpen] = useState(false)
     const [editing, setEditing]       = useState<MortgagePackage | null>(null)
     const [saving, setSaving]         = useState(false)
     const [busyId, setBusyId]         = useState<string | null>(null)
@@ -168,6 +171,20 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
 
     const appealCount = filteredPackages.filter(i => i.appeal).length
     const draftIds = useMemo(() => packages.filter(p => p.status === 'draft').map(p => p.id), [packages])
+
+    // ── Compare selection (max 3) ───────────────────────────────────────
+    const MAX_COMPARE = 3
+    const toggleCompare = (id: string) => setCompareIds(prev => {
+        const n = new Set(prev)
+        if (n.has(id)) n.delete(id)
+        else if (n.size < MAX_COMPARE) n.add(id)
+        return n
+    })
+    // Resolve from the full list so a package stays comparable even if filtered out.
+    const comparePackages = useMemo(
+        () => packages.filter(p => compareIds.has(p.id)),
+        [packages, compareIds]
+    )
 
     // ── Handlers ────────────────────────────────────────────────────────
     const handleSave = async (input: MortgagePackageInput) => {
@@ -546,6 +563,9 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                                             busy={busyId === pkg.id}
                                             confirming={confirmDelete === pkg.id}
                                             priorityMin={priorityBanks.has(pkg.bank) ? parsePriorityMin(pkg.min_loan_note) : null}
+                                            selected={compareIds.has(pkg.id)}
+                                            selectDisabled={!compareIds.has(pkg.id) && compareIds.size >= MAX_COMPARE}
+                                            onToggleCompare={() => toggleCompare(pkg.id)}
                                             onEdit={() => { setEditing(pkg); setEditorOpen(true) }}
                                             onDuplicate={() => handleDuplicate(pkg.id)}
                                             onPublish={() => handlePublish([pkg.id])}
@@ -559,6 +579,46 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                         ))}
                     </div>
                 </div>
+            )}
+
+            {/* ── Floating compare bar ─────────────────────────────────── */}
+            {comparePackages.length > 0 && (
+                <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-[#052d4a] text-white rounded-full shadow-xl pl-4 pr-2 py-2 max-w-[calc(100vw-2rem)]">
+                    <span className="text-sm font-semibold whitespace-nowrap flex items-center gap-1.5">
+                        <GitCompare size={15} className="text-[#03a9e7]" />
+                        {comparePackages.length} selected
+                    </span>
+                    <div className="hidden sm:flex items-center gap-1.5 min-w-0">
+                        {comparePackages.map(p => (
+                            <span key={p.id} className="inline-flex items-center gap-1 text-[11px] bg-white/10 rounded-full pl-2 pr-1 py-0.5 max-w-[140px]">
+                                <span className="truncate">{p.bank}</span>
+                                <button onClick={() => toggleCompare(p.id)} className="text-white/50 hover:text-white shrink-0">
+                                    <X size={11} />
+                                </button>
+                            </span>
+                        ))}
+                    </div>
+                    <button onClick={() => setCompareIds(new Set())}
+                        className="text-[11px] text-white/60 hover:text-white whitespace-nowrap px-1">
+                        Clear
+                    </button>
+                    <button onClick={() => setCompareOpen(true)} disabled={comparePackages.length < 2}
+                        className="px-4 py-1.5 text-sm font-semibold rounded-full bg-[#03a9e7] hover:bg-[#0298d0] disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap">
+                        Compare
+                    </button>
+                </div>
+            )}
+            {compareOpen && comparePackages.length >= 2 && (
+                <RateCompareModal
+                    packages={comparePackages}
+                    sora={sora}
+                    initialLoan={parsedLoan}
+                    onRemove={id => {
+                        const next = new Set(compareIds); next.delete(id); setCompareIds(next)
+                        if (next.size < 2) setCompareOpen(false)
+                    }}
+                    onClose={() => setCompareOpen(false)}
+                />
             )}
 
             {editorOpen && (
@@ -581,6 +641,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
 
 function RateCard({
     pkg, sora, admin, appeal, busy, confirming, priorityMin,
+    selected, selectDisabled, onToggleCompare,
     onEdit, onDuplicate, onPublish, onAskDelete, onCancelDelete, onConfirmDelete,
 }: {
     pkg: MortgagePackage
@@ -590,6 +651,9 @@ function RateCard({
     busy: boolean
     confirming: boolean
     priorityMin?: number | null
+    selected: boolean
+    selectDisabled: boolean
+    onToggleCompare: () => void
     onEdit: () => void
     onDuplicate: () => void
     onPublish: () => void
@@ -602,7 +666,7 @@ function RateCard({
     const locked = pkg.lockin_years > 0
 
     return (
-        <div className={`rounded-lg border bg-white transition-all overflow-hidden hover:border-slate-300 ${appeal ? 'border-amber-200' : 'border-slate-200'}`}>
+        <div className={`rounded-lg border bg-white transition-all overflow-hidden hover:border-slate-300 ${selected ? 'border-[#03a9e7] ring-1 ring-[#03a9e7]' : appeal ? 'border-amber-200' : 'border-slate-200'}`}>
             {/* ── Always-visible section (mirrors the workflow package card) ── */}
             <div className="p-3">
                 <div className="flex items-start justify-between gap-2">
@@ -647,11 +711,22 @@ function RateCard({
                 </div>
             </div>
 
-            {/* Expand for full package details */}
-            <button type="button" onClick={() => setExpanded(v => !v)}
-                className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium text-slate-400 hover:text-[#03a9e7] border-t border-slate-100">
-                {expanded ? 'Hide details' : 'Full package details'} <ChevronDown size={12} className={expanded ? 'rotate-180' : ''} />
-            </button>
+            {/* Compare toggle + expand for full package details */}
+            <div className="flex items-stretch border-t border-slate-100 text-[11px]">
+                <button type="button" onClick={onToggleCompare} disabled={selectDisabled && !selected}
+                    title={selectDisabled && !selected ? 'Compare up to 3 packages' : selected ? 'Remove from comparison' : 'Add to comparison'}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 font-medium border-r border-slate-100 transition-colors whitespace-nowrap
+                        ${selected ? 'text-[#03a9e7]' : (selectDisabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-[#03a9e7]')}`}>
+                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${selected ? 'bg-[#03a9e7] border-[#03a9e7]' : 'border-slate-300'}`}>
+                        {selected && <Check size={9} className="text-white" strokeWidth={3} />}
+                    </span>
+                    Compare
+                </button>
+                <button type="button" onClick={() => setExpanded(v => !v)}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 font-medium text-slate-400 hover:text-[#03a9e7]">
+                    {expanded ? 'Hide details' : 'Full package details'} <ChevronDown size={12} className={expanded ? 'rotate-180' : ''} />
+                </button>
+            </div>
 
             {/* ── Expandable section ─────────────────────────────── */}
             {expanded && (

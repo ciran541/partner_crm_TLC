@@ -877,6 +877,9 @@ export default function PurchaseWorkflowPanel({
                                 bucOnly={!!meta?.buc}
                                 priorityBanks={data.priority_client ? data.priority_banks : undefined}
                                 selectedId={selectedPkgId}
+                                caseId={caseId}
+                                clientEmail={clientEmail}
+                                clientName={clientName}
                                 onSelect={onSelectPackage}
                             />
                         )

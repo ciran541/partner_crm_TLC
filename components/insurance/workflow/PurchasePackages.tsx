@@ -7,7 +7,7 @@ import { recommendPurchasePackages, type PurchaseRecommendation } from '@/lib/in
 import { workflowPropType, packageStyle, stripBankPrefix, shortLoan, groupByRateTypeColumn, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule, isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
 import Spinner from '@/components/shared/Spinner'
-import PackageCompareModal, { type ComparePackageItem } from './PackageCompareModal'
+import RateCompareModal from '@/components/insurance/rates/RateCompareModal'
 import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, SlidersHorizontal, RefreshCcw, Columns2, CheckSquare, Square, Crown } from 'lucide-react'
 
 /** Flexi / Traditional badge — matches the Rates page. */
@@ -39,6 +39,9 @@ interface Props {
     bucOnly?: boolean                              // uncompleted property → floating/BUC packages only
     priorityBanks?: string[]                       // banks where the client holds priority status
     selectedId?: string
+    caseId?: string                                // enables emailing the comparison to the client
+    clientEmail?: string
+    clientName?: string
     onSelect: (rec: PurchaseRecommendation, sora: SoraRates | null) => void
 }
 
@@ -47,7 +50,7 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 // New-purchase recommendation deliberately uses only loan size, property type and
 // rate preference — no income/TDSR (precise on paper but unreliable vs the bank's
 // real assessment), no horizon signals.
-export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, priorityBanks, selectedId, onSelect }: Props) {
+export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, priorityBanks, selectedId, caseId, clientEmail, clientName, onSelect }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
     const [loading, setLoading] = useState(true)
@@ -60,11 +63,12 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
     const toggleCol = (key: string) => setExpandedCols(prev => {
         const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n
     })
-    // Compare — pick up to 2 packages to view side-by-side (ephemeral, separate from the proposal pick).
+    // Compare — pick up to 3 packages to view side-by-side (ephemeral, separate from the proposal pick).
+    const MAX_COMPARE = 3
     const [compareIds, setCompareIds] = useState<string[]>([])
     const [compareOpen, setCompareOpen] = useState(false)
     const toggleCompare = (id: string) => setCompareIds(prev =>
-        prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 2 ? [...prev, id] : prev)
+        prev.includes(id) ? prev.filter(x => x !== id) : prev.length < MAX_COMPARE ? [...prev, id] : prev)
 
     // Rates-page refine pills (ephemeral). Granular rate type only applies to a
     // completed purchase; an uncompleted (BUC) one has only BUC packages, so the
@@ -112,15 +116,9 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
     // Floating, BUC) — same buckets as the Rates browse tab.
     const columns = groupByRateTypeColumn(ranked)
     const cheapestId = ranked[0]?.pkg.id
-    const compareItems: ComparePackageItem[] = compareIds
-        .map(id => ranked.find(r => r.pkg.id === id))
-        .filter((r): r is PurchaseRecommendation => !!r)
-        .map(r => ({
-            pkg: r.pkg,
-            year1Pct: r.projection.perYear[0]?.ratePct ?? null,
-            monthly: r.projection.newMonthly,
-            avgLockinPct: r.projection.avgRateLockinPct,
-        }))
+    const comparePkgs = compareIds
+        .map(id => ranked.find(r => r.pkg.id === id)?.pkg)
+        .filter((p): p is MortgagePackage => !!p)
 
     if (loading) return (
         <div className="rounded-xl border border-slate-200 bg-white p-6 flex items-center justify-center">
@@ -231,7 +229,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
 
             {compareIds.length > 0 && (
                 <div className="px-4 py-2.5 border-t border-slate-100 bg-sky-50/50 flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-medium text-slate-500">{compareIds.length}/2 selected to compare</span>
+                    <span className="text-[11px] font-medium text-slate-500">{compareIds.length}/{MAX_COMPARE} selected to compare</span>
                     <div className="flex items-center gap-3">
                         <button type="button" onClick={() => setCompareIds([])} className="text-[11px] text-slate-400 hover:text-slate-700 underline">Clear</button>
                         <button type="button" disabled={compareIds.length < 2} onClick={() => setCompareOpen(true)}
@@ -243,8 +241,22 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
             )}
         </div>
 
-        {compareOpen && compareItems.length === 2 && (
-            <PackageCompareModal items={compareItems} onClose={() => setCompareOpen(false)} />
+        {compareOpen && comparePkgs.length >= 2 && (
+            <RateCompareModal
+                packages={comparePkgs}
+                sora={sora}
+                initialLoan={loan}
+                initialTenure={tenureYears}
+                caseId={caseId}
+                clientEmail={clientEmail}
+                clientName={clientName}
+                onRemove={id => {
+                    const next = compareIds.filter(x => x !== id)
+                    setCompareIds(next)
+                    if (next.length < 2) setCompareOpen(false)
+                }}
+                onClose={() => setCompareOpen(false)}
+            />
         )}
         </>
     )
@@ -252,7 +264,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
     function renderCard(rec: PurchaseRecommendation) {
         const isSelected = rec.pkg.id === selectedId
         const inCompare = compareIds.includes(rec.pkg.id)
-        const compareDisabled = !inCompare && compareIds.length >= 2
+        const compareDisabled = !inCompare && compareIds.length >= MAX_COMPARE
         const monthly = rec.projection.newMonthly
         const year1 = rec.projection.perYear[0]?.ratePct
         const isOpen = !!openDetails[rec.pkg.id]
