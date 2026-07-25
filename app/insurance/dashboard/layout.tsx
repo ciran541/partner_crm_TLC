@@ -74,7 +74,7 @@ const toolsNav: NavItem[] = [
     },
     { name: "Banks' Insights", href: '/insurance/dashboard/bank-intelligence', icon: Landmark },
     { name: 'Valuation Fees', href: '/insurance/dashboard/valuation', icon: Receipt },
-    { name: 'Legal', href: '/insurance/dashboard/legal', icon: Scale, soon: true },
+    { name: 'Legal', href: '/insurance/dashboard/legal', icon: Scale },
 ]
 
 // ── Back-of-house ("Internal") — cross-client / sales data. Tucked behind a

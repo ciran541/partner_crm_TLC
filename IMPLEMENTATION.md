@@ -1,3 +1,5 @@
+> ⚠️ **Historical document (Phase 2, late 2025).** The folder structure described below (`app/dashboard/*`, `lib/types.ts`) predates the property/insurance split and no longer matches the codebase. Kept for project history only — for current documentation start at [README.md](README.md) and [docs/](docs/).
+
 # Phase-2 Core CRM Implementation Summary
 
 ## Overview
