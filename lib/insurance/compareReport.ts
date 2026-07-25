@@ -93,7 +93,10 @@ export function buildCompareReportHtml(d: CompareReportData): string {
     body.push(sepRow('Rate schedule'))
     for (let year = 1; year <= maxYear; year++) {
         body.push(row(`Year ${year}`, pkgs.map(p => {
+            // Shorter schedule → the package's "thereafter" rate is what applies that
+            // year, so show it instead of a blank (mirrors RateCompareModal).
             const e = p.rate_schedule.find(x => !x.thereafter && x.year === year)
+                ?? p.rate_schedule.find(x => x.thereafter)
             if (!e) return '<span style="color:#cbd5e1;">—</span>'
             const eff = e.type === 'floating' ? effectiveRate(e, sora).rate : (e.rate ?? null)
             return `${esc(rateText(e))}${eff != null ? ` <span style="color:#0277a8;">(${eff.toFixed(2)}%)</span>` : ''}`

@@ -378,7 +378,7 @@ export default function TDSRPage() {
                     <span className="w-9 h-9 rounded-xl bg-sky-100 flex items-center justify-center shrink-0">
                         <BarChart3 size={18} className="text-[#03a9e7]" />
                     </span>
-                    Technical TDSR
+                    Affordability
                 </h1>
                 <p className="page-subtitle mt-1">
                     Loan eligibility from income, IWAA and property type. Stress-tested at {STRESS_RATE}%.

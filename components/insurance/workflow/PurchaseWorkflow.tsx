@@ -25,7 +25,7 @@ import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchas
 import { monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RateScheduleEntry } from '@/lib/types/rates'
-import { Question, FieldInput, AgentNotesCard } from '@/components/insurance/workflow/WorkflowStep'
+import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/components/insurance/workflow/WorkflowStep'
 import Modal from '@/components/shared/Modal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import type { PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
@@ -276,13 +276,6 @@ export default function PurchaseWorkflowPanel({
                                     : p.label,
                             }))}
                     />
-                    {meta && (
-                        <p className="text-[11px] text-slate-400 mt-1.5">
-                            {meta.rule === 'tdsr' ? 'Assessed on TDSR (55%).'
-                                : meta.rule === 'msr' ? 'Assessed on MSR (30%).'
-                                    : 'Assessed on both TDSR (55%) and MSR (30%) — the lower binds.'}
-                        </p>
-                    )}
                 </Question>
 
                 <Question label="Purchase Price / Valuation" required>
@@ -291,7 +284,6 @@ export default function PurchaseWorkflowPanel({
                 </Question>
                 {isResale(data.property_type) && (
                     <TipGroup>
-                        <Tip>Valuations are determined by HDB directly, you can submit a valuation request to HDB after obtaining the OTP from seller.</Tip>
                         <Tip>The maximum Loan-To-Valuation (LTV) is based on the purchase price or valuation, whichever is lower.</Tip>
                         {data.property_type === 'resale_landed' && (
                             <Tip>Double-check with the seller(s) whether the landed property has obtained its Certificate of Statutory Completion (CSC) or only Temporary Occupation Permit (TOP) — some ID contractors don't obtain CSC after works are done. Without CSC, most banks will not finance; DBS/SCB are open to it for now.</Tip>
@@ -328,10 +320,6 @@ export default function PurchaseWorkflowPanel({
                                     <FieldInput type="date" value={data.otp_dates?.option_expiry ?? ''}
                                         onChange={v => update({ otp_dates: { ...data.otp_dates, option_expiry: v } })} />
                                 </Question>
-                                <TipGroup>
-                                    <Tip>You need to have a valid letter of offer from the bank before exercising the option.</Tip>
-                                    <Tip>Law firm has to be under the bank's panel.</Tip>
-                                </TipGroup>
                                 <Question label="Expected Purchase Completion Date">
                                     <FieldInput type="date" value={data.otp_dates?.completion ?? ''}
                                         onChange={v => update({ otp_dates: { ...data.otp_dates, completion: v } })} />
@@ -415,7 +403,7 @@ export default function PurchaseWorkflowPanel({
                                     onChange={v => updateBorrower(i, { cpf_oa: num(v) })} />
                                 <p className="text-[11px] text-slate-400 mt-1.5 flex items-start gap-1.5">
                                     <Info size={12} className="mt-0.5 shrink-0" />
-                                    Only owners can use CPF for the downpayment. Captured here to size cash vs CPF exactly and track CPF used for future equity.
+                                    Only owners can utilize their CPF towards the property.
                                 </p>
                             </Question>
                         </div>
@@ -657,13 +645,9 @@ export default function PurchaseWorkflowPanel({
                     {data.selling_existing && (
                         <Question label="Do you require a bridging loan?">
                             <YesNo value={data.bridging_loan} onChange={v => update({ bridging_loan: v })} />
-                            <p className="text-[11px] text-slate-400 mt-1.5 flex items-start gap-1.5">
-                                <Info size={12} className="mt-0.5 shrink-0" />
-                                A bridging loan is recommended if your sales proceeds cannot make it in time to fund the down-payment on your purchase completion date.
-                            </p>
                             <TipGroup>
-                                <Tip>It will be a floating rate charged on a pro-rated daily basis.</Tip>
-                                <Tip>Banks will require sale OTP before you can apply for a bridging loan.</Tip>
+                                <Tip>A bridging loan is recommended if your sales proceeds cannot make it in time to fund the down-payment on your purchase completion date.</Tip>
+                                <Tip>Different banks will have different requirement before you can apply for a BL. (Exercised Sale OTP Required / Sale OTP Required / No Sale OTP Required)</Tip>
                             </TipGroup>
                         </Question>
                     )}
@@ -2003,19 +1987,6 @@ function Row({ label, value, strong, muted, highlight }: { label: ReactNode; val
             <span className={`shrink-0 ${strong ? 'text-base font-bold text-[#052d4a]' : muted ? 'text-slate-400' : highlight ? 'font-bold text-[#052d4a]' : 'font-semibold text-slate-800'}`}>{value}</span>
         </div>
     )
-}
-
-function Tip({ children }: { children: ReactNode }) {
-    return (
-        <p className="text-[12px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
-            <Info size={12} className="shrink-0 mt-0.5 text-[#03a9e7]" />
-            <span>{children}</span>
-        </p>
-    )
-}
-
-function TipGroup({ children }: { children: ReactNode }) {
-    return <div className="space-y-1.5 mt-1">{children}</div>
 }
 
 // ─── Next step ────────────────────────────────────────────────────────────────

@@ -292,6 +292,23 @@ export function FieldTextarea({ value, onChange, placeholder, rows = 3 }: { valu
     )
 }
 
+// ─── Advisory tips ────────────────────────────────────────────────────────────
+// The one styling for an advisory note under a field (as opposed to the greyer
+// numeric captions). Shared so a tip reads identically in every workflow.
+
+export function Tip({ children }: { children: ReactNode }) {
+    return (
+        <p className="text-[12px] text-slate-500 flex items-start gap-1.5 leading-relaxed">
+            <Info size={12} className="shrink-0 mt-0.5 text-[#03a9e7]" />
+            <span>{children}</span>
+        </p>
+    )
+}
+
+export function TipGroup({ children }: { children: ReactNode }) {
+    return <div className="space-y-1.5 mt-1">{children}</div>
+}
+
 // ─── Agent notes (internal, per-case free-text) ───────────────────────────────
 // Shown at the bottom of every workflow. Saved to workflow_data.agent_notes and
 // never surfaced in the client presentation/PDF — these are the agent's own notes.

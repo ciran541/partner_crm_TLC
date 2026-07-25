@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Receipt, Search } from 'lucide-react'
+import { Receipt, Search, Info } from 'lucide-react'
 import { FieldInput } from '@/components/insurance/workflow/WorkflowStep'
 import {
     VAL_FEE_PROPERTY_TYPES,
@@ -111,8 +111,14 @@ export default function ValuationFeesPage() {
                         <p className="text-sm font-semibold text-[#052d4a]">
                             {needsValue ? `Tier: ${result.band.label}` : 'All property values'}
                         </p>
-                        <p className="text-xs text-slate-400">10 banks</p>
+                        <p className="text-xs text-slate-400">{result.entries.length} banks</p>
                     </div>
+                    {result.note && (
+                        <div className="flex items-start gap-2 px-5 py-3 bg-sky-50/70 border-b border-[#03a9e7]/15">
+                            <Info size={13} className="text-[#03a9e7] shrink-0 mt-0.5" />
+                            <p className="text-[12px] text-slate-600 leading-relaxed">{result.note}</p>
+                        </div>
+                    )}
                     <table className="w-full text-sm">
                         <tbody>
                             {result.entries.map((entry, i) => (

@@ -5,8 +5,10 @@ import { getUpcomingEvents, getNearestByKey } from '@/lib/insurance/economicCale
 
 // GET /api/insurance/resources/calendar — agent-facing feed.
 // Shared resource: any authenticated insurance OR property user can read.
-// Returns events from 30 days ago (recent context) through 1 year ahead,
-// plus the nearest upcoming event per key for the countdown badges.
+// Returns events from 120 days ago through 1 year ahead, plus the nearest
+// upcoming event per key for the countdown badges. The backward window feeds the
+// "Recent results" table — 120 days rather than 30 so it reliably covers at least
+// one of each cadence (CPI monthly, FOMC ~6-weekly, MAS MPS quarterly).
 export async function GET() {
     const { user, profile } = await getServerUser()
     if (!user || !profile) {
@@ -21,7 +23,7 @@ export async function GET() {
 
     const today = new Date()
     const from = new Date(today)
-    from.setDate(from.getDate() - 30)
+    from.setDate(from.getDate() - 120)
     const to = new Date(today)
     to.setFullYear(to.getFullYear() + 1)
 

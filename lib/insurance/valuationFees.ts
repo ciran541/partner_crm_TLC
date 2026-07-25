@@ -31,7 +31,8 @@ export const VAL_FEE_TRANSACTIONS: Record<ValFeePropertyType, ValFeeTransactionO
     ],
 }
 
-export const VAL_FEE_BANKS = ['DBS', 'OCBC', 'UOB', 'SCB', 'Maybank', 'Citibank', 'HSBC', 'CIMB', 'HLF', 'BOC'] as const
+// Citibank and HLF are deliberately excluded — not banks this desk places business with.
+export const VAL_FEE_BANKS = ['DBS', 'OCBC', 'UOB', 'SCB', 'Maybank', 'HSBC', 'CIMB', 'BOC'] as const
 export type ValFeeBank = typeof VAL_FEE_BANKS[number]
 
 interface FeeBand {
@@ -44,35 +45,42 @@ interface FeeSection {
     bands: FeeBand[]
     // sparse — one entry per band, undefined means "not disclosed at this tier"
     cells: Record<ValFeeBank, (string | undefined)[]>
+    /** Context that applies to the whole section, not to any one bank (e.g. a fee payable to HDB rather than a lender). */
+    note?: string
 }
 
 const ALL_BAND: FeeBand[] = [{ label: 'All', min: 0, max: null }]
 
 const SECTIONS: Record<ValFeePropertyType, Record<string, FeeSection>> = {
+    // For HDB, a bank valuation fee is only ever payable on refinancing. On a resale
+    // purchase the valuation is HDB's own ($120 nett, paid to HDB, not the lender);
+    // on a BTO/SOBF there is none at all.
     HDB: {
         resale: {
             bands: ALL_BAND,
+            note: 'No bank valuation fee. Valuation is done by HDB directly — $120 nett payable to HDB.',
             cells: {
                 DBS: ['Not Required'], OCBC: ['Not Required'], UOB: ['Not Required'], SCB: ['Not Required'],
-                Maybank: ['Not Required'], Citibank: ['Not Required'], HSBC: ['Not Required'],
-                CIMB: ['N/A'], HLF: ['Not Required'], BOC: ['N/A'],
+                Maybank: ['Not Required'], HSBC: ['Not Required'],
+                CIMB: ['N/A'], BOC: ['N/A'],
             },
         },
         bto: {
             bands: ALL_BAND,
+            note: 'No valuation fee — $0.',
             cells: {
                 DBS: ['Not Required'], OCBC: ['Not Required'], UOB: ['Not Required'], SCB: ['Not Required'],
-                Maybank: ['Not Required'], Citibank: ['Not Required'], HSBC: ['Not Required'],
-                CIMB: [undefined], HLF: ['Not Required'], BOC: [undefined],
+                Maybank: ['Not Required'], HSBC: ['Not Required'],
+                CIMB: ['N/A'], BOC: ['N/A'],
             },
         },
         refinancing: {
             bands: ALL_BAND,
+            note: 'The only HDB transaction that carries a bank valuation fee.',
             cells: {
                 DBS: ['$200+GST'], OCBC: ['$270 nett'], UOB: ['$150+GST'], SCB: ['$150+GST'],
-                Maybank: ['$200–214'], Citibank: ['Ask banker (Citibank valuation fee is based on size)'],
-                HSBC: ['$180~200 nett'], CIMB: [undefined],
-                HLF: ['Internal valuation, no charges'], BOC: [undefined],
+                Maybank: ['$200–214'], HSBC: ['$180~200 nett'],
+                CIMB: ['N/A'], BOC: ['N/A'],
             },
         },
     },
@@ -90,10 +98,8 @@ const SECTIONS: Record<ValFeePropertyType, Record<string, FeeSection>> = {
                 UOB: ['$80+GST', undefined, undefined, undefined],
                 SCB: ['$50+GST', undefined, '$70+GST', undefined],
                 Maybank: ['Not Required', undefined, undefined, undefined],
-                Citibank: ['Ask banker (Citibank valuation fee is based on size)', undefined, undefined, undefined],
                 HSBC: ['$100 – $250 nett depending on size', undefined, undefined, undefined],
                 CIMB: ['N/A', undefined, undefined, undefined],
-                HLF: ['N/A', undefined, undefined, undefined],
                 BOC: ['$200 nett', '$300 nett', '$300 nett', '$400 nett'],
             },
         },
@@ -131,20 +137,24 @@ const SECTIONS: Record<ValFeePropertyType, Record<string, FeeSection>> = {
                     '$540 nett (Condo)\n$770 nett (Landed)', undefined,
                     '$540 + 0.02% in excess of $5m nett (Condo)\n$770 + 0.02% in excess of $5m nett (Landed)', undefined, undefined, undefined,
                 ],
+                // UOB quotes one fee across the first four bands, then a Condo/Landed split
+                // every two bands. SCB quotes a distinct fee per band up to $5m. These two
+                // columns were previously interleaved — SCB's single-band figures ($220 /
+                // $450 / $550 / $700) had been transcribed into UOB's column.
                 UOB: [
-                    '$150+GST', '$220+GST',
+                    '$150+GST', undefined,
                     undefined, undefined,
-                    '$150+GST (Condo)\n$500+GST (Landed)', '$450+GST',
-                    '$400+GST (Condo)\n$625+GST (Landed)', '$550+GST',
-                    '$450+GST (Condo)\n$725+GST (Landed)', '$700+GST',
+                    '$150+GST (Condo)\n$500+GST (Landed)', undefined,
+                    '$400+GST (Condo)\n$625+GST (Landed)', undefined,
+                    '$450+GST (Condo)\n$725+GST (Landed)', undefined,
                     '$475+0.02% in excess of $5m, +GST (Condo)\n$750+0.02% in excess of $5m, +GST (Landed)', undefined, undefined, undefined,
                 ],
                 SCB: [
-                    '$170+GST', undefined,
+                    '$170+GST', '$220+GST',
                     '$300+GST', '$350+GST',
-                    '$400+GST', undefined,
-                    '$500+GST', undefined,
-                    '$650+GST', undefined,
+                    '$400+GST', '$450+GST',
+                    '$500+GST', '$550+GST',
+                    '$650+GST', '$700+GST',
                     '$700+0.02% in excess of $5m, capped at $3,500, +GST', undefined, undefined, undefined,
                 ],
                 Maybank: [
@@ -152,14 +162,6 @@ const SECTIONS: Record<ValFeePropertyType, Record<string, FeeSection>> = {
                     '$300~400', undefined,
                     '$400~500', undefined,
                     'Ask banker (Maybank valuation fee is not fixed, can negotiate if necessary)', undefined,
-                    undefined, undefined,
-                    undefined, undefined, undefined, undefined,
-                ],
-                Citibank: [
-                    'Ask banker (Citibank valuation fee is based on size)', undefined,
-                    undefined, undefined,
-                    undefined, undefined,
-                    undefined, undefined,
                     undefined, undefined,
                     undefined, undefined, undefined, undefined,
                 ],
@@ -178,14 +180,6 @@ const SECTIONS: Record<ValFeePropertyType, Record<string, FeeSection>> = {
                     undefined, undefined,
                     undefined, undefined,
                     'Depends on individual valuer (CIMB banker cannot choose valuer, to be assigned by credit)', undefined,
-                    undefined, undefined,
-                    undefined, undefined, undefined, undefined,
-                ],
-                HLF: [
-                    'Internal valuation, no charges', undefined,
-                    undefined, undefined,
-                    undefined, undefined,
-                    undefined, undefined,
                     undefined, undefined,
                     undefined, undefined, undefined, undefined,
                 ],
@@ -214,6 +208,7 @@ export interface ValFeeResult {
     bandIndex: number
     bandCount: number
     entries: ValFeeEntry[]
+    note?: string
 }
 
 export function lookupValuationFees(
@@ -244,5 +239,5 @@ export function lookupValuationFees(
         return { bank, text, inherited }
     })
 
-    return { band, bandIndex: idx, bandCount: section.bands.length, entries }
+    return { band, bandIndex: idx, bandCount: section.bands.length, entries, note: section.note }
 }

@@ -33,7 +33,12 @@
 export const NEWS_SOURCES = [
     { key: 'business_times', name: 'Business Times',  feedUrl: 'https://www.businesstimes.com.sg/rss.xml' },
     { key: 'cna',            name: 'CNA',              feedUrl: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?category=10416' },
-    { key: 'ft',             name: 'Financial Times',  feedUrl: 'https://www.ft.com/rss/home/international' },
+    // FT's Singapore section, not the international front page. The front-page feed
+    // carried only global news (oil, tariffs, Ukraine, US tech) — 156 articles
+    // ingested, zero mortgage-relevant, so the FT chip was permanently empty. FT has
+    // no property/mortgages feed (that slug 404s); the section feeds do work, and
+    // /singapore is the one with any chance of SG policy, bank and property content.
+    { key: 'ft',             name: 'Financial Times',  feedUrl: 'https://www.ft.com/singapore?format=rss' },
     { key: 'edge_sg',        name: 'The Edge Singapore', feedUrl: 'https://www.theedgesingapore.com/rss.xml' },
     { key: 'mas',            name: 'MAS',              feedUrl: 'https://www.mas.gov.sg/api/v1/search?json.nl=map&indent=on&q=*:*&start=0&rows=30&fq=mas_mastercontenttypes_sm:%22News%22&sort=mas_date_tdt%20desc' },
     { key: 'ura',            name: 'URA',              feedUrl: 'https://www.ura.gov.sg/news/media/' },

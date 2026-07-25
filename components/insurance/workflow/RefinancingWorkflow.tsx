@@ -18,7 +18,7 @@ import type { RefiProposalPackage } from '@/lib/insurance/refiProposal'
 import { buildRefiProposalText } from '@/lib/insurance/refiProposal'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
 import type { SoraRates } from '@/lib/insurance/sora'
-import { Question, FieldInput, AgentNotesCard } from '@/components/insurance/workflow/WorkflowStep'
+import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import Modal from '@/components/shared/Modal'
 import RefiPackages from './RefiPackages'
@@ -314,6 +314,11 @@ export default function RefinancingWorkflowPanel({
                     <FieldInput commas prefix="$" value={data.market_price ?? ''} placeholder="e.g. 1,500,000"
                         onChange={v => update({ market_price: num(v) })} />
                 </Question>
+                {data.property_type === 'landed' && (
+                    <TipGroup>
+                        <Tip>Has your landed property obtained its Certificate of Statutory Completion (CSC)? — Some ID contractors don&apos;t obtain CSC after works are done and the property is left at Temporary Occupation Permit (TOP) status. Without CSC, most banks will not finance; DBS/SCB are open to it for now.</Tip>
+                    </TipGroup>
+                )}
                 <Question label="Year of purchase" required>
                     <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2018"
                         onChange={v => update({ year_of_purchase: num(v) })} />
@@ -574,9 +579,6 @@ export default function RefinancingWorkflowPanel({
                                             cpfAmt={cpfUsed}
                                             cashAmt={cashAmt}
                                         />
-                                        <p className="text-[11px] text-slate-400">
-                                            Based on market price {money(valuation)}. Loan = {money(totalLoan)}.
-                                        </p>
                                     </div>
                                 </div>
 

@@ -59,8 +59,14 @@ export default function NewsPage() {
                 <EmptyState
                     icon={Newspaper}
                     iconColor="#03a9e7"
-                    title="No mortgage-related news right now"
-                    description="We check Business Times, CNA, Financial Times, The Edge Singapore, MAS, URA and HDB daily for anything relevant to mortgages and the property market."
+                    // With a source chip selected, the all-sources copy reads as though the
+                    // whole feed were empty — say which source is filtered instead.
+                    title={sourceFilter
+                        ? `Nothing from ${NEWS_SOURCES.find(s => s.key === sourceFilter)?.name ?? 'this source'} right now`
+                        : 'No mortgage-related news right now'}
+                    description={sourceFilter
+                        ? 'This source is checked daily, but nothing it published recently was mortgage or property-finance related. Try “All”, or another source.'
+                        : 'We check Business Times, CNA, Financial Times, The Edge Singapore, MAS, URA and HDB daily for anything relevant to mortgages and the property market.'}
                 />
             ) : (
                 <div className="space-y-3">

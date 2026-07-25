@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CalendarClock, List, Grid3x3 } from 'lucide-react'
+import { CalendarClock, List, Grid3x3, ExternalLink } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import EmptyState from '@/components/shared/EmptyState'
 import ImpactStars from '@/components/insurance/resources/ImpactStars'
@@ -36,6 +36,12 @@ export default function CalendarPage() {
 
     const today = new Date().toISOString().slice(0, 10)
     const upcoming = events.filter(e => e.event_date >= today)
+    // Past events are only worth listing once they carry an outcome — a figure or
+    // a link to the published statement. A past date on its own tells an agent
+    // nothing they can use with a client.
+    const results = events
+        .filter(e => e.event_date < today && (e.actual != null || e.source_url))
+        .sort((a, b) => b.event_date.localeCompare(a.event_date))
 
     return (
         <div className="space-y-4">
@@ -97,6 +103,45 @@ export default function CalendarPage() {
                                     <td className="px-4 py-3 hidden sm:table-cell text-slate-600">{pct(e.forecast)}</td>
                                     <td className="px-4 py-3 hidden sm:table-cell text-slate-600">{pct(e.previous)}</td>
                                     <td className="px-4 py-3"><ImpactStars count={e.impact_stars} /></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {viewMode === 'list' && results.length > 0 && (
+                <div className="card overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-100">
+                        <p className="text-[11px] font-bold text-[#052d4a] uppercase tracking-wider">Recent results</p>
+                    </div>
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide">
+                                <th className="px-4 py-3 font-semibold">Date</th>
+                                <th className="px-4 py-3 font-semibold">Event</th>
+                                <th className="px-4 py-3 font-semibold">Actual</th>
+                                <th className="px-4 py-3 font-semibold hidden sm:table-cell">Previous</th>
+                                <th className="px-4 py-3 font-semibold">Report</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {results.map(e => (
+                                <tr key={e.id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                                        {new Date(e.event_date).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })}
+                                    </td>
+                                    <td className="px-4 py-3 font-medium text-slate-800">{e.event_name}</td>
+                                    <td className="px-4 py-3 font-semibold text-[#052d4a] tabular-nums">{pct(e.actual)}</td>
+                                    <td className="px-4 py-3 hidden sm:table-cell text-slate-600 tabular-nums">{pct(e.previous)}</td>
+                                    <td className="px-4 py-3">
+                                        {e.source_url ? (
+                                            <a href={e.source_url} target="_blank" rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1 text-[#03a9e7] font-medium hover:underline">
+                                                Read <ExternalLink size={12} />
+                                            </a>
+                                        ) : <span className="text-slate-300">—</span>}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>

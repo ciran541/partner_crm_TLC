@@ -18,9 +18,12 @@ function firstYearRate(schedule: RateScheduleEntry[], sora: SoraRates | null): s
     return '—'
 }
 
-// One package's rate entry for a given year (null when its schedule is shorter).
+// One package's rate entry for a given year. When its schedule is shorter than the
+// widest one compared, the year isn't blank — the package's "thereafter" rate is what
+// actually applies then, so fall back to it rather than leaving a hole in the row.
 function cellForYear(pkg: MortgagePackage, year: number, sora: SoraRates | null) {
-    const e = pkg.rate_schedule.find(x => !x.thereafter && typeof x.year === 'number' && x.year === year)
+    const explicit = pkg.rate_schedule.find(x => !x.thereafter && typeof x.year === 'number' && x.year === year)
+    const e = explicit ?? pkg.rate_schedule.find(x => x.thereafter)
     if (!e) return null
     const text = formatRateEntry(e).split(': ').slice(1).join(': ')
     const { rate } = e.type === 'floating' ? effectiveRate(e, sora) : { rate: e.rate ?? null }
@@ -51,8 +54,11 @@ export default function RateCompareModal({
     onRemove: (id: string) => void
     onClose: () => void
 }) {
-    const [loanInput, setLoanInput] = useState(initialLoan ? String(initialLoan) : '')
-    const [tenureInput, setTenureInput] = useState(initialTenure ? String(initialTenure) : '25')
+    // The loan arrives straight from the workflow's computation, so it can be a raw
+    // float (473750.251374064). Round to whole dollars and group it before it ever
+    // reaches the field — nobody quotes a mortgage to 9 decimal places.
+    const [loanInput, setLoanInput] = useState(initialLoan ? Math.round(initialLoan).toLocaleString('en-US') : '')
+    const [tenureInput, setTenureInput] = useState(initialTenure ? String(Math.round(initialTenure)) : '25')
     const [busy, setBusy] = useState<null | 'pdf' | 'email'>(null)
     const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
     const [confirmEmail, setConfirmEmail] = useState(false)
@@ -147,16 +153,17 @@ export default function RateCompareModal({
                 {/* Estimate controls */}
                 <div className="px-5 py-3 bg-slate-50/60 border-b border-slate-100 flex flex-wrap items-end gap-4">
                     <div>
-                        <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Loan Amount</label>
+                        <label className="block text-[10px] font-semibold text-[#052d4a] uppercase tracking-wider mb-1">Loan Amount</label>
                         <div className="relative">
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
                             <input type="text" inputMode="numeric" value={loanInput} onChange={e => setLoanInput(e.target.value)}
+                                onBlur={() => setLoanInput(loan != null ? Math.round(loan).toLocaleString('en-US') : loanInput)}
                                 placeholder="e.g. 500000"
                                 className="w-36 pl-5 pr-2 py-1.5 text-sm border border-slate-200 rounded-lg outline-none focus:border-[#03a9e7] tabular-nums" />
                         </div>
                     </div>
                     <div>
-                        <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Tenure (yrs)</label>
+                        <label className="block text-[10px] font-semibold text-[#052d4a] uppercase tracking-wider mb-1">Tenure (yrs)</label>
                         <input type="text" inputMode="numeric" value={tenureInput} onChange={e => setTenureInput(e.target.value)}
                             className="w-20 px-2 py-1.5 text-sm border border-slate-200 rounded-lg outline-none focus:border-[#03a9e7] tabular-nums" />
                     </div>
@@ -176,7 +183,7 @@ export default function RateCompareModal({
                             {packages.map(pkg => {
                                 const locked = pkg.lockin_years > 0
                                 return (
-                                    <div key={pkg.id} className="flex-1 min-w-[210px] px-3 py-3 border-l border-slate-100">
+                                    <div key={pkg.id} className="flex-1 min-w-[210px] px-3 py-3 border-l border-slate-200">
                                         <div className="flex items-start justify-between gap-2">
                                             <div className="min-w-0">
                                                 <p className="text-sm font-semibold text-[#052d4a] truncate flex items-center gap-1">
@@ -343,7 +350,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function Cell({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
     return (
-        <div className={`flex-1 min-w-[210px] px-3 py-2.5 border-l border-slate-100 text-[12px] tabular-nums ${muted ? 'text-slate-300' : 'text-slate-700'}`}>
+        <div className={`flex-1 min-w-[210px] px-3 py-2.5 border-l border-slate-200 text-[12px] tabular-nums ${muted ? 'text-slate-300' : 'text-slate-700'}`}>
             {children}
         </div>
     )
@@ -351,7 +358,7 @@ function Cell({ children, muted }: { children: React.ReactNode; muted?: boolean 
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
     return (
-        <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+        <div className="border-t border-slate-200 bg-slate-100/70 px-3 py-1.5 text-[10px] font-bold text-[#052d4a] uppercase tracking-wider">
             {children}
         </div>
     )

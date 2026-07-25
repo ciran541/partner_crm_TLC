@@ -2,7 +2,7 @@
 
 import type React from 'react'
 import Link from 'next/link'
-import { Calculator, TrendingDown, Users, Receipt, Building2, BarChart3, Coins } from 'lucide-react'
+import { Calculator, TrendingDown, Users, Receipt, Building2, BarChart3, Coins, ArrowLeftRight } from 'lucide-react'
 
 const CALCULATORS: { name: string; description: string; href?: string; icon?: React.ElementType; available: boolean }[] = [
     {
@@ -13,10 +13,17 @@ const CALCULATORS: { name: string; description: string; href?: string; icon?: Re
         available: true,
     },
     {
-        name: 'Partial Repayment',
-        description: 'Model lump-sum repayments and see the interest saved and lower instalment',
-        href: '/insurance/dashboard/calculators/partial-repayment',
-        icon: Coins,
+        name: 'Affordability',
+        description: 'Loan eligibility under 75% and 55% LTV with pledge fund guidance',
+        href: '/insurance/dashboard/calculators/tdsr',
+        icon: BarChart3,
+        available: true,
+    },
+    {
+        name: 'Technical TDSR',
+        description: 'Convert a loan amount to the TDSR it needs, or a TDSR figure back to a loan amount',
+        href: '/insurance/dashboard/calculators/technical-tdsr',
+        icon: ArrowLeftRight,
         available: true,
     },
     {
@@ -27,13 +34,6 @@ const CALCULATORS: { name: string; description: string; href?: string; icon?: Re
         available: true,
     },
     {
-        name: 'Stamp Duty',
-        description: 'Calculate BSD and ABSD for any Singapore property purchase',
-        href: '/insurance/dashboard/calculators/stamp-duty',
-        icon: Receipt,
-        available: true,
-    },
-    {
         name: 'BUC',
         description: 'Progressive payment schedule for Building Under Construction properties',
         href: '/insurance/dashboard/calculators/buc',
@@ -41,10 +41,17 @@ const CALCULATORS: { name: string; description: string; href?: string; icon?: Re
         available: true,
     },
     {
-        name: 'Technical TDSR',
-        description: 'Loan eligibility under 75% and 55% LTV with pledge fund guidance',
-        href: '/insurance/dashboard/calculators/tdsr',
-        icon: BarChart3,
+        name: 'Partial Repayment',
+        description: 'Model lump-sum repayments and see the interest saved and lower instalment',
+        href: '/insurance/dashboard/calculators/partial-repayment',
+        icon: Coins,
+        available: true,
+    },
+    {
+        name: 'Stamp Duty',
+        description: 'Calculate BSD and ABSD for any Singapore property purchase',
+        href: '/insurance/dashboard/calculators/stamp-duty',
+        icon: Receipt,
         available: true,
     },
 ]

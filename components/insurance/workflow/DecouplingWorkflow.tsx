@@ -21,7 +21,7 @@ import { type RateScheduleEntry } from '@/lib/types/rates'
 import RefiPackages from './RefiPackages'
 import DecouplePresentation from './DecouplePresentation'
 import MultiBankSelect from './MultiBankSelect'
-import { Question, FieldInput, AgentNotesCard } from '@/components/insurance/workflow/WorkflowStep'
+import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import {
     Home, CheckCircle2, AlertTriangle, Info, Save,
@@ -237,6 +237,11 @@ export default function DecouplingWorkflowPanel({
                     <FieldInput commas prefix="$" value={data.property_valuation ?? ''} placeholder="e.g. 1,500,000"
                         onChange={v => update({ property_valuation: num(v) })} />
                 </Question>
+                {data.property_type === 'landed' && (
+                    <TipGroup>
+                        <Tip>Has your landed property obtained its Certificate of Statutory Completion (CSC)? — Some ID contractors don&apos;t obtain CSC after works are done and the property is left at Temporary Occupation Permit (TOP) status. Without CSC, most banks will not finance; DBS/SCB are open to it for now.</Tip>
+                    </TipGroup>
+                )}
 
                 <Question label="Year of Purchase" required>
                     <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2022"

@@ -25,6 +25,8 @@ export interface EconomicCalendarEvent {
     is_manual: boolean
     hidden: boolean
     admin_notes: string | null
+    /** Published result for this event — null until it has happened and the link resolves. */
+    source_url: string | null
     external_key: string
     fetched_at?: string
     created_at?: string
@@ -43,4 +45,5 @@ export interface EconomicCalendarEventInput {
     impact_stars?: number
     admin_notes?: string | null
     hidden?: boolean
+    source_url?: string | null
 }
