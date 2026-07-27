@@ -8,6 +8,7 @@
  */
 
 import type { RefiPropertyType, RefiCost, RefiConsiderationsInput } from '@/lib/insurance/refiCalc'
+import { submissionChecklist } from '@/lib/insurance/bankSubmission'
 
 export interface RefiRemarkContext {
     propertyType?: RefiPropertyType
@@ -103,7 +104,16 @@ export function buildRefiRemarks(ctx: RefiRemarkContext): RefiRemarks {
 
 // ─── Next actions (guidance checklist) ─────────────────────────────────────────
 
-export function refiNextActions(ctx: { buc?: boolean; considerations?: RefiConsiderationsInput }): string[] {
+export function refiNextActions(ctx: {
+    buc?: boolean
+    considerations?: RefiConsiderationsInput
+    selectedBank?: string
+}): string[] {
+    // Once a digital bank has been picked, the case has moved past advising into
+    // submission — the digital checklist replaces the generic advisory steps.
+    const submission = submissionChecklist(ctx.selectedBank)
+    if (submission) return submission
+
     const actions = [
         'Confirm the current loan details (outstanding, lock-in end date, current rate)',
         'Recommend a suitable package and use the Tenure Planner to show instalment & interest difference',

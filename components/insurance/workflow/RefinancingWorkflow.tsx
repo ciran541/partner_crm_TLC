@@ -11,6 +11,9 @@ import {
     type RefiPropertyType,
 } from '@/lib/insurance/refiCalc'
 import { buildRefiRemarks, refiNextActions, type RefiRemarks } from '@/lib/insurance/refiRemarks'
+import { caseDocumentsFromWorkflow, type CaseDocument } from '@/lib/insurance/caseDocuments'
+import DocumentsToPrepare from './DocumentsToPrepare'
+import ShareDocChecklist from './ShareDocChecklist'
 import { monthlyInstallment, effectiveMonthlyIncome, tdsrAvailable, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RateScheduleEntry } from '@/lib/types/rates'
@@ -202,12 +205,27 @@ export default function RefinancingWorkflowPanel({
         selectedPackage,
     }), [clientName, meta, data.current_bank, data.current_rate, computation, selectedPackage])
 
-    const actions = refiNextActions({ buc: meta?.buc, considerations: data.considerations })
+    const actions = refiNextActions({
+        buc: meta?.buc,
+        considerations: data.considerations,
+        selectedBank: data.selected_package_snapshot?.bank as string | undefined,
+    })
     const actionsDone = data.next_actions_done ?? []
     const toggleAction = (a: string) => {
         const set = new Set(actionsDone)
         if (set.has(a)) set.delete(a); else set.add(a)
         update({ next_actions_done: [...set] })
+    }
+
+    // Documents to prepare — shown once a package (bank) is chosen.
+    const documents: CaseDocument[] = data.selected_package_snapshot
+        ? caseDocumentsFromWorkflow('Refinancing', data)
+        : []
+    const documentsDone = data.documents_done ?? []
+    const toggleDocument = (id: string) => {
+        const set = new Set(documentsDone)
+        if (set.has(id)) set.delete(id); else set.add(id)
+        update({ documents_done: [...set] })
     }
     const stageIdx = currentStage ? STAGE_ORDER.indexOf(currentStage) : -1
     const suggestedStage = stageIdx >= 0 && stageIdx < STAGE_ORDER.length - 1 ? STAGE_ORDER[stageIdx + 1] : null
@@ -1704,6 +1722,11 @@ export default function RefinancingWorkflowPanel({
                         actions={actions}
                         actionsDone={actionsDone}
                         onToggleAction={toggleAction}
+                        documents={documents}
+                        documentsDone={documentsDone}
+                        onToggleDocument={toggleDocument}
+                        caseId={caseId}
+                        clientName={clientName}
                         followUpDate={followUpDate}
                         onSetFollowUp={onSetFollowUp}
                         onPresent={() => setPresentationOpen(true)}
@@ -1846,6 +1869,11 @@ interface NextStepProps {
     actions: string[]
     actionsDone: string[]
     onToggleAction: (a: string) => void
+    documents: CaseDocument[]
+    documentsDone: string[]
+    onToggleDocument: (id: string) => void
+    caseId?: string
+    clientName?: string
     followUpDate?: string
     onSetFollowUp?: (date: string) => void
     onPresent: () => void
@@ -1859,7 +1887,9 @@ interface NextStepProps {
 
 function NextStepCard({
     embedded, currentStage, suggestedStage, onStageAdvance,
-    actions, actionsDone, onToggleAction, followUpDate, onSetFollowUp, onPresent, onOpenProposal,
+    actions, actionsDone, onToggleAction, documents, documentsDone, onToggleDocument,
+    caseId, clientName,
+    followUpDate, onSetFollowUp, onPresent, onOpenProposal,
     clientEmail, onSendReport, sendingReport, reportSent, reportError,
 }: NextStepProps) {
     const [follow, setFollow] = useState(followUpDate ?? '')
@@ -1893,6 +1923,9 @@ function NextStepCard({
                     <Mail size={15} />
                     {sendingReport ? 'Sending…' : reportSent ? 'Sent!' : 'Email to client'}
                 </button>
+                {documents.length > 0 && (
+                    <ShareDocChecklist caseId={caseId} clientName={clientName} clientEmail={clientEmail} />
+                )}
                 {embedded && suggestedStage && onStageAdvance && (
                     <button type="button" onClick={() => onStageAdvance(suggestedStage)}
                         className="text-sm px-4 py-2 rounded-lg border border-[#03a9e7] text-[#03a9e7] font-semibold hover:bg-sky-50 flex items-center gap-2">
@@ -1929,6 +1962,8 @@ function NextStepCard({
                     </ul>
                 </div>
             )}
+
+            <DocumentsToPrepare documents={documents} done={documentsDone} onToggle={onToggleDocument} />
 
             {embedded && onSetFollowUp && (
                 <div className="flex flex-wrap items-end gap-2.5 pt-1 border-t border-slate-100">

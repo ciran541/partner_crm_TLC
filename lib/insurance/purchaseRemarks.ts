@@ -9,6 +9,7 @@
  */
 
 import type { PurchasePropertyType, Residency, OutstandingLoans } from '@/lib/insurance/purchaseCalc'
+import { submissionChecklist } from '@/lib/insurance/bankSubmission'
 
 export interface RemarkContext {
     propertyType?: PurchasePropertyType
@@ -128,7 +129,15 @@ export function buildRemarks(ctx: RemarkContext): PurchaseRemarks {
 
 // ─── Next actions (guidance checklist, tailored per property type) ─────────────
 
-export function nextActions(type?: PurchasePropertyType): string[] {
+export function nextActions(
+    type?: PurchasePropertyType,
+    opts?: { selectedBank?: string },
+): string[] {
+    // Once a digital bank has been picked, the submission checklist replaces the
+    // generic per-property advisory steps.
+    const submission = submissionChecklist(opts?.selectedBank)
+    if (submission) return submission
+
     switch (type) {
         case 'new_launch_condo':
         case 'ec_new_launch':

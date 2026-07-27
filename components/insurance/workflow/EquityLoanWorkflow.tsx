@@ -13,9 +13,13 @@ import RefiPackages from './RefiPackages'
 import EquityLoanPresentation from './EquityLoanPresentation'
 import MultiBankSelect from './MultiBankSelect'
 import {
-    Building2, CheckCircle2, AlertTriangle, Info, Save,
+    Building2, CheckCircle2, Circle, ClipboardList, AlertTriangle, Info, Save,
     Wallet, ArrowRight, CalendarRange, Percent, Lock, Plus, Trash2, Mail, Sparkles,
 } from 'lucide-react'
+import { submissionChecklist } from '@/lib/insurance/bankSubmission'
+import { caseDocumentsFromWorkflow } from '@/lib/insurance/caseDocuments'
+import DocumentsToPrepare from './DocumentsToPrepare'
+import ShareDocChecklist from './ShareDocChecklist'
 
 // ─── Property type catalogue ──────────────────────────────────────────────────
 
@@ -196,6 +200,29 @@ export default function EquityLoanWorkflowPanel({
         })
     }
     const selectedPkgId = (data.selected_package_snapshot?.id as string) ?? undefined
+
+    // ── Submission checklist (once a digital bank is picked) ──
+    const submissionActions = submissionChecklist(
+        data.selected_package_snapshot?.bank as string | undefined,
+    )
+    const actionsDone = data.next_actions_done ?? []
+    const toggleAction = (a: string) => {
+        const set = new Set(actionsDone)
+        if (set.has(a)) set.delete(a); else set.add(a)
+        update({ next_actions_done: [...set] })
+    }
+
+    // Documents to prepare — shown once a package (bank) is chosen. Equity Loan is
+    // private-property only, so never HDB docs.
+    const documents = data.selected_package_snapshot
+        ? caseDocumentsFromWorkflow('Equity Loan', data)
+        : []
+    const documentsDone = data.documents_done ?? []
+    const toggleDocument = (id: string) => {
+        const set = new Set(documentsDone)
+        if (set.has(id)) set.delete(id); else set.add(id)
+        update({ documents_done: [...set] })
+    }
 
     // ── Rate schedule ──
     const DEFAULT_RATE_SCHEDULE: RateScheduleEntry[] = [{ year: 1, type: 'fixed' }]
@@ -1462,10 +1489,38 @@ export default function EquityLoanWorkflowPanel({
                         <Mail size={15} />
                         {sendingReport ? 'Sending…' : reportSent ? 'Sent!' : 'Email to client'}
                     </button>
+                    {documents.length > 0 && (
+                        <ShareDocChecklist caseId={caseId} clientName={clientName} clientEmail={clientEmail} />
+                    )}
                 </div>
                 {reportError && (
                     <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
                 )}
+
+                {submissionActions && (
+                    <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                            <ClipboardList size={13} /> What to do next
+                        </p>
+                        <ul className="space-y-1.5">
+                            {submissionActions.map(a => {
+                                const done = actionsDone.includes(a)
+                                return (
+                                    <li key={a}>
+                                        <button type="button" onClick={() => toggleAction(a)} className="flex items-start gap-2.5 text-left w-full group">
+                                            {done
+                                                ? <CheckCircle2 size={16} className="text-emerald-500 shrink-0 mt-0.5" />
+                                                : <Circle size={16} className="text-slate-300 group-hover:text-[#03a9e7] shrink-0 mt-0.5" />}
+                                            <span className={`text-[13px] ${done ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{a}</span>
+                                        </button>
+                                    </li>
+                                )
+                            })}
+                        </ul>
+                    </div>
+                )}
+
+                <DocumentsToPrepare documents={documents} done={documentsDone} onToggle={toggleDocument} />
             </div>
 
             {/* Agent notes — internal, per-case */}

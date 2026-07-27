@@ -76,6 +76,8 @@ export interface RefinancingWorkflow {
     selected_package_snapshot?: Record<string, unknown>
     // Non-blocking "next actions" the agent has ticked off (guidance, not a gate).
     next_actions_done?: string[]
+    // Case-specific documents the client has gathered (ticked in Documents to prepare).
+    documents_done?: string[]
     completed_steps?: string[]
     flags?: WorkflowFlags
     // Free-text internal notes the agent keeps about this case (never client-facing).
@@ -155,6 +157,8 @@ export interface PurchaseWorkflow {
     selected_package_snapshot?: Record<string, unknown>
     // Non-blocking "next actions" the agent has ticked off (guidance, not a gate).
     next_actions_done?: string[]
+    // Case-specific documents the client has gathered (ticked in Documents to prepare).
+    documents_done?: string[]
     completed_steps?: string[]
     flags?: WorkflowFlags
     // Agent/client chosen tenure (within the computed range). When set, both options
@@ -240,6 +244,10 @@ export interface DecoupleWorkflow {
     preferred_tenure_2?: number         // Tenure Planner comparison slot 2
     selected_package_snapshot?: Record<string, unknown>
 
+    // Non-blocking "next actions" the agent has ticked off (guidance, not a gate).
+    next_actions_done?: string[]
+    // Case-specific documents the client has gathered (ticked in Documents to prepare).
+    documents_done?: string[]
     completed_steps?: string[]
     flags?: WorkflowFlags
     // Free-text internal notes the agent keeps about this case (never client-facing).
@@ -312,6 +320,8 @@ export interface EquityLoanWorkflow {
     preferred_equity_amort_tenure_1?: number
 
     next_actions_done?: string[]
+    // Case-specific documents the client has gathered (ticked in Documents to prepare).
+    documents_done?: string[]
     completed_steps?: string[]
     flags?: WorkflowFlags
     // Free-text internal notes the agent keeps about this case (never client-facing).

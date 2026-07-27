@@ -22,6 +22,7 @@ import {
     Calculator,
     Receipt,
     Scale,
+    FileText,
     LifeBuoy,
     ChevronDown,
     ChevronRight,
@@ -73,6 +74,7 @@ const toolsNav: NavItem[] = [
         ],
     },
     { name: "Banks' Insights", href: '/insurance/dashboard/bank-intelligence', icon: Landmark },
+    { name: 'Document Guide', href: '/insurance/dashboard/documents', icon: FileText },
     { name: 'Valuation Fees', href: '/insurance/dashboard/valuation', icon: Receipt },
     { name: 'Legal', href: '/insurance/dashboard/legal', icon: Scale },
 ]

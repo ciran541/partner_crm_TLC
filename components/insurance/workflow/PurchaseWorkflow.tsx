@@ -21,6 +21,9 @@ import {
     computePledge,
 } from '@/lib/insurance/purchaseCalc'
 import { buildRemarks, nextActions, type PurchaseRemarks } from '@/lib/insurance/purchaseRemarks'
+import { caseDocumentsFromWorkflow, type CaseDocument } from '@/lib/insurance/caseDocuments'
+import DocumentsToPrepare from './DocumentsToPrepare'
+import ShareDocChecklist from './ShareDocChecklist'
 import { buildProposalText, type ProposalPackage } from '@/lib/insurance/purchaseProposal'
 import { monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import { computeAmortization } from '@/lib/insurance/amortCalc'
@@ -209,12 +212,25 @@ export default function PurchaseWorkflowPanel({
         selectedPackage: data.selected_package_snapshot as ProposalPackage | undefined,
     }), [clientName, meta, data.property_price, computation, data.selected_package_snapshot])
 
-    const actions = nextActions(data.property_type)
+    const actions = nextActions(data.property_type, {
+        selectedBank: data.selected_package_snapshot?.bank as string | undefined,
+    })
     const actionsDone = data.next_actions_done ?? []
     const toggleAction = (a: string) => {
         const set = new Set(actionsDone)
         if (set.has(a)) set.delete(a); else set.add(a)
         update({ next_actions_done: [...set] })
+    }
+
+    // Documents to prepare — shown once a package (bank) is chosen.
+    const documents: CaseDocument[] = data.selected_package_snapshot
+        ? caseDocumentsFromWorkflow('Purchase', data)
+        : []
+    const documentsDone = data.documents_done ?? []
+    const toggleDocument = (id: string) => {
+        const set = new Set(documentsDone)
+        if (set.has(id)) set.delete(id); else set.add(id)
+        update({ documents_done: [...set] })
     }
 
     const updateScheduleRow = (idx: number, patch: Partial<RateScheduleEntry>) => {
@@ -1391,6 +1407,11 @@ export default function PurchaseWorkflowPanel({
                         actions={actions}
                         actionsDone={actionsDone}
                         onToggleAction={toggleAction}
+                        documents={documents}
+                        documentsDone={documentsDone}
+                        onToggleDocument={toggleDocument}
+                        caseId={caseId}
+                        clientName={clientName}
                         onPresent={() => setPresentationOpen(true)}
                         onOpenProposal={() => setProposalOpen(true)}
                         clientEmail={clientEmail}
@@ -1995,6 +2016,11 @@ interface NextStepProps {
     actions: string[]
     actionsDone: string[]
     onToggleAction: (a: string) => void
+    documents: CaseDocument[]
+    documentsDone: string[]
+    onToggleDocument: (id: string) => void
+    caseId?: string
+    clientName?: string
     onPresent: () => void
     onOpenProposal: () => void
     clientEmail?: string
@@ -2005,7 +2031,9 @@ interface NextStepProps {
 }
 
 function NextStepCard({
-    actions, actionsDone, onToggleAction, onPresent, onOpenProposal,
+    actions, actionsDone, onToggleAction, documents, documentsDone, onToggleDocument,
+    caseId, clientName,
+    onPresent, onOpenProposal,
     clientEmail, onSendReport, sendingReport, reportSent, reportError,
 }: NextStepProps) {
     return (
@@ -2040,6 +2068,9 @@ function NextStepCard({
                     <Mail size={15} />
                     {sendingReport ? 'Sending…' : reportSent ? 'Sent!' : 'Email to client'}
                 </button>
+                {documents.length > 0 && (
+                    <ShareDocChecklist caseId={caseId} clientName={clientName} clientEmail={clientEmail} />
+                )}
             </div>
             {reportError && (
                 <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{reportError}</p>
@@ -2069,6 +2100,8 @@ function NextStepCard({
                     </ul>
                 </div>
             )}
+
+            <DocumentsToPrepare documents={documents} done={documentsDone} onToggle={onToggleDocument} />
         </div>
     )
 }
