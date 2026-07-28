@@ -19,9 +19,12 @@ import type { ClosedLoanKind } from '@/lib/types'
 // A scanned LO through the vision lane is the slow path; give it room.
 export const maxDuration = 60
 
-// Total across all pages. Gemini takes the images inline (base64, ~33% larger),
-// so this is the ceiling for the whole request, not per file.
-const MAX_BYTES = 15 * 1024 * 1024
+// Total across all pages, and it is Vercel's ceiling that binds here, not ours:
+// a Serverless Function request body is capped at ~4.5MB and anything larger is
+// rejected at the edge BEFORE this handler runs — so a generous limit here just
+// turns into an opaque 413 in production while working fine locally. The client
+// downscales images before sending; this is the backstop.
+const MAX_BYTES = 4 * 1024 * 1024
 /** An LO photographed page by page — generous, but not an unbounded upload. */
 const MAX_PAGES = 10
 
@@ -55,7 +58,10 @@ export async function POST(request: Request) {
     }
     const totalBytes = uploads.reduce((sum, f) => sum + f.size, 0)
     if (totalBytes > MAX_BYTES) {
-        return NextResponse.json({ error: 'Those files total more than 15MB.' }, { status: 400 })
+        return NextResponse.json(
+            { error: 'Those files are too large to read. Try fewer pages, or a smaller scan.' },
+            { status: 413 },
+        )
     }
 
     // Only kinds the form actually has rows for — anything else is ignored

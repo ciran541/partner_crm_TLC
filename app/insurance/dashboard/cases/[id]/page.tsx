@@ -808,6 +808,39 @@ function PendingDocsModal({ initialBankers, onConfirm, onCancel }: {
 
 interface LoanFormRow { enabled: boolean; amount: string; tenure: string }
 
+// Vercel rejects a Serverless Function request body over ~4.5MB at the edge,
+// before the route runs. A phone photo of an LO is routinely 3-8MB and a
+// multi-page upload multiplies that, so images are downscaled before being sent
+// for extraction. Only the copy sent to the model shrinks — the ORIGINAL file
+// is what gets uploaded to storage on confirm, so the record keeps full quality.
+const EXTRACT_MAX_BYTES = 4 * 1024 * 1024
+const EXTRACT_MAX_DIM = 1800     // ample for reading an A4 page of text
+const EXTRACT_QUALITY = 0.82
+
+async function downscaleForExtraction(file: File): Promise<File> {
+    if (!file.type.startsWith('image/')) return file          // PDFs pass through
+    if (file.size <= 900_000) return file                     // already small
+    try {
+        const bitmap = await createImageBitmap(file)
+        const scale = Math.min(1, EXTRACT_MAX_DIM / Math.max(bitmap.width, bitmap.height))
+        const w = Math.round(bitmap.width * scale)
+        const h = Math.round(bitmap.height * scale)
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return file
+        ctx.drawImage(bitmap, 0, 0, w, h)
+        bitmap.close?.()
+        const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', EXTRACT_QUALITY))
+        // Never send something bigger than what we started with.
+        if (!blob || blob.size >= file.size) return file
+        return new File([blob], file.name, { type: 'image/jpeg' })
+    } catch {
+        return file   // canvas unavailable — let the size check below decide
+    }
+}
+
 function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     initialData: Case
     caseId: string
@@ -880,9 +913,19 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
         setExtracting(true); setExtractErr(null); setExtracted(null)
         setLastLoFile(pages)
         try {
+            // Shrink images first — the full-size originals still go to storage
+            // on confirm; only this request is downscaled.
+            const sending = await Promise.all(pages.map(downscaleForExtraction))
+            const total = sending.reduce((sum, f) => sum + f.size, 0)
+            if (total > EXTRACT_MAX_BYTES) {
+                throw new Error(sending.length > 1
+                    ? 'Those pages are too large to read together. Try attaching fewer at a time.'
+                    : 'That file is too large to read. Try a smaller scan or a photo instead.')
+            }
+
             const fd = new FormData()
             // Order matters — these are consecutive pages of one document.
-            for (const p of pages) fd.append('file', p)
+            for (const p of sending) fd.append('file', p)
             fd.append('kinds', specs.map(s => s.kind).join(','))
             // Hard client-side stop. The server budgets itself to ~45s, but a
             // cold serverless start (or a dev-server first compile of pdf-parse)
