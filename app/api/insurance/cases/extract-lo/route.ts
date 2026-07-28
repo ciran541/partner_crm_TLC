@@ -1,0 +1,88 @@
+/**
+ * POST /api/insurance/cases/extract-lo
+ *
+ * Reads an uploaded Letter of Offer and returns the structured figures for the
+ * Closed-Won form to prefill. Pure transcription — reads no case, writes no row,
+ * stores no file (the LO is uploaded to storage separately, on confirm), so this
+ * route has no case-scoped data to leak and takes no case id.
+ *
+ * The caller passes the loan kinds its case type can close; the extractor
+ * constrains the model to those.
+ */
+
+import { NextResponse } from 'next/server'
+import { requireInsuranceUser } from '@/lib/auth/requireInsuranceUser'
+import { extractLoanOffer, LO_ACCEPTED_MIME } from '@/lib/insurance/extractLoanOffer'
+import { CLOSED_LOAN_LABELS } from '@/lib/insurance/closedWon'
+import type { ClosedLoanKind } from '@/lib/types'
+
+// A scanned LO through the vision lane is the slow path; give it room.
+export const maxDuration = 60
+
+// Total across all pages. Gemini takes the images inline (base64, ~33% larger),
+// so this is the ceiling for the whole request, not per file.
+const MAX_BYTES = 15 * 1024 * 1024
+/** An LO photographed page by page — generous, but not an unbounded upload. */
+const MAX_PAGES = 10
+
+export async function POST(request: Request) {
+    const auth = await requireInsuranceUser()
+    if (!auth.authorized) return auth.response
+
+    let form: FormData
+    try {
+        form = await request.formData()
+    } catch {
+        return NextResponse.json({ error: 'Expected a multipart form upload.' }, { status: 400 })
+    }
+
+    // Several files = consecutive pages of ONE Letter of Offer, in the order
+    // sent. An LO photographed page by page must be read as a single document.
+    const uploads = form.getAll('file').filter((f): f is File => f instanceof File)
+    if (!uploads.length) {
+        return NextResponse.json({ error: 'No file uploaded.' }, { status: 400 })
+    }
+    if (uploads.length > MAX_PAGES) {
+        return NextResponse.json({ error: `Please attach at most ${MAX_PAGES} pages at a time.` }, { status: 400 })
+    }
+    for (const file of uploads) {
+        if (file.size === 0) {
+            return NextResponse.json({ error: `"${file.name}" is empty.` }, { status: 400 })
+        }
+        if (!LO_ACCEPTED_MIME.includes(file.type as typeof LO_ACCEPTED_MIME[number])) {
+            return NextResponse.json({ error: 'Only PDF, JPEG, PNG or WebP files can be read.' }, { status: 415 })
+        }
+    }
+    const totalBytes = uploads.reduce((sum, f) => sum + f.size, 0)
+    if (totalBytes > MAX_BYTES) {
+        return NextResponse.json({ error: 'Those files total more than 15MB.' }, { status: 400 })
+    }
+
+    // Only kinds the form actually has rows for — anything else is ignored
+    // rather than trusted, so a crafted request can't widen the enum.
+    const kinds = String(form.get('kinds') ?? '')
+        .split(',')
+        .map(k => k.trim())
+        .filter((k): k is ClosedLoanKind => k in CLOSED_LOAN_LABELS)
+    if (!kinds.length) {
+        return NextResponse.json({ error: 'No loan kinds supplied.' }, { status: 400 })
+    }
+
+    try {
+        const pages = await Promise.all(uploads.map(async f => ({
+            buffer: Buffer.from(await f.arrayBuffer()),
+            mime: f.type,
+        })))
+        const data = await extractLoanOffer(pages, kinds)
+        if (!data) {
+            return NextResponse.json(
+                { error: "Couldn't read this file. Enter the details manually." },
+                { status: 422 },
+            )
+        }
+        return NextResponse.json({ data })
+    } catch (err) {
+        console.error('[extract-lo] threw:', String(err))
+        return NextResponse.json({ error: 'Extraction failed. Enter the details manually.' }, { status: 500 })
+    }
+}

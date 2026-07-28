@@ -21,10 +21,13 @@ import { calculateCommission } from '@/lib/property/commission'
 import type { CaseType, ClosedWonData, ClosedWonLoan, ClosedLoanKind } from '@/lib/types'
 import type { RateScheduleEntry } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
+// Type-only — importing a runtime value from extractLoanOffer would pull its
+// pdf-parse dynamic import into the client bundle.
+import type { ExtractedLo } from '@/lib/insurance/extractLoanOffer'
 import {
     Save, Edit2, X, User, Home, Pencil,
     Briefcase, CheckCircle2, AlertTriangle, CalendarClock,
-    Upload, Trash2, FileText, TrendingUp, ArrowLeft
+    Upload, Trash2, FileText, TrendingUp, ArrowLeft, Sparkles, Loader2
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -842,6 +845,11 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
         existing.package?.schedule?.length ? existing.package.schedule : [{ year: 1, type: 'fixed' }],
     )
 
+    // Captured from the LO. No columns exist for these on the insurance `cases`
+    // table, so they persist inside closed_won_data (jsonb).
+    const [propertyAddress, setPropertyAddress] = useState(existing.property_address || '')
+    const [pkgFeatures, setPkgFeatures] = useState<string[]>(existing.package_features ?? [])
+
     const [hasSubsidy, setHasSubsidy] = useState(!!initialData.subsidy_provided)
     const [subsidyProvided, setSubsidyProvided] = useState(initialData.subsidy_provided || '')
     const [clawbackEnd, setClawbackEnd] = useState(initialData.clawback_end_date || '')
@@ -855,9 +863,87 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     const [busy, setBusy] = useState(false)
     const [err, setErr] = useState<string | null>(null)
 
+    // LO auto-extraction: reads the attached Letter of Offer and prefills the
+    // loan/package fields. Advisory only — every figure stays editable and the
+    // agent confirms them, because these feed original_loan_total -> commission.
+    const [extracting, setExtracting] = useState(false)
+    const [extracted, setExtracted] = useState<ExtractedLo | null>(null)
+    const [extractErr, setExtractErr] = useState<string | null>(null)
+    const [lastLoFile, setLastLoFile] = useState<File[]>([])
+
     useEffect(() => {
         fetch('/api/insurance/rates').then(r => r.json()).then(d => { if (d.sora) setSora(d.sora) }).catch(() => {})
     }, [])
+
+    const runExtract = async (pages: File[]) => {
+        if (!pages.length) return
+        setExtracting(true); setExtractErr(null); setExtracted(null)
+        setLastLoFile(pages)
+        try {
+            const fd = new FormData()
+            // Order matters — these are consecutive pages of one document.
+            for (const p of pages) fd.append('file', p)
+            fd.append('kinds', specs.map(s => s.kind).join(','))
+            // Hard client-side stop. The server budgets itself to ~45s, but a
+            // cold serverless start (or a dev-server first compile of pdf-parse)
+            // can outlast that, and a spinner that never resolves reads as
+            // "the upload is broken" — the agent needs to be released to type.
+            const res = await fetch('/api/insurance/cases/extract-lo', {
+                method: 'POST', body: fd, signal: AbortSignal.timeout(75000),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(json?.error || `Could not read that file (HTTP ${res.status}).`)
+
+            const data = json.data as ExtractedLo
+            // Apply only what was actually read — never blank a field the agent
+            // (or the workflow prefill) already has because the LO omitted it.
+            setLoanRows(rows => {
+                const next = { ...rows }
+                for (const l of data.loans) {
+                    if (!next[l.kind]) continue
+                    next[l.kind] = {
+                        enabled: true,
+                        amount: l.amount > 0 ? String(l.amount) : next[l.kind].amount,
+                        tenure: l.tenure > 0 ? String(l.tenure) : next[l.kind].tenure,
+                    }
+                }
+                return next
+            })
+            if (data.lockin_years != null) setLockin(String(data.lockin_years))
+            if (data.schedule.length) setSchedule(data.schedule)
+            if (data.property_address) setPropertyAddress(data.property_address)
+            if (data.features.length) setPkgFeatures(data.features)
+            // Only ever turns the subsidy section ON. If the LO grants none, an
+            // agent who already ticked it keeps what they typed — absence of a
+            // subsidy clause is not proof there wasn't one.
+            if (data.subsidy) {
+                setHasSubsidy(true)
+                setSubsidyProvided(data.subsidy)
+                if (data.clawback_end_date) setClawbackEnd(data.clawback_end_date)
+            }
+            setExtracted(data)
+        } catch (e) {
+            const timedOut = e instanceof DOMException && (e.name === 'TimeoutError' || e.name === 'AbortError')
+            setExtractErr(timedOut
+                ? 'Reading the Letter of Offer took too long.'
+                : e instanceof Error ? e.message : 'Could not read that file.')
+        } finally {
+            setExtracting(false)
+        }
+    }
+
+    const LO_READABLE = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+
+    const addFiles = (picked: File[]) => {
+        const all = [...files, ...picked]
+        setFiles(all)
+        // Re-read EVERY attached page together, not just the new one. An LO
+        // photographed page by page is one document — page 1 carries the
+        // property address, page 2 the rate table — so reading a single page
+        // silently drops whatever lives on the others.
+        const readable = all.filter(f => LO_READABLE.includes(f.type))
+        if (readable.length && !extracting) void runExtract(readable)
+    }
 
     const loans: ClosedWonLoan[] = specs
         .filter(s => loanRows[s.kind].enabled)
@@ -871,6 +957,19 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
 
     const enabledValid = loans.length > 0 && loans.every(l => l.amount > 0 && l.tenure > 0)
     const canSave = !busy && clientName.trim() && enabledValid
+
+    // "+ Add feature" starts a blank row; don't persist ones left empty.
+    const cleanFeatures = pkgFeatures.map(f => f.trim()).filter(Boolean)
+
+    // Did the extraction actually put anything in the form? Drives the banner —
+    // claiming "filled in from the LO" over an untouched form reads as a lie.
+    const filledSomething = !!extracted && (
+        extracted.loans.length > 0 ||
+        extracted.schedule.length > 0 ||
+        !!extracted.property_address ||
+        extracted.features.length > 0 ||
+        !!extracted.subsidy
+    )
 
     const handleConfirm = async () => {
         setBusy(true); setErr(null)
@@ -896,6 +995,8 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                 lo_documents: uploaded,
                 original_loan_total: totals.originalLoanTotal,
                 combined_outstanding: totals.combinedOutstanding ?? undefined,
+                property_address: propertyAddress.trim() || undefined,
+                package_features: cleanFeatures.length ? cleanFeatures : undefined,
             }
 
             const firstYear = schedule.find(e => !e.thereafter)
@@ -951,7 +1052,51 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                             <label className="label-xs">Email</label>
                             <input type="email" value={clientEmail} onChange={e => setClientEmail(e.target.value)} placeholder="client@email.com" className="input-std" />
                         </div>
+                        <div className="sm:col-span-2">
+                            <label className="label-xs">Property Address <span className="text-slate-400 normal-case">(as per the LO)</span></label>
+                            <input type="text" value={propertyAddress} onChange={e => setPropertyAddress(e.target.value)}
+                                placeholder="e.g. 123 Bishan Street 12 #08-45 Singapore 570123" className="input-std" />
+                        </div>
                     </div>
+
+                    {/* AI-filled warning — these figures drive the commission base,
+                        so the agent must be told which ones they're vouching for. */}
+                    {extracted && (
+                        <div className={`rounded-lg border px-3.5 py-3 space-y-1.5 ${filledSomething ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-slate-50'}`}>
+                            <div className="flex items-start gap-2">
+                                {filledSomething
+                                    ? <Sparkles size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                                    : <AlertTriangle size={15} className="text-slate-400 shrink-0 mt-0.5" />}
+                                <div className="flex-1 text-sm">
+                                    {filledSomething ? (
+                                        <>
+                                            <p className="font-semibold text-amber-900">
+                                                Filled in from the Letter of Offer{extracted.bank ? ` (${extracted.bank})` : ''} — check every figure.
+                                            </p>
+                                            <p className="text-amber-800/90 text-[13px] mt-0.5">
+                                                {extracted.source === 'vision'
+                                                    ? 'Read from an image, so digits are easier to misread.'
+                                                    : 'Read from the PDF text.'} These amounts set the commission base.
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <p className="font-semibold text-slate-700">Nothing could be read from this file.</p>
+                                            <p className="text-slate-500 text-[13px] mt-0.5">
+                                                Enter the details below by hand — the file is still attached and will be saved.
+                                            </p>
+                                        </>
+                                    )}
+                                </div>
+                                <button type="button" onClick={() => setExtracted(null)} className={`shrink-0 ${filledSomething ? 'text-amber-400 hover:text-amber-700' : 'text-slate-300 hover:text-slate-600'}`}><X size={14} /></button>
+                            </div>
+                            {extracted.notes.length > 0 && (
+                                <ul className={`text-[13px] list-disc pl-8 space-y-0.5 ${filledSomething ? 'text-amber-800/90' : 'text-slate-500'}`}>
+                                    {extracted.notes.map((n, i) => <li key={i}>{n}</li>)}
+                                </ul>
+                            )}
+                        </div>
+                    )}
 
                     {/* Loans */}
                     <div className="space-y-3">
@@ -1003,6 +1148,21 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                         <div>
                             <label className="label-xs">Interest Rates (p.a.)</label>
                             <RateScheduleEditor schedule={schedule} onChange={setSchedule} />
+                        </div>
+                        <div>
+                            <label className="label-xs">Package Features</label>
+                            <div className="space-y-1.5">
+                                {pkgFeatures.map((f, i) => (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <input type="text" value={f} className="input-std flex-1"
+                                            onChange={e => setPkgFeatures(arr => arr.map((x, idx) => idx === i ? e.target.value : x))} />
+                                        <button type="button" onClick={() => setPkgFeatures(arr => arr.filter((_, idx) => idx !== i))}
+                                            className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={14} /></button>
+                                    </div>
+                                ))}
+                                <button type="button" onClick={() => setPkgFeatures(arr => [...arr, ''])}
+                                    className="text-sm font-medium text-[#03a9e7] hover:text-[#0290c5]">+ Add feature</button>
+                            </div>
                         </div>
                     </div>
 
@@ -1078,8 +1238,27 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                         <label className="flex items-center gap-2 text-sm font-medium text-[#03a9e7] cursor-pointer hover:text-[#0290c5] w-fit">
                             <Upload size={15} /> Add PDF / images
                             <input type="file" multiple accept="application/pdf,image/*" className="hidden"
-                                onChange={e => { setFiles(arr => [...arr, ...Array.from(e.target.files ?? [])]); e.target.value = '' }} />
+                                onChange={e => { addFiles(Array.from(e.target.files ?? [])); e.target.value = '' }} />
                         </label>
+
+                        {/* Extraction status — the loan/package fields above are what got filled. */}
+                        {extracting && (
+                            <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+                                <Loader2 size={14} className="animate-spin shrink-0" />
+                                {lastLoFile.length > 1
+                                    ? `Reading the Letter of Offer (${lastLoFile.length} pages)…`
+                                    : 'Reading the Letter of Offer…'}
+                            </div>
+                        )}
+                        {!extracting && extractErr && (
+                            <div className="flex items-start gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2">
+                                <AlertTriangle size={14} className="text-slate-400 shrink-0 mt-0.5" />
+                                <span className="flex-1 text-slate-600">{extractErr} Fill the loan details in by hand.</span>
+                                {lastLoFile.length > 0 && (
+                                    <button type="button" onClick={() => void runExtract(lastLoFile)} className="font-medium text-[#03a9e7] hover:text-[#0290c5] shrink-0">Retry</button>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Banker(s) */}
@@ -1269,6 +1448,23 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
                     {data.closed_package_details && <p className="text-xs text-slate-400">{data.closed_package_details}</p>}
                 </div>
             </div>
+
+            {/* Property + package features captured from the LO */}
+            {(cwd.property_address || cwd.package_features?.length) && (
+                <div className="space-y-2">
+                    {cwd.property_address && (
+                        <div className="flex items-start gap-2 text-sm">
+                            <Home size={14} className="text-slate-400 shrink-0 mt-0.5" />
+                            <span className="text-slate-700">{cwd.property_address}</span>
+                        </div>
+                    )}
+                    {cwd.package_features?.length ? (
+                        <ul className="text-sm text-slate-600 list-disc pl-6 space-y-0.5">
+                            {cwd.package_features.map((f, i) => <li key={i}>{f}</li>)}
+                        </ul>
+                    ) : null}
+                </div>
+            )}
 
             {/* Loans */}
             <div className="space-y-2">

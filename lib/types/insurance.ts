@@ -55,6 +55,11 @@ export interface ClosedWonData {
     lo_documents?: LoDocument[]
     original_loan_total?: number    // Σ loan amounts in the LO (this close's commission base)
     combined_outstanding?: number   // Σ per-loan balances at end of lock-in (next-cycle base)
+    // Captured from the Letter of Offer. Both live here rather than in their own
+    // columns: the insurance `cases` table has neither (property_address belongs
+    // to property_cases, a different app), and closed_won_data is already jsonb.
+    property_address?: string
+    package_features?: string[]     // free conversion, legal/valuation subsidy, waivers, etc.
 }
 
 // Case Interface
