@@ -1,8 +1,19 @@
 /**
  * Rate ingestion extractor — turns a pasted Google-Sheet block into structured
- * packages via Gemini (JSON mode, strict schema, temperature 0).
+ * packages via DeepSeek (JSON mode, temperature 0).
  *
- * Gemini is ONLY a transcriber here: it structures text the admin pasted. It must
+ * Moved off Gemini: its free tier meters ~20 requests per day PER MODEL across
+ * every feature sharing the key, and Letter-of-Offer extraction now needs that
+ * budget for scanned documents, which only a vision model can read. This task
+ * is pasted text in, JSON out, so it belongs on the paid, uncapped provider.
+ *
+ * One thing that lost: Gemini's responseSchema enforced the output shape. DeepSeek's
+ * json mode guarantees only that the response PARSES, so the shape is described
+ * explicitly at the end of the prompt and normalize() below re-validates every
+ * field. A real read elsewhere in this codebase came back with the whole payload
+ * nested one level deeper than asked for, which is exactly what that guards against.
+ *
+ * The model is ONLY a transcriber: it structures text the admin pasted. It must
  * never invent rates, features, or figures — only restructure what is present.
  * The result is always reviewed and confirmed by a human before anything is saved.
  *
@@ -11,25 +22,7 @@
 
 import type { MortgagePackageInput, RateScheduleEntry } from '@/lib/types/rates'
 import { cleanReference } from '@/lib/insurance/rateSchedule'
-
-// gemini-3.0-flash is primary: free tier with separate quota (5 RPM / 20 RPD),
-// non-thinking so it stays well within the 25s timeout.
-// 2.5-flash / 2.5-flash-lite are fallbacks with thinkingBudget:0 to disable
-// thinking mode — without it they time out on large bank dumps.
-// 2.0-flash / 2.0-flash-lite have 0 quota on AI Studio free keys — skip them.
-interface ModelDef { id: string; genExtra?: Record<string, unknown> }
-
-const DEFAULT_MODELS: ModelDef[] = [
-    { id: 'gemini-3.0-flash' },
-    { id: 'gemini-2.5-flash',      genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-    { id: 'gemini-2.5-flash-lite', genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-]
-
-function modelChain(): ModelDef[] {
-    const primary = process.env.GEMINI_MODEL
-    if (!primary) return DEFAULT_MODELS
-    return [{ id: primary }, ...DEFAULT_MODELS.filter(m => m.id !== primary)]
-}
+import { callDeepSeek } from '@/lib/insurance/deepseek'
 
 const SYSTEM_INSTRUCTION = `You convert a pasted Singapore mortgage rate block (from a broker's working sheet or a banker's message) into STRUCTURED package data.
 
@@ -54,111 +47,66 @@ STRICT RULES:
 7. lockin_years: integer from the package ("2 Years Lock-in" → 2; "No Lock-in" → 0).
 8. property_type values allowed: "HDB", "Private", "HDB / Private", "Executive Condominium".
 9. package_name: use the name in the block if present; otherwise build a short one like "<n>Y Fixed - <lockin>Y Lock-in".
-10. features: bullet lines under the package (free conversion, funding requirement, cash incentive, etc). Empty array if none.`
+10. features: bullet lines under the package (free conversion, funding requirement, cash incentive, etc). Empty array if none.
+
+OUTPUT SHAPE — return exactly this structure, with "packages" at the TOP LEVEL. Do not nest it inside another object, and do not add fields that are not listed here:
+{
+  "packages": [
+    {
+      "package_name": "2Y Fixed - 2Y Lock-in",
+      "category": "Fixed",
+      "lockin_years": 2,
+      "min_entries": [{ "property_type": "HDB", "min": "200K" }],
+      "min_loan_note": "Priority Banking: min $300K",
+      "rate_schedule": [
+        { "year": 1, "type": "fixed", "rate": 2.00 },
+        { "thereafter": true, "type": "floating", "reference": "3M SORA", "spread": 0.75 }
+      ],
+      "features": ["Free conversion after lock-in"],
+      "subsidies": "Legal subsidy $2,000"
+    }
+  ]
+}`
 
 const ALLOWED_CATEGORIES = ['Fixed', 'Floating (Completed)', 'BUC']
 const ALLOWED_PROPERTY = ['HDB', 'Private', 'HDB / Private', 'Executive Condominium']
 
-const RESPONSE_SCHEMA = {
-    type: 'object',
-    properties: {
-        packages: {
-            type: 'array',
-            items: {
-                type: 'object',
-                properties: {
-                    category: { type: 'string', enum: ALLOWED_CATEGORIES },
-                    // One entry per property type the package serves. `min` is the RAW
-                    // size token from the header ("200K", "3M", "1.5m") — code parses it.
-                    min_entries: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                property_type: { type: 'string', enum: ALLOWED_PROPERTY },
-                                min: { type: 'string' },
-                            },
-                            required: ['property_type', 'min'],
-                        },
-                    },
-                    min_loan_note: { type: 'string' },
-                    package_name: { type: 'string' },
-                    lockin_years: { type: 'integer' },
-                    rate_schedule: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                year: { type: 'integer' },
-                                thereafter: { type: 'boolean' },
-                                type: { type: 'string', enum: ['fixed', 'floating'] },
-                                rate: { type: 'number' },
-                                reference: { type: 'string' },
-                                spread: { type: 'number' },
-                            },
-                            required: ['type'],
-                        },
-                    },
-                    features: { type: 'array', items: { type: 'string' } },
-                    subsidies: { type: 'string' },
-                },
-                required: ['package_name', 'category', 'rate_schedule', 'min_entries'],
-            },
-        },
-    },
-    required: ['packages'],
-}
 
 export async function extractPackages(text: string, bank: string): Promise<MortgagePackageInput[] | null> {
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey || !text.trim() || !bank.trim()) return null
+    if (!text.trim() || !bank.trim()) return null
 
-    const basePayload = {
-        system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-        contents: [{ role: 'user', parts: [{ text: `Bank: ${bank}\n\nPaste:\n${text.trim()}` }] }],
-        generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 16384,  // headroom for big bank dumps (a full bank can be ~20 packages); truncation → invalid JSON
-            responseMimeType: 'application/json',
-            responseSchema: RESPONSE_SCHEMA,
-        },
-    }
+    const raw = await callDeepSeek({
+        label: 'extractPackages',
+        system: SYSTEM_INSTRUCTION,
+        user: `Bank: ${bank}\n\nPaste:\n${text.trim()}`,
+        temperature: 0,
+        // Headroom for big bank dumps (a full bank can be ~20 packages);
+        // truncation produces invalid JSON and loses the whole extraction.
+        maxTokens: 16384,
+        json: true,
+        timeoutMs: 60000,
+    })
+    if (!raw) return null
 
-    for (const { id: model, genExtra } of modelChain()) {
-        const body = JSON.stringify(genExtra
-            ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }
-            : basePayload
-        )
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-        try {
-            // One retry on transient 503/429 before moving on. Each call is capped
-            // so a slow model can't burn the whole serverless budget.
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                res = await fetch(url, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-                    signal: AbortSignal.timeout(25000),
-                })
-                if (res.ok || (res.status !== 503 && res.status !== 429)) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 800))
-            }
-            if (!res || !res.ok) {
-                console.error(`[extractPackages] ${model} HTTP ${res?.status}`)
-                continue
-            }
-            const json = await res.json()
-            let raw = json?.candidates?.[0]?.content?.parts?.[0]?.text
-            if (typeof raw !== 'string' || !raw.trim()) continue
-            raw = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')   // strip any stray fences
-
-            const parsed = JSON.parse(raw)
-            const out = normalize(parsed?.packages, bank)
-            if (out && out.length) return out
-        } catch (err) {
-            console.error(`[extractPackages] ${model} threw: ${String(err)}`)
+    try {
+        const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+        const parsed = JSON.parse(cleaned)
+        // DeepSeek's json mode guarantees only that this PARSES — there is no
+        // schema enforcement as there was with Gemini's responseSchema, so
+        // tolerate the array arriving at the top level or under a stray key.
+        const packages = Array.isArray(parsed) ? parsed
+            : Array.isArray(parsed?.packages) ? parsed.packages
+                : null
+        if (!packages) {
+            console.error('[extractPackages] response had no packages array')
+            return null
         }
+        const out = normalize(packages, bank)
+        return out && out.length ? out : null
+    } catch (err) {
+        console.error(`[extractPackages] parse failed: ${String(err)}`)
+        return null
     }
-    return null
 }
 
 // Coerce + sanitise the model output into clean MortgagePackageInput rows.

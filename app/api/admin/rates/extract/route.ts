@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     if (!bank?.trim() || !text?.trim()) {
         return NextResponse.json({ error: 'Pick a bank and paste the rate block.' }, { status: 400 })
     }
-    if (!process.env.GEMINI_API_KEY) {
-        return NextResponse.json({ error: 'Extraction needs GEMINI_API_KEY — not configured.' }, { status: 503 })
+    if (!process.env.DEEPSEEK_API_KEY) {
+        return NextResponse.json({ error: 'Extraction needs DEEPSEEK_API_KEY — not configured.' }, { status: 503 })
     }
 
     const packages = await extractPackages(text, bank)
