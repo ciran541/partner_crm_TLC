@@ -49,6 +49,7 @@ export async function normalizeQuery(question: string): Promise<string> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), DEADLINE_MS)
 
+    const startedAt = Date.now()
     try {
         const text = await callDeepSeek({
             label: 'normalizeQuery',
@@ -66,5 +67,11 @@ export async function normalizeQuery(question: string): Promise<string> {
     } finally {
         clearTimeout(timer)
     }
+
+    // Falling back is safe but silently costs retrieval accuracy, so say so.
+    // This matters most right after the move from Gemini: if DeepSeek is
+    // consistently slower than the deadline at this tiny rewrite, the step
+    // becomes a permanent no-op and nothing else would reveal it.
+    console.warn(`[normalizeQuery] fell back to the raw question after ${Date.now() - startedAt}ms (deadline ${DEADLINE_MS}ms)`)
     return question
 }
