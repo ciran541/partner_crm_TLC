@@ -46,11 +46,11 @@ export async function POST(request: Request) {
     const answer = await composeAnswer(question, candidates.map(c => ({ title: c.title, content: c.content })))
 
     if (answer === null) {
-        // Gemini unavailable (no key / error) → degrade to showing the article cards
+        // Model unavailable (no key / error) → degrade to showing the article cards
         return NextResponse.json({ answer: null, sources: candidates, fallback: true })
     }
 
-    // Gemini read the articles but couldn't synthesise an answer from them —
+    // The model read the articles but couldn't synthesise an answer from them —
     // still show the candidate articles so agents can read them directly.
     if (/check with your admin/i.test(answer)) {
         await logGap(question, user.id)
