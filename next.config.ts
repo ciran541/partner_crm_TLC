@@ -49,6 +49,22 @@ const nextConfig: NextConfig = {
   // degrading Banks' Insights the same way. It is a native module, so it must
   // stay external too: bundling a .node binary breaks its resolution.
   serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas"],
+
+  // Installing @napi-rs/canvas is not enough on Vercel. pdfjs-dist require()s
+  // it dynamically inside a try/catch, so Next's output file tracing never sees
+  // a static import to follow and leaves it out of the deployed function —
+  // producing "Cannot find module '@napi-rs/canvas'" from
+  // /var/task/node_modules at runtime even though it is in package.json.
+  // Force-include it for every route that reads a PDF. The glob covers the
+  // whole @napi-rs scope on purpose: the platform binary installs as its OWN
+  // package (@napi-rs/canvas-linux-x64-gnu on Vercel), so including only
+  // @napi-rs/canvas would ship the wrapper without the .node it loads.
+  outputFileTracingIncludes: {
+    "/api/insurance/cases/extract-lo": ["./node_modules/@napi-rs/**"],
+    "/api/cron/bank-intelligence": ["./node_modules/@napi-rs/**"],
+    "/api/admin/insurance/bank-intelligence": ["./node_modules/@napi-rs/**"],
+    "/api/admin/insurance/bank-intelligence/refresh": ["./node_modules/@napi-rs/**"],
+  },
   async headers() {
     return [
       {
