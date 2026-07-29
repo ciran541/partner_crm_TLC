@@ -32,6 +32,24 @@ export async function POST(request: Request) {
     const auth = await requireInsuranceUser()
     if (!auth.authorized) return auth.response
 
+    // Distinguish "this server has no AI keys" from "the model couldn't read
+    // it". Both used to surface as the same generic 422, which is impossible to
+    // act on — and the keys living in a local .env.local that never deploys is
+    // exactly how a feature works locally and silently does nothing in prod.
+    const hasDeepSeek = !!process.env.DEEPSEEK_API_KEY
+    const hasGemini = !!process.env.GEMINI_API_KEY
+    if (!hasDeepSeek && !hasGemini) {
+        console.error('[extract-lo] no AI keys configured — set DEEPSEEK_API_KEY and GEMINI_API_KEY')
+        return NextResponse.json(
+            { error: 'Document reading is not configured on this server. Ask your admin to set the AI keys.' },
+            { status: 503 },
+        )
+    }
+    // Images and scanned PDFs can ONLY be read by the vision lane.
+    if (!hasGemini) {
+        console.warn('[extract-lo] GEMINI_API_KEY missing — images and scanned PDFs cannot be read')
+    }
+
     let form: FormData
     try {
         form = await request.formData()
@@ -56,6 +74,15 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Only PDF, JPEG, PNG or WebP files can be read.' }, { status: 415 })
         }
     }
+    // Only Gemini can read pixels. Without it an image upload would run the
+    // whole pipeline and fail with a generic "couldn't read this file".
+    if (!hasGemini && uploads.some(f => f.type.startsWith('image/'))) {
+        return NextResponse.json(
+            { error: 'Reading photos and screenshots is not configured on this server. Upload the PDF instead, or ask your admin to set GEMINI_API_KEY.' },
+            { status: 503 },
+        )
+    }
+
     const totalBytes = uploads.reduce((sum, f) => sum + f.size, 0)
     if (totalBytes > MAX_BYTES) {
         return NextResponse.json(
