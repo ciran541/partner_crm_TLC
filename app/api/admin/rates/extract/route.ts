@@ -21,7 +21,10 @@ export async function POST(request: Request) {
 
     const packages = await extractPackages(text, bank)
     if (!packages) {
-        return NextResponse.json({ error: 'The AI extractor is busy or rate-limited right now (Gemini free tier). Wait a moment and click Extract again.' }, { status: 502 })
+        // Kept generic: this fires for a rate limit, a network error, or a
+        // response that did not parse, and the admin's next step is the same
+        // either way. The server log carries the specific cause.
+        return NextResponse.json({ error: "Couldn't read that rate block — the extractor failed or returned something unusable. Try again, or check the paste is a rate table." }, { status: 502 })
     }
 
     return NextResponse.json({ packages })

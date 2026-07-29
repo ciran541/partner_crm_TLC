@@ -49,7 +49,7 @@ STRICT RULES:
 9. package_name: use the name in the block if present; otherwise build a short one like "<n>Y Fixed - <lockin>Y Lock-in".
 10. features: bullet lines under the package (free conversion, funding requirement, cash incentive, etc). Empty array if none.
 
-OUTPUT SHAPE — return exactly this structure, with "packages" at the TOP LEVEL. Do not nest it inside another object, and do not add fields that are not listed here:
+OUTPUT — reply with a single JSON object and nothing else. No prose, no markdown fences. It must match this shape exactly, with "packages" at the TOP LEVEL. Do not nest it inside another object, and do not add fields that are not listed here:
 {
   "packages": [
     {

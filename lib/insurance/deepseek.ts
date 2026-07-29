@@ -42,10 +42,21 @@ export async function callDeepSeek(opts: DeepSeekOptions): Promise<string | null
     const apiKey = process.env.DEEPSEEK_API_KEY
     if (!apiKey || !opts.user.trim()) return null
 
+    // json mode is rejected outright (HTTP 400) unless the word "json" appears
+    // somewhere in the prompt — a rule that is easy to miss when porting a
+    // prompt written for a provider with schema enforcement, and it takes down
+    // the whole feature rather than degrading it. Append the instruction rather
+    // than fail: callers should say it themselves, but not having said it is
+    // never a reason to reject the request.
+    let system = opts.system
+    if (opts.json && !/json/i.test(`${opts.system} ${opts.user}`)) {
+        system += '\n\nReply with a single JSON object and nothing else.'
+    }
+
     const body = JSON.stringify({
         model: MODELS[0],
         messages: [
-            { role: 'system', content: opts.system },
+            { role: 'system', content: system },
             { role: 'user', content: opts.user },
         ],
         temperature: opts.temperature ?? 0,
