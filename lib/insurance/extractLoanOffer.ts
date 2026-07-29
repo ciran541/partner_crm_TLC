@@ -350,13 +350,13 @@ async function callGeminiVision(files: LoFile[], system: string, deadline: numbe
             }
             if (!res || !res.ok) {
                 console.error(`[extractLoanOffer] gemini ${model} HTTP ${res?.status}`)
-                if (res?.status === 429) {
-                    // Quota is per project, not per model — if one model is
-                    // blocked the next is too. Trying the rest of the chain
-                    // burned 4 calls per extraction to fail 4 times.
-                    lastFailure = 'rate_limited'
-                    return null
-                }
+                // Gemini's free tier meters each MODEL separately, so a 429 on
+                // one does not mean the next is blocked — a real local run had
+                // flash unavailable and flash-lite answer fine. Record the
+                // reason but keep going down the chain; only the same-model
+                // retry above is skipped, since a daily quota cannot recover
+                // in 800ms.
+                if (res?.status === 429) lastFailure = 'rate_limited'
                 continue
             }
             const json = await res.json()

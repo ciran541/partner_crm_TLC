@@ -520,19 +520,22 @@ async function callGemini(parts: GeminiPart[]): Promise<string | null> {
                     signal: AbortSignal.timeout(45000),   // PDFs take longer than a text prompt
                 })
                 // Retry only a transient 503. A 429 is Gemini's daily quota and
-                // will not recover in 800ms — retrying spends another unit of
-                // what just ran out. This cron runs over every bank daily, so
-                // the waste compounded: with pdf-parse broken on Vercel every
-                // report fell through to here, and each burned four calls
-                // (2 models x 2 attempts) to fail four times. That is what
-                // drained the shared key before LO extraction could touch it.
+                // will not recover in 800ms — retrying the SAME model just
+                // spends another unit of what ran out. This cron runs over
+                // every bank daily, so the waste compounded: with pdf-parse
+                // broken on Vercel every report fell through to here, and each
+                // burned four calls to fail four times, draining the shared key
+                // before LO extraction could touch it. Falling through to the
+                // NEXT model is still worth doing — free-tier quota is metered
+                // per model, so flash-lite can answer when flash cannot.
                 if (res.ok || res.status !== 503) break
                 if (attempt === 0) await new Promise(r => setTimeout(r, 800))
             }
             if (!res || !res.ok) {
                 console.error(`[bankIntelligence] ${model} HTTP ${res?.status}`)
-                // Quota is per project — the next model in the chain is blocked too.
-                if (res?.status === 429) return null
+                // Free-tier quota is metered per MODEL, so a 429 on one does
+                // not block the next — keep going down the chain. Only the
+                // same-model retry above is skipped.
                 continue
             }
             const json = await res.json()
