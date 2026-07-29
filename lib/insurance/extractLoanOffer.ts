@@ -342,12 +342,21 @@ async function callGeminiVision(files: LoFile[], system: string, deadline: numbe
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
                     signal: AbortSignal.timeout(timeout),
                 })
-                if (res.ok || (res.status !== 503 && res.status !== 429)) break
+                // Retry ONLY a transient 503. A 429 here is Gemini's daily
+                // quota, which will not recover in 800ms — retrying just spends
+                // another unit of the very thing that ran out.
+                if (res.ok || res.status !== 503) break
                 if (attempt === 0) await new Promise(r => setTimeout(r, 800))
             }
             if (!res || !res.ok) {
                 console.error(`[extractLoanOffer] gemini ${model} HTTP ${res?.status}`)
-                if (res?.status === 429) lastFailure = 'rate_limited'
+                if (res?.status === 429) {
+                    // Quota is per project, not per model — if one model is
+                    // blocked the next is too. Trying the rest of the chain
+                    // burned 4 calls per extraction to fail 4 times.
+                    lastFailure = 'rate_limited'
+                    return null
+                }
                 continue
             }
             const json = await res.json()

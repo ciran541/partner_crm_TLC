@@ -519,11 +519,20 @@ async function callGemini(parts: GeminiPart[]): Promise<string | null> {
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
                     signal: AbortSignal.timeout(45000),   // PDFs take longer than a text prompt
                 })
-                if (res.ok || (res.status !== 503 && res.status !== 429)) break
+                // Retry only a transient 503. A 429 is Gemini's daily quota and
+                // will not recover in 800ms — retrying spends another unit of
+                // what just ran out. This cron runs over every bank daily, so
+                // the waste compounded: with pdf-parse broken on Vercel every
+                // report fell through to here, and each burned four calls
+                // (2 models x 2 attempts) to fail four times. That is what
+                // drained the shared key before LO extraction could touch it.
+                if (res.ok || res.status !== 503) break
                 if (attempt === 0) await new Promise(r => setTimeout(r, 800))
             }
             if (!res || !res.ok) {
                 console.error(`[bankIntelligence] ${model} HTTP ${res?.status}`)
+                // Quota is per project — the next model in the chain is blocked too.
+                if (res?.status === 429) return null
                 continue
             }
             const json = await res.json()
