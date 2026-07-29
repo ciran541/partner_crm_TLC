@@ -347,6 +347,7 @@ async function callGeminiVision(files: LoFile[], system: string, deadline: numbe
             }
             if (!res || !res.ok) {
                 console.error(`[extractLoanOffer] gemini ${model} HTTP ${res?.status}`)
+                if (res?.status === 429) lastFailure = 'rate_limited'
                 continue
             }
             const json = await res.json()
@@ -376,6 +377,21 @@ export interface LoFile {
 }
 
 /**
+ * Why the last extraction failed, when the reason is actionable.
+ *
+ * Set by the lanes and read by the route so a quota wall can say so. Gemini's
+ * free tier is ~20 requests/day and returns 429 on every model in the chain
+ * once spent — which otherwise reaches the agent as "couldn't read this file",
+ * indistinguishable from an unreadable document and impossible to act on.
+ */
+let lastFailure: 'rate_limited' | null = null
+export function takeLastFailure(): 'rate_limited' | null {
+    const f = lastFailure
+    lastFailure = null
+    return f
+}
+
+/**
  * @param files         the uploaded LO, as one or more pages IN ORDER. Multiple
  *                      images are read together as one document.
  * @param allowedKinds  the loan kinds THIS case type can close (from loanSpecsFor) —
@@ -388,6 +404,7 @@ export async function extractLoanOffer(
 ): Promise<ExtractedLo | null> {
     const pages = files.filter(f => f.buffer.length)
     if (!pages.length || !allowedKinds.length) return null
+    lastFailure = null
     const system = systemInstruction(allowedKinds)
     const deadline = Date.now() + TOTAL_BUDGET_MS
 

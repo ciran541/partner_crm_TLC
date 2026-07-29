@@ -12,7 +12,7 @@
 
 import { NextResponse } from 'next/server'
 import { requireInsuranceUser } from '@/lib/auth/requireInsuranceUser'
-import { extractLoanOffer, LO_ACCEPTED_MIME } from '@/lib/insurance/extractLoanOffer'
+import { extractLoanOffer, takeLastFailure, LO_ACCEPTED_MIME } from '@/lib/insurance/extractLoanOffer'
 import { CLOSED_LOAN_LABELS } from '@/lib/insurance/closedWon'
 import type { ClosedLoanKind } from '@/lib/types'
 
@@ -108,6 +108,15 @@ export async function POST(request: Request) {
         })))
         const data = await extractLoanOffer(pages, kinds)
         if (!data) {
+            // A spent daily quota is a wait-or-upgrade problem, not a bad
+            // document — saying "couldn't read this file" would send the agent
+            // hunting for a better scan that was never the issue.
+            if (takeLastFailure() === 'rate_limited') {
+                return NextResponse.json(
+                    { error: "The document-reading service has hit today's usage limit. Enter the details manually, or try again tomorrow." },
+                    { status: 429 },
+                )
+            }
             return NextResponse.json(
                 { error: "Couldn't read this file. Enter the details manually." },
                 { status: 422 },
