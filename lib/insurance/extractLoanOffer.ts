@@ -129,7 +129,8 @@ STRICT RULES:
    - a FEE WAIVER (conversion admin fee waived, redemption fee reduced) — that belongs in features (rule 8), not here;
    - the bank paying its own legal costs.
 10. clawback_end_date — ONLY if the LO prints an actual calendar date for the clawback/subsidy repayment period ending, formatted YYYY-MM-DD. If it instead states a PERIOD ("3 years from disbursement", "36 months"), OMIT this field — do not calculate a date. The period wording belongs in "subsidy" (rule 9).
-11. notes — short plain-English flags for anything a human should double-check: a figure you could not find, an ambiguous facility type, text that was blurred/cropped/illegible, or more facilities than you could confidently separate. If the document is clearly only PART of an LO (a single page, a screenshot, or page numbering like "Page 1 of 15" showing pages you were not given), say so plainly as the first note — e.g. "Only page 1 of 15 was provided; lock-in, fees and security details are on pages you did not receive." Empty array if the LO was complete and fully clear.
+11. notes — short plain-English flags for anything a human should double-check: a figure you could not find, an ambiguous facility type, text that was blurred/cropped/illegible, or more facilities than you could confidently separate. Empty array if the LO was complete and fully clear.
+   PARTIAL DOCUMENTS: only flag this when you genuinely received part of an LO — one page, a screenshot, or an excerpt. A footer reading "Page 1 of 11" does NOT mean you were given only page 1: a complete document contains that footer on its first page and "Page 2 of 11", "Page 3 of 11" and so on further down. Before flagging, check whether LATER page markers are present. If they are, or if you found content that lives on later pages (the security clause, the fee schedule, the signature block), the document is COMPLETE — say nothing. Falsely telling an agent that pages are missing sends them looking for a document they already have.
 12. If the document is not a Letter of Offer at all (e.g. an ID, a valuation report, a blank page), return empty loans, an empty rate_schedule, and one note saying what it appears to be.
 
 LENGTH LIMITS — the response must stay compact. A field that runs long truncates the whole JSON and the entire extraction is lost, so these are hard caps, not preferences: property_address <= 200 characters; each feature <= 12 words with at most 15 features; subsidy <= 25 words; each note <= 25 words with at most 5 notes; each rate_text <= 20 words. NEVER transcribe raw page text, OCR output, page markers, or whole clauses into any field.
@@ -349,7 +350,13 @@ async function callGeminiVision(files: LoFile[], system: string, deadline: numbe
                 if (attempt === 0) await new Promise(r => setTimeout(r, 800))
             }
             if (!res || !res.ok) {
-                console.error(`[extractLoanOffer] gemini ${model} HTTP ${res?.status}`)
+                // Google explains WHICH limit was hit in the body
+                // (quotaId / quotaMetric, e.g. PerDay vs PerMinute vs
+                // PerProject). A bare status code cannot distinguish a spent
+                // daily quota from a per-minute burst limit or a project
+                // misconfiguration, and those have completely different fixes.
+                const detail = res ? await res.text().catch(() => '') : ''
+                console.error(`[extractLoanOffer] gemini ${model} HTTP ${res?.status} ${detail.slice(0, 800)}`)
                 // Gemini's free tier meters each MODEL separately, so a 429 on
                 // one does not mean the next is blocked — a real local run had
                 // flash unavailable and flash-lite answer fine. Record the
