@@ -59,11 +59,19 @@ const nextConfig: NextConfig = {
   // whole @napi-rs scope on purpose: the platform binary installs as its OWN
   // package (@napi-rs/canvas-linux-x64-gnu on Vercel), so including only
   // @napi-rs/canvas would ship the wrapper without the .node it loads.
+  //
+  // pdfjs-dist/legacy/build is here for the same reason, one file over: pdfjs
+  // loads pdf.worker.mjs by PATH at runtime rather than importing it, so the
+  // tracer never sees it either. With canvas fixed, production then failed on
+  // "Setting up fake worker failed: Cannot find module .../pdf.worker.mjs" —
+  // the same class of miss. Scoped to legacy/build (what pdf-parse v2 uses)
+  // rather than the whole package, to keep the function small; if a CJK PDF
+  // ever fails on missing character maps, cmaps/ would need adding too.
   outputFileTracingIncludes: {
-    "/api/insurance/cases/extract-lo": ["./node_modules/@napi-rs/**"],
-    "/api/cron/bank-intelligence": ["./node_modules/@napi-rs/**"],
-    "/api/admin/insurance/bank-intelligence": ["./node_modules/@napi-rs/**"],
-    "/api/admin/insurance/bank-intelligence/refresh": ["./node_modules/@napi-rs/**"],
+    "/api/insurance/cases/extract-lo": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
+    "/api/cron/bank-intelligence": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
+    "/api/admin/insurance/bank-intelligence": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
+    "/api/admin/insurance/bank-intelligence/refresh": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
   },
   async headers() {
     return [
