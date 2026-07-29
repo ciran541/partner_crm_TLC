@@ -302,6 +302,14 @@ async function callGeminiVision(files: LoFile[], system: string, deadline: numbe
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) return null
 
+    // Identify WHICH key is in play without printing it. Local and production
+    // returning opposite results seconds apart on a supposedly identical key is
+    // only explainable if they differ, if the limit is per-IP rather than
+    // per-key, or if one key's project has the API disabled (which returns an
+    // instant 429 with limit 0, indistinguishable from a spent quota). Compare
+    // this line between the two environments to settle the first of those.
+    console.log(`[extractLoanOffer] gemini key ...${apiKey.slice(-4)} (len ${apiKey.length})`)
+
     // All pages go in ONE request, in order, so the model sees the whole
     // document. An LO photographed page by page is a single document: the
     // address is often on page 1 and the rate table on page 2, and reading
