@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
     Briefcase, User, Building2, FileText, StickyNote,
     AlertCircle, ChevronLeft, ChevronRight, Check, CheckCircle2,
+    Loader2, Sparkles,
 } from 'lucide-react'
 import CaseTypeSelector from '@/components/property/CaseTypeSelector'
 import BankDropdown from '@/components/property/BankDropdown'
@@ -21,6 +22,9 @@ import {
     FLOATING_RATE_TYPES, type CaseCategory, type FloatingRateType,
 } from '@/lib/property/bankerData'
 import type { PropertyCaseType } from '@/lib/types/property'
+// Type-only — importing a runtime value from extractLetterOfOffer would pull
+// its pdf-parse dynamic import into the client bundle.
+import type { ExtractedLo, MortgageFieldPrefill } from '@/lib/property/extractLetterOfOffer'
 
 interface FormState {
     case_type: PropertyCaseType | null
@@ -32,6 +36,7 @@ interface FormState {
     case_category: CaseCategory | ''
     banker_name: string
     property_type: string
+    property_address: string
     outstanding_loan_amount: string
     balance_tenure_months: string
     subsidy_amount: string
@@ -55,6 +60,7 @@ const INITIAL_FORM: FormState = {
     case_category: '',
     banker_name: '',
     property_type: '',
+    property_address: '',
     outstanding_loan_amount: '', balance_tenure_months: '', subsidy_amount: '',
     lock_in_period: '', free_conversion: '',
     package_type: '', fixed_years: '',
@@ -261,6 +267,118 @@ export default function NewCasePage() {
             .catch(() => {})
     }, [])
 
+    // ── Letter of Offer extraction (Step 3) ─────────────────────────────────
+    // Advisory only — every prefilled field stays editable, and nothing is
+    // saved until the agent submits the form in Step 4. Loan/lock-in/rate
+    // fields only reveal once case_category/banker/property_type are picked
+    // (they can't come from the LO), so extracted values for those are
+    // staged in pendingPrefill and applied once that section opens.
+    const [extracting, setExtracting] = useState(false)
+    const [extractError, setExtractError] = useState<string | null>(null)
+    const [extractSucceeded, setExtractSucceeded] = useState(false)
+    const [extractNotes, setExtractNotes] = useState<string[]>([])
+    const [extractApplied, setExtractApplied] = useState(false)
+    // Set once the file is sitting in Storage (before extraction even runs) —
+    // Step 4 reuses this path instead of uploading the same bytes a second time.
+    const [loStoragePath, setLoStoragePath] = useState<string | null>(null)
+    const [pendingPrefill, setPendingPrefill] = useState<Partial<Pick<FormState,
+        'outstanding_loan_amount' | 'balance_tenure_months' | 'lock_in_period' |
+        'package_type' | 'fixed_years' | 'floating_rate_type' | 'year_rates' | 'letter_of_offer_date'
+    >> | null>(null)
+
+    function matchBank(name: string, list: { id: string; name: string }[]): { id: string; name: string } | null {
+        const norm = name.toLowerCase().replace(/\./g, '').trim()
+        const direct = list.find(b => norm.includes(b.name.toLowerCase()) || b.name.toLowerCase().includes(norm))
+        if (direct) return direct
+        const ALIASES: Record<string, string> = {
+            'united overseas bank': 'UOB',
+            'oversea-chinese banking': 'OCBC',
+            'oversea chinese banking': 'OCBC',
+            'development bank of singapore': 'DBS',
+            'standard chartered': 'SCB',
+            'bank of china': 'BOC',
+            'hongkong and shanghai': 'HSBC',
+            'hong kong and shanghai': 'HSBC',
+            citibank: 'CITI',
+        }
+        for (const [phrase, code] of Object.entries(ALIASES)) {
+            if (norm.includes(phrase)) {
+                const match = list.find(b => b.name.toUpperCase() === code)
+                if (match) return match
+            }
+        }
+        return null
+    }
+
+    async function runExtractLo(file: File) {
+        setExtracting(true)
+        setExtractError(null)
+        setExtractSucceeded(false)
+        setExtractNotes([])
+        setLoStoragePath(null)
+        try {
+            // Upload straight to Storage first — browser to Storage, no Vercel
+            // function in between, so a large LO never hits the ~4.5MB request-body
+            // ceiling a direct multipart POST to our own route would. This also
+            // means Step 4 can attach the exact same object without re-uploading it.
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('Your session expired. Please sign in again.')
+            const ext = file.name.split('.').pop() || 'bin'
+            const path = `${user.id}/precase/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+            const { error: uploadError } = await supabase.storage.from('property-documents').upload(path, file)
+            if (uploadError) throw new Error('Could not upload that file. Please try again.')
+            setLoStoragePath(path)
+
+            const res = await fetch('/api/property/cases/extract-lo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path, mime: file.type }),
+                signal: AbortSignal.timeout(75000),
+            })
+            const json = await res.json().catch(() => null)
+            if (!res.ok) throw new Error(json?.error || `Could not read that file (HTTP ${res.status}).`)
+
+            const data = json.data as ExtractedLo
+            const mortgageFields = json.mortgageFields as MortgageFieldPrefill
+            const notes = [...data.notes]
+
+            if (data.property_address) set('property_address', data.property_address)
+
+            if (data.bank) {
+                const match = matchBank(data.bank, banks)
+                if (!match) {
+                    notes.push(`Bank "${data.bank}" didn't match any listed bank — please select it manually.`)
+                } else if (!form.bank_id) {
+                    handleBankChange(match.id)
+                } else if (form.bank_id !== match.id) {
+                    // Don't clobber a bank the agent already picked (and the
+                    // case_category/banker/property_type chosen under it) —
+                    // just flag the mismatch for them to resolve.
+                    notes.push(`LO shows "${data.bank}" but a different bank is already selected — verify and update manually if needed.`)
+                }
+            }
+            if (data.subsidy) notes.push(`LO mentions a subsidy: "${data.subsidy}" — enter the amount above manually if it applies.`)
+
+            setExtractApplied(false)
+            setPendingPrefill({
+                ...(data.total_loan_amount > 0 && { outstanding_loan_amount: String(data.total_loan_amount) }),
+                ...(data.tenure_years > 0 && { balance_tenure_months: String(data.tenure_years) }),
+                ...(data.lockin_years != null && { lock_in_period: String(data.lockin_years) }),
+                ...(mortgageFields.package_type && { package_type: mortgageFields.package_type }),
+                ...(mortgageFields.fixed_years && { fixed_years: mortgageFields.fixed_years }),
+                ...(mortgageFields.floating_rate_type && { floating_rate_type: mortgageFields.floating_rate_type }),
+                ...(mortgageFields.year_rates.length > 0 && { year_rates: mortgageFields.year_rates }),
+                ...(data.lo_date && { letter_of_offer_date: data.lo_date }),
+            })
+            setExtractNotes(notes)
+            setExtractSucceeded(true)
+        } catch (err) {
+            setExtractError(err instanceof Error ? err.message : 'Could not read that file.')
+        } finally {
+            setExtracting(false)
+        }
+    }
+
     function set<K extends keyof FormState>(key: K, value: FormState[K]) {
         setForm(f => ({ ...f, [key]: value }))
         setFieldErrors(e => ({ ...e, [key as string]: undefined }))
@@ -343,6 +461,28 @@ export default function NewCasePage() {
     useEffect(() => { if (showLoanFields)    scrollTo(refLoanFields)    }, [showLoanFields])
     useEffect(() => { if (showPackage)       scrollTo(refPackage)       }, [showPackage])
     useEffect(() => { if (showLetterOfOffer) scrollTo(refLetterOfOffer) }, [showLetterOfOffer])
+
+    // Loan/lock-in/rate fields only render once case_category/banker/property_type
+    // are picked manually — apply whatever the LO gave us for those the moment
+    // that section opens, exactly once per extraction.
+    useEffect(() => {
+        if (showLoanFields && pendingPrefill && !extractApplied) {
+            // Never overwrite a value the agent already typed in — extraction
+            // is a head start, not a correction.
+            setForm(f => ({
+                ...f,
+                ...(!f.outstanding_loan_amount && pendingPrefill.outstanding_loan_amount !== undefined && { outstanding_loan_amount: pendingPrefill.outstanding_loan_amount }),
+                ...(!f.balance_tenure_months && pendingPrefill.balance_tenure_months !== undefined && { balance_tenure_months: pendingPrefill.balance_tenure_months }),
+                ...(!f.lock_in_period && pendingPrefill.lock_in_period !== undefined && { lock_in_period: pendingPrefill.lock_in_period }),
+                ...(!f.package_type && pendingPrefill.package_type !== undefined && { package_type: pendingPrefill.package_type }),
+                ...(!f.fixed_years && pendingPrefill.fixed_years !== undefined && { fixed_years: pendingPrefill.fixed_years }),
+                ...(pendingPrefill.floating_rate_type !== undefined && { floating_rate_type: pendingPrefill.floating_rate_type }),
+                ...(f.year_rates.length === 0 && pendingPrefill.year_rates !== undefined && { year_rates: pendingPrefill.year_rates }),
+                ...(!f.letter_of_offer_date && pendingPrefill.letter_of_offer_date !== undefined && { letter_of_offer_date: pendingPrefill.letter_of_offer_date }),
+            }))
+            setExtractApplied(true)
+        }
+    }, [showLoanFields, pendingPrefill, extractApplied])
 
     // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -455,6 +595,7 @@ export default function NewCasePage() {
                 client_name: form.client_name.trim(),
                 client_mobile: form.client_mobile.trim(),
                 client_email: form.client_email.trim(),
+                ...(form.property_address.trim() && { property_address: form.property_address.trim() }),
                 ...(form.bank_id && { bank_id: form.bank_id }),
                 ...(form.case_category && { case_category: form.case_category }),
                 ...(form.banker_name && { banker_name: form.banker_name }),
@@ -491,20 +632,31 @@ export default function NewCasePage() {
 
             if (selectedFile) {
                 try {
-                    const { data: { user } } = await supabase.auth.getUser()
-                    if (user) {
-                        const ext = selectedFile.name.split('.').pop()
-                        const path = `${user.id}/${caseId}/${Date.now()}.${ext}`
-                        const { error: uploadError } = await supabase.storage
-                            .from('property-documents')
-                            .upload(path, selectedFile)
+                    if (loStoragePath) {
+                        // Already uploaded to Storage when the LO was attached in
+                        // Step 3 (for auto-extraction) — just point the case at it
+                        // rather than uploading the same bytes again.
+                        await fetch(`/api/property/cases/${caseId}/documents`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ file_url: loStoragePath, file_name: selectedFile.name, file_type: selectedFile.type }),
+                        })
+                    } else {
+                        const { data: { user } } = await supabase.auth.getUser()
+                        if (user) {
+                            const ext = selectedFile.name.split('.').pop()
+                            const path = `${user.id}/${caseId}/${Date.now()}.${ext}`
+                            const { error: uploadError } = await supabase.storage
+                                .from('property-documents')
+                                .upload(path, selectedFile)
 
-                        if (!uploadError) {
-                            await fetch(`/api/property/cases/${caseId}/documents`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ file_url: path, file_name: selectedFile.name, file_type: selectedFile.type }),
-                            })
+                            if (!uploadError) {
+                                await fetch(`/api/property/cases/${caseId}/documents`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ file_url: path, file_name: selectedFile.name, file_type: selectedFile.type }),
+                                })
+                            }
                         }
                     }
                 } catch {
@@ -614,6 +766,50 @@ export default function NewCasePage() {
                             title="Mortgage Details"
                             subtitle="Each section opens as you complete the previous one." />
 
+                        {/* Upload Letter of Offer — auto-fills the fields below */}
+                        <div style={{ marginBottom: 24 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                <Sparkles size={14} color="#d97706" />
+                                <p style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Upload your Letter of Offer</p>
+                            </div>
+                            <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
+                                We&apos;ll try to auto-fill the details below from it. You can also skip this and enter everything manually.
+                            </p>
+                            <DocumentUploader
+                                selectedFile={selectedFile}
+                                onFileSelect={file => {
+                                    setSelectedFile(file)
+                                    if (file) {
+                                        runExtractLo(file)
+                                    } else {
+                                        setExtractError(null); setExtractSucceeded(false)
+                                        setExtractNotes([]); setPendingPrefill(null); setExtractApplied(false)
+                                        setLoStoragePath(null)
+                                    }
+                                }}
+                            />
+                            {extracting && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 13, color: '#64748b' }}>
+                                    <Loader2 size={14} className="animate-spin" /> Reading your Letter of Offer…
+                                </div>
+                            )}
+                            {extractError && (
+                                <div style={{ marginTop: 12 }}>
+                                    <InlineAlert type="error" message={extractError} onDismiss={() => setExtractError(null)} />
+                                </div>
+                            )}
+                            {extractSucceeded && !extracting && (
+                                <div style={{ marginTop: 12 }}>
+                                    <InlineAlert type="info" message="Extracted from your Letter of Offer — please review the fields below." />
+                                    {extractNotes.length > 0 && (
+                                        <ul style={{ marginTop: -8, marginBottom: 16, paddingLeft: 18, fontSize: 12, color: '#92400e' }}>
+                                            {extractNotes.map((n, i) => <li key={i}>{n}</li>)}
+                                        </ul>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
                         {/* Section A — Bank */}
                         <Field label="Bank" required>
                             <BankDropdown value={form.bank_id} onChange={handleBankChange} />
@@ -668,6 +864,15 @@ export default function NewCasePage() {
                                         <option key={pt} value={pt}>{pt}</option>
                                     ))}
                                 </select>
+                                <div style={{ marginTop: 16 }}>
+                                    <Field label="Property Address (optional)">
+                                        <TextInput
+                                            value={form.property_address}
+                                            onChange={v => set('property_address', v)}
+                                            placeholder="123 Example Ave #01-01 Singapore 123456"
+                                        />
+                                    </Field>
+                                </div>
                             </div>
                         )}
 

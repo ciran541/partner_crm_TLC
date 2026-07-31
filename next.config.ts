@@ -69,6 +69,7 @@ const nextConfig: NextConfig = {
   // ever fails on missing character maps, cmaps/ would need adding too.
   outputFileTracingIncludes: {
     "/api/insurance/cases/extract-lo": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
+    "/api/property/cases/extract-lo": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
     "/api/cron/bank-intelligence": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
     "/api/admin/insurance/bank-intelligence": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],
     "/api/admin/insurance/bank-intelligence/refresh": ["./node_modules/@napi-rs/**", "./node_modules/pdfjs-dist/legacy/build/**"],

@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { Upload, X, FileText } from 'lucide-react'
 
 const ACCEPTED_TYPES = ['application/pdf', 'image/jpeg', 'image/png']
-const MAX_SIZE = 10 * 1024 * 1024
+const MAX_SIZE = 25 * 1024 * 1024
 
 interface Props {
     onFileSelect: (file: File | null) => void
@@ -29,7 +29,7 @@ export default function DocumentUploader({ onFileSelect, selectedFile }: Props) 
             return
         }
         if (file.size > MAX_SIZE) {
-            setFileError('File must be under 10 MB.')
+            setFileError('File must be under 25 MB.')
             return
         }
         onFileSelect(file)
@@ -77,7 +77,7 @@ export default function DocumentUploader({ onFileSelect, selectedFile }: Props) 
                 <Upload size={24} color={dragOver ? '#059669' : '#94a3b8'} />
                 <div className="text-center">
                     <p className="text-sm font-medium text-slate-600">Click to upload or drag and drop</p>
-                    <p className="text-xs text-slate-400 mt-0.5">PDF, JPEG or PNG — max 10 MB</p>
+                    <p className="text-xs text-slate-400 mt-0.5">PDF, JPEG or PNG — max 25 MB</p>
                 </div>
             </button>
             <input
