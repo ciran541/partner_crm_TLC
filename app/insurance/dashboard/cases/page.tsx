@@ -8,9 +8,8 @@ import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { useCases } from '@/lib/insurance/useCases'
-import { isDraftCase } from '@/lib/insurance/caseFilters'
-import type { Case, PipelineStage } from '@/lib/types'
+import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
+import type { PipelineStage } from '@/lib/types'
 
 const PIPELINE_STAGES: PipelineStage[] = [
     'Touched Base',
@@ -43,15 +42,13 @@ function StageBadge({ stage }: { stage: string }) {
     return <span className="status-badge" style={{ color: cfg.text, background: cfg.bg }}>{stage}</span>
 }
 
-// Raw loan figure used for the loan column + potential revenue.
-function caseLoanValue(c: Case): number {
-    const amount = (c.case_type === 'Refinancing' || c.case_type === 'Equity Loan')
-        ? c.existing_loan_amount
-        : c.loan_size
-    return amount ?? 0
-}
-function caseLoanAmount(c: Case) {
-    const v = caseLoanValue(c)
+// The loan figure comes from the server now (search_cases.loan_value), so the
+// column and the revenue total are computed from ONE definition — the same one
+// Earnings uses. This page previously had a local variant that ignored the
+// Letter of Offer total on closed deals, so its revenue tile silently disagreed
+// with Earnings on exactly the cases that had real money attached.
+function caseLoanAmount(c: CaseListRow) {
+    const v = c.loan_value ?? 0
     return v ? formatCurrency(v) : '—'
 }
 
@@ -69,7 +66,6 @@ const inputStyle: React.CSSProperties = {
 
 export default function CasesPage() {
     const router = useRouter()
-    const { cases: allCases, isAdmin, loading, error } = useCases()
 
     const [stageFilter, setStageFilter] = useState('active')
     const [agentFilter, setAgentFilter] = useState('all')
@@ -81,6 +77,31 @@ export default function CasesPage() {
     const [fromDate, setFromDate] = useState('')
     const [toDate, setToDate] = useState('')
     const [month, setMonth] = useState('')
+
+    const dateActive = dateMode !== 'all' && (dateMode === 'range' ? !!(fromDate || toDate) : !!month)
+
+    // The server filters, pages and totals. `search` is passed raw — the hook
+    // debounces it internally, so the input stays instant while the request waits
+    // for you to stop typing.
+    const {
+        rows: cases,
+        total,
+        loanVolume,
+        isAdmin,
+        hasMore,
+        loading,
+        refreshing,
+        loadingMore,
+        error,
+        loadMore,
+    } = usePagedCases({
+        search,
+        stage: stageFilter,
+        agent: agentFilter === 'all' ? undefined : agentFilter,
+        from: dateMode === 'range' ? fromDate || undefined : undefined,
+        to: dateMode === 'range' ? toDate || undefined : undefined,
+        month: dateMode === 'month' ? month || undefined : undefined,
+    })
 
     // Admin-only: load the full agent roster for the agent filter. Gated on
     // isAdmin so the agent path never makes this call.
@@ -98,58 +119,18 @@ export default function CasesPage() {
         return () => { active = false }
     }, [isAdmin])
 
-    const pipelineCases = useMemo(() => allCases.filter(c => !isDraftCase(c)), [allCases])
+    // The date pickers used to take their floor from the earliest loaded case.
+    // With paging we no longer hold the whole history, and guessing a floor from
+    // the current page would move as you scroll — so only the ceiling (today) is
+    // constrained now. The server applies the real filter either way.
+    const { today, thisMonth } = useMemo(() => {
+        const todayStr = new Date().toISOString().slice(0, 10)
+        return { today: todayStr, thisMonth: todayStr.slice(0, 7) }
+    }, [])
 
-    // Earliest creation date — drives the floor of the date pickers.
-    const { earliestDay, earliestMonth, today, thisMonth } = useMemo(() => {
-        const now = new Date()
-        const todayStr = now.toISOString().slice(0, 10)
-        let min = todayStr
-        for (const c of pipelineCases) {
-            const d = c.created_at.slice(0, 10)
-            if (d < min) min = d
-        }
-        return { earliestDay: min, earliestMonth: min.slice(0, 7), today: todayStr, thisMonth: todayStr.slice(0, 7) }
-    }, [pipelineCases])
-
-    // Filter in memory — the full list is already cached, so changing any filter
-    // is instant and never triggers a network request.
-    const cases = useMemo(() => {
-        const q = search.trim().toLowerCase()
-        return pipelineCases.filter(c => {
-            // Stage / Active
-            if (stageFilter === 'active') {
-                if (c.stage === 'Closed Won' || c.stage === 'Closed Lost') return false
-            } else if (c.stage !== stageFilter) {
-                return false
-            }
-            // Agent (admin only)
-            if (agentFilter !== 'all' && c.created_by !== agentFilter) return false
-            // Search — client name / mobile / email
-            if (q) {
-                const hay = `${c.client_name ?? ''} ${c.client_mobile ?? ''} ${c.client_email ?? ''}`.toLowerCase()
-                if (!hay.includes(q)) return false
-            }
-            // Creation-date filter
-            if (dateMode === 'range') {
-                const created = c.created_at.slice(0, 10)
-                if (fromDate && created < fromDate) return false
-                if (toDate && created > toDate) return false
-            } else if (dateMode === 'month') {
-                if (month && c.created_at.slice(0, 7) !== month) return false
-            }
-            return true
-        })
-    }, [pipelineCases, stageFilter, agentFilter, search, dateMode, fromDate, toDate, month])
-
-    const potentialRevenue = useMemo(
-        () => cases.reduce((s, c) => s + caseLoanValue(c) * REVENUE_RATE, 0),
-        [cases],
-    )
-    const loanVolume = useMemo(() => cases.reduce((s, c) => s + caseLoanValue(c), 0), [cases])
+    const potentialRevenue = loanVolume * REVENUE_RATE
 
     const filterLabel = stageFilter === 'active' ? 'Active' : stageFilter
-    const dateActive = dateMode !== 'all' && (dateMode === 'range' ? !!(fromDate || toDate) : !!month)
     const hasFilters = stageFilter !== 'active' || agentFilter !== 'all' || !!search || dateActive
 
     const resetFilters = () => {
@@ -166,7 +147,7 @@ export default function CasesPage() {
                         <h1 className="ios-page-title">Cases</h1>
                         {!loading && (
                             <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 9999, background: '#f1f5f9', color: '#64748b' }}>
-                                {cases.length}
+                                {total}
                             </span>
                         )}
                     </div>
@@ -220,15 +201,15 @@ export default function CasesPage() {
 
                     {dateMode === 'range' && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <input type="date" value={fromDate} min={earliestDay} max={toDate || today}
+                            <input type="date" value={fromDate} max={toDate || today}
                                 onChange={e => setFromDate(e.target.value)} style={inputStyle} aria-label="From date" />
                             <span style={{ color: '#94a3b8', fontSize: 13 }}>to</span>
-                            <input type="date" value={toDate} min={fromDate || earliestDay} max={today}
+                            <input type="date" value={toDate} min={fromDate || undefined} max={today}
                                 onChange={e => setToDate(e.target.value)} style={inputStyle} aria-label="To date" />
                         </div>
                     )}
                     {dateMode === 'month' && (
-                        <input type="month" value={month} min={earliestMonth} max={thisMonth}
+                        <input type="month" value={month} max={thisMonth}
                             onChange={e => setMonth(e.target.value)} style={inputStyle} aria-label="Month" />
                     )}
 
@@ -273,8 +254,10 @@ export default function CasesPage() {
                         <p style={{ fontSize: 24, fontWeight: 800, color: '#052d4a', lineHeight: 1.15 }}>
                             {formatCurrency(potentialRevenue)}
                         </p>
+                        {/* Both figures come from the server and cover every case
+                            matching the filter — not just the rows loaded so far. */}
                         <p style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                            0.15% of {formatCurrency(loanVolume)} loan volume · {cases.length} case{cases.length !== 1 ? 's' : ''}
+                            0.15% of {formatCurrency(loanVolume)} loan volume · {total} case{total !== 1 ? 's' : ''}
                         </p>
                     </div>
                 </div>
@@ -305,8 +288,14 @@ export default function CasesPage() {
                 />
             )}
 
+            {/* `refreshing` means a new query is loading OVER existing rows. Dim
+                rather than blank so there is no spinner flash or layout jump. */}
             {!loading && !error && cases.length > 0 && (
-                <>
+                <div style={{
+                    display: 'flex', flexDirection: 'column', gap: 20,
+                    opacity: refreshing ? 0.55 : 1,
+                    transition: 'opacity 0.15s',
+                }}>
                     {/* Desktop table */}
                     <div className="hidden md:block card" style={{ overflow: 'hidden' }}>
                         <div style={{ overflowX: 'auto' }}>
@@ -366,7 +355,7 @@ export default function CasesPage() {
                             </table>
                         </div>
                         <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', fontSize: 12, color: '#94a3b8' }}>
-                            {cases.length} case{cases.length !== 1 ? 's' : ''}
+                            Showing {cases.length} of {total} case{total !== 1 ? 's' : ''}
                         </div>
                     </div>
 
@@ -411,7 +400,23 @@ export default function CasesPage() {
                             </button>
                         ))}
                     </div>
-                </>
+
+                    {/* Appends the next page, so scroll position is preserved. */}
+                    {hasMore && (
+                        <button
+                            onClick={loadMore}
+                            disabled={loadingMore}
+                            className="card"
+                            style={{
+                                padding: '12px 20px', width: '100%', cursor: loadingMore ? 'default' : 'pointer',
+                                background: 'none', border: '1px solid #e2e8f0',
+                                fontSize: 13, fontWeight: 600, color: '#0369a1',
+                            }}
+                        >
+                            {loadingMore ? 'Loading…' : `Load more (${total - cases.length} remaining)`}
+                        </button>
+                    )}
+                </div>
             )}
         </div>
     )

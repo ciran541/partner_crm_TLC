@@ -1,13 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
 import { BarChart2, TrendingUp, DollarSign, Clock, Users, AlertCircle, Briefcase } from 'lucide-react'
 import StatsCard from '@/components/shared/StatsCard'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { useCases } from '@/lib/insurance/useCases'
-import { isDraftCase } from '@/lib/insurance/caseFilters'
-import { caseLoanBase, caseCommission, commissionBucket, commissionTotals } from '@/lib/insurance/commission'
-import type { Case, CaseType, PipelineStage } from '@/lib/types'
+import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
+import type { CaseType, PipelineStage } from '@/lib/types'
 
 const STAGES: PipelineStage[] = ['Touched Base', 'Pending Docs', 'Pending Approval', 'Pending Signature', 'Closed Won', 'Closed Lost']
 const STAGE_COLOR: Record<string, string> = {
@@ -36,63 +33,36 @@ function BarRow({ label, count, total, color }: { label: string; count: number; 
     )
 }
 
-type CaseRow = Case & { profiles?: { id: string; name: string } | null }
-
 export default function AdminInsuranceAnalyticsPage() {
-    const { cases: allCases, loading, error } = useCases()
+    // Every figure below is computed by the database over EVERY case, not by the
+    // browser over whatever rows a download happened to include. That is the
+    // whole point of the change: these numbers used to be silently understated
+    // once the case count passed the row cap.
+    const { summary, loading, error } = useCaseSummary()
 
-    const d = useMemo(() => {
-        const cases = (allCases as CaseRow[]).filter(c => !isDraftCase(c))
-        const totalCases = cases.length
-        const activeCases = cases.filter(c => c.stage !== 'Closed Won' && c.stage !== 'Closed Lost').length
-        const closedWon = cases.filter(c => c.stage === 'Closed Won').length
-
-        const stageCounts: Record<string, number> = {}
-        const typeCounts: Record<string, number> = {}
-        let volume = 0, gross = 0, agent = 0, tlc = 0
-        for (const c of cases) {
-            stageCounts[c.stage] = (stageCounts[c.stage] ?? 0) + 1
-            typeCounts[c.case_type] = (typeCounts[c.case_type] ?? 0) + 1
-            volume += caseLoanBase(c)
-            if (commissionBucket(c)) { const cm = caseCommission(c); gross += cm.gross; agent += cm.agent; tlc += cm.tlc }
-        }
-
-        const totals = commissionTotals(cases)
-
-        // Monthly volume — last 6 months
-        const months: string[] = []
-        const now = new Date()
-        for (let i = 5; i >= 0; i--) {
-            const dt = new Date(now.getFullYear(), now.getMonth() - i, 1)
-            months.push(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`)
-        }
-        const monthly = months.map(mk => ({
-            month: mk,
-            count: cases.filter(c => (c.created_at ?? '').slice(0, 7) === mk).length,
-        }))
-
-        // Follow-ups
-        const today = new Date().toISOString().slice(0, 10)
-        const withFu = cases.filter(c => c.follow_up_date)
-        const followUps = {
-            total: withFu.length,
-            overdue: withFu.filter(c => c.follow_up_date! <= today).length,
-            upcoming: withFu.filter(c => c.follow_up_date! > today).length,
-        }
-
-        // Top agents by case count
-        const byAgent = new Map<string, { name: string; count: number; commission: number }>()
-        for (const c of cases) {
-            const key = c.created_by ?? 'unknown'
-            const row = byAgent.get(key) ?? { name: c.profiles?.name ?? 'Unknown agent', count: 0, commission: 0 }
-            row.count++
-            if (commissionBucket(c)) row.commission += caseCommission(c).agent
-            byAgent.set(key, row)
-        }
-        const topAgents = [...byAgent.values()].sort((a, b) => b.count - a.count).slice(0, 10)
-
-        return { totalCases, activeCases, closedWon, stageCounts, typeCounts, volume, gross, agent, tlc, totals, monthly, followUps, topAgents }
-    }, [allCases])
+    // Named to match the shape the markup already used, so the rendering below
+    // is untouched and this stays a data-layer change only.
+    const d = {
+        totalCases: summary.total_cases,
+        activeCases: summary.active_cases,
+        closedWon: summary.closed_won,
+        stageCounts: summary.stage_counts,
+        typeCounts: summary.type_counts,
+        volume: summary.volume,
+        gross: summary.commission.gross,
+        agent: summary.commission.agent,
+        tlc: summary.commission.tlc,
+        totals: {
+            open: summary.commission.open,
+            closedUnpaid: summary.commission.closed_unpaid,
+            closedPaid: summary.commission.closed_paid,
+            activeCases: summary.commission.active_cases,
+            total: summary.commission.total,
+        },
+        monthly: summary.monthly,
+        followUps: summary.follow_ups,
+        topAgents: summary.top_agents,
+    }
 
     const maxMonthly = Math.max(...d.monthly.map(m => m.count), 1)
 

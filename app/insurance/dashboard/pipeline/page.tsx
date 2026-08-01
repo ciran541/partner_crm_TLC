@@ -11,10 +11,8 @@ import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { useCases } from '@/lib/insurance/useCases'
-import { isDraftCase } from '@/lib/insurance/caseFilters'
-import { commissionTotals } from '@/lib/insurance/commission'
-import type { Case } from '@/lib/types'
+import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
+import { usePagedCases } from '@/lib/insurance/usePagedCases'
 
 const PLANNER_ROUTE = '/insurance/dashboard'
 
@@ -30,32 +28,40 @@ function stageBadge(stage: string) {
     return STAGE_BADGE[stage] ?? DEFAULT_STAGE_BADGE
 }
 
-function computeStats(cases: Case[]) {
-    const now = new Date()
-    const in90Days = new Date(now)
-    in90Days.setDate(now.getDate() + 90)
-
-    return {
-        total: cases.length,
-        active: cases.filter(c => c.stage !== 'Closed Won' && c.stage !== 'Closed Lost').length,
-        closedWon: cases.filter(c => c.stage === 'Closed Won').length,
-        upcomingLockIns: cases.filter(c => {
-            if (!c.lock_in_end_date || c.stage === 'Closed Lost') return false
-            const d = new Date(c.lock_in_end_date)
-            return d >= now && d <= in90Days
-        }).length,
-    }
-}
-
 export default function PipelineDashboard() {
     const router = useRouter()
-    const { cases: allCases, loading, error } = useCases()
 
-    // Drafts (planner sessions with no client yet) stay out of the pipeline view.
-    const cases = allCases.filter(c => !isDraftCase(c))
-    const stats = computeStats(cases)
-    const comm = commissionTotals(cases)
-    const recentCases = cases.slice(0, 5)
+    // Counts and commission come from the database, computed over every case
+    // rather than over a downloaded page. The lock-in count uses the same window
+    // and rules as the Upcoming Lock-ins screen it links to, so the number on the
+    // card always matches the list behind it.
+    const { summary, loading: summaryLoading, error: summaryError } = useCaseSummary()
+
+    // The five most recently updated cases — a list, so it comes from the paged
+    // endpoint. Drafts stay out of the pipeline view, which is this endpoint's
+    // default.
+    const {
+        rows: recentCases,
+        loading: recentLoading,
+        error: recentError,
+    } = usePagedCases({ stage: 'all', limit: 5 })
+
+    const loading = summaryLoading || recentLoading
+    const error = summaryError || recentError
+
+    const stats = {
+        total: summary.total_cases,
+        active: summary.active_cases,
+        closedWon: summary.closed_won,
+        upcomingLockIns: summary.upcoming_lock_ins,
+    }
+    const comm = {
+        open: summary.commission.open,
+        closedUnpaid: summary.commission.closed_unpaid,
+        closedPaid: summary.commission.closed_paid,
+        activeCases: summary.commission.active_cases,
+        total: summary.commission.total,
+    }
 
     const hour = new Date().getHours()
     const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'

@@ -32,7 +32,7 @@ import {
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
-import { refreshCases } from '@/lib/insurance/useCases'
+import { invalidateCaseData } from '@/lib/insurance/caseCache'
 
 type TabKey = 'overview' | 'workflow'
 
@@ -192,7 +192,7 @@ function CaseDetailContent() {
             setAlert({ type: 'error', message: err })
         } else {
             await loadCase()
-            refreshCases() // keep dashboard / cases-list cache in sync
+            invalidateCaseData() // keep dashboard / cases-list cache in sync
             setIsEditing(false)
             setAlert({ type: 'success', message: 'Case updated successfully.' })
         }
@@ -308,7 +308,7 @@ function CaseDetailContent() {
         setCaseData(prev => prev ? { ...prev, referred_bankers: bankers } : prev)
         const err = await persistCaseUpdate({ referred_bankers: bankers })
         if (err) setAlert({ type: 'error', message: `Banker save failed: ${err}` })
-        else refreshCases()
+        else invalidateCaseData()
     }, [persistCaseUpdate])
 
     // Set a follow-up reminder date — routed through the API so it also syncs to
@@ -322,7 +322,7 @@ function CaseDetailContent() {
                 body: JSON.stringify({ follow_up_date: date }),
             })
             if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Failed to save') }
-            refreshCases()
+            invalidateCaseData()
             setAlert({ type: 'success', message: 'Follow-up reminder set.' })
         } catch (e) {
             setAlert({ type: 'error', message: `Follow-up save failed: ${e instanceof Error ? e.message : ''}` })
@@ -341,7 +341,7 @@ function CaseDetailContent() {
             setNameValue(caseData?.client_name ?? '')
         } else {
             setCaseData(prev => prev ? { ...prev, client_name: trimmed || undefined } : prev)
-            refreshCases()
+            invalidateCaseData()
         }
     }, [nameValue, caseData, persistCaseUpdate])
 
@@ -369,7 +369,7 @@ function CaseDetailContent() {
         setCaseData({ ...caseData, commission_status: next })
         const err = await persistCaseUpdate({ commission_status: next })
         if (err) setAlert({ type: 'error', message: `Failed to update commission: ${err}` })
-        else refreshCases()
+        else invalidateCaseData()
     }
 
     if (loading) return (

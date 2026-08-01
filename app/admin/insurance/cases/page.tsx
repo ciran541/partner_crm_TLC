@@ -1,13 +1,12 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ClipboardList, AlertCircle, ArrowRight, ChevronDown, Search } from 'lucide-react'
-import { useCases } from '@/lib/insurance/useCases'
+import { usePagedCases } from '@/lib/insurance/usePagedCases'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { isDraftCase } from '@/lib/insurance/caseFilters'
-import { caseCommission, caseLoanBase, commissionBucket } from '@/lib/insurance/commission'
+import { caseCommission, commissionBucket } from '@/lib/insurance/commission'
 import type { CaseType, PipelineStage } from '@/lib/types'
 
 const STAGES: PipelineStage[] = [
@@ -25,31 +24,49 @@ const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
 
 export default function AdminInsuranceCasesPage() {
     const router = useRouter()
-    const { cases: allCases, loading, error } = useCases()
     const [stageFilter, setStageFilter] = useState('')
     const [typeFilter, setTypeFilter] = useState('')
     const [agentFilter, setAgentFilter] = useState('')
     const [search, setSearch] = useState('')
+    const [agents, setAgents] = useState<{ id: string; name: string }[]>([])
 
-    const cases = useMemo(() => allCases.filter(c => !isDraftCase(c)), [allCases])
+    // Server-side filtering, paging and totals. Search covers client name/mobile/
+    // email and — because the caller is an admin — the agent's name too, matching
+    // what this screen's placeholder promises.
+    const {
+        rows: filtered,
+        total,
+        hasMore,
+        loading,
+        refreshing,
+        loadingMore,
+        error,
+        loadMore,
+    } = usePagedCases({
+        search,
+        stage: stageFilter || 'all',
+        caseType: typeFilter || undefined,
+        agent: agentFilter || undefined,
+    })
 
-    const agents = useMemo(() => {
-        const map = new Map<string, string>()
-        cases.forEach(c => { if (c.created_by) map.set(c.created_by, c.profiles?.name || 'Unnamed agent') })
-        return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
-    }, [cases])
-
-    const filtered = useMemo(() => {
-        const q = search.trim().toLowerCase()
-        return cases.filter(c =>
-            (!stageFilter || c.stage === stageFilter) &&
-            (!typeFilter || c.case_type === typeFilter) &&
-            (!agentFilter || c.created_by === agentFilter) &&
-            (!q || (c.client_name ?? '').toLowerCase().includes(q)
-                || (c.client_mobile ?? '').toLowerCase().includes(q)
-                || (c.profiles?.name ?? '').toLowerCase().includes(q)),
-        )
-    }, [cases, stageFilter, typeFilter, agentFilter, search])
+    // The agent dropdown used to be derived from the loaded rows. Under paging
+    // that would only ever list agents who happen to appear in the current page,
+    // so the roster now comes from its own endpoint.
+    useEffect(() => {
+        let active = true
+        fetch('/api/admin/get-profiles')
+            .then(res => (res.ok ? res.json() : []))
+            .then(profiles => {
+                if (!active || !Array.isArray(profiles)) return
+                setAgents(
+                    profiles
+                        .map((p: { id: string; name: string }) => ({ id: p.id, name: p.name || 'Unnamed agent' }))
+                        .sort((a, b) => a.name.localeCompare(b.name)),
+                )
+            })
+            .catch(() => { /* non-fatal: filter just won't populate */ })
+        return () => { active = false }
+    }, [])
 
     const hasFilters = !!stageFilter || !!typeFilter || !!agentFilter || !!search
 
@@ -60,7 +77,7 @@ export default function AdminInsuranceCasesPage() {
                     <ClipboardList size={26} color="#8b5cf6" /> Insurance Cases
                 </h1>
                 <p className="text-sm text-slate-500 mt-1">
-                    {loading ? 'Loading…' : `${cases.length} case${cases.length !== 1 ? 's' : ''} across all agents`}
+                    {loading ? 'Loading…' : `${total} case${total !== 1 ? 's' : ''} across all agents`}
                 </p>
             </div>
 
@@ -101,8 +118,10 @@ export default function AdminInsuranceCasesPage() {
                 </div>
             )}
 
+            {/* Dim while a new query loads over existing rows — no spinner flash,
+                no layout jump. */}
             {!loading && !error && filtered.length > 0 && (
-                <div className="card overflow-hidden">
+                <div className="card overflow-hidden transition-opacity duration-150" style={{ opacity: refreshing ? 0.55 : 1 }}>
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
@@ -115,7 +134,9 @@ export default function AdminInsuranceCasesPage() {
                                 {filtered.map(c => {
                                     const badge = STAGE_BADGE[c.stage] ?? DEFAULT_STAGE_BADGE
                                     const bucket = commissionBucket(c)
-                                    const loan = caseLoanBase(c)
+                                    // Server-computed, so the column and the
+                                    // aggregate can never disagree.
+                                    const loan = c.loan_value ?? 0
                                     return (
                                         <tr key={c.id}
                                             onClick={() => router.push(`/admin/insurance/cases/${c.id}`)}
@@ -145,8 +166,18 @@ export default function AdminInsuranceCasesPage() {
                             </tbody>
                         </table>
                     </div>
-                    <div className="px-4 py-3 border-t border-slate-100 text-xs text-slate-400">
-                        {filtered.length} of {cases.length} case{cases.length !== 1 ? 's' : ''}
+                    <div className="px-4 py-3 border-t border-slate-100 text-xs text-slate-400 flex items-center justify-between gap-3">
+                        <span>Showing {filtered.length} of {total} case{total !== 1 ? 's' : ''}</span>
+                        {/* Appends, so scroll position is preserved. */}
+                        {hasMore && (
+                            <button
+                                onClick={loadMore}
+                                disabled={loadingMore}
+                                className="text-xs font-semibold text-purple-600 hover:text-purple-800 disabled:text-slate-300"
+                            >
+                                {loadingMore ? 'Loading…' : `Load more (${total - filtered.length} remaining)`}
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

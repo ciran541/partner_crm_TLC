@@ -7,11 +7,9 @@ import StatsCard from '@/components/shared/StatsCard'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { calculateCommission } from '@/lib/property/commission'
-import { useCases } from '@/lib/insurance/useCases'
-import { isDraftCase } from '@/lib/insurance/caseFilters'
-import type { Case } from '@/lib/types'
+import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 
-type CaseRow = Case & { profiles?: { id: string; name: string } | null }
+type CaseRow = CaseListRow
 
 function daysUntil(dateStr: string): number {
     const diff = new Date(dateStr).getTime() - new Date().setHours(0, 0, 0, 0)
@@ -20,16 +18,23 @@ function daysUntil(dateStr: string): number {
 
 export default function AdminInsuranceFollowUpsPage() {
     const router = useRouter()
-    const { cases, loading, error } = useCases()
+    const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
 
-    const { overdue, upcoming } = useMemo(() => {
-        const today = new Date().toISOString().slice(0, 10)
-        const withFu = (cases as CaseRow[]).filter(c => !isDraftCase(c) && c.follow_up_date)
-        return {
-            overdue: withFu.filter(c => c.follow_up_date! <= today).sort((a, b) => b.follow_up_date!.localeCompare(a.follow_up_date!)),
-            upcoming: withFu.filter(c => c.follow_up_date! > today).sort((a, b) => a.follow_up_date!.localeCompare(b.follow_up_date!)),
-        }
-    }, [cases])
+    // Two queries so each half is ordered server-side the way this screen wants
+    // (overdue newest-first, upcoming soonest-first) with its own count and paging.
+    //
+    // includeDrafts stays FALSE here — this screen has always filtered drafts out
+    // via isDraftCase(), unlike the agent-facing follow-ups screen which has
+    // always included them. That difference is preserved deliberately.
+    const commonQuery = { stage: 'all', hasFollowUp: true, sort: 'follow_up_date' } as const
+
+    const overdueQ = usePagedCases({ ...commonQuery, followUpTo: today, dir: 'desc' })
+    const upcomingQ = usePagedCases({ ...commonQuery, followUpAfter: today, dir: 'asc' })
+
+    const overdue = overdueQ.rows
+    const upcoming = upcomingQ.rows
+    const loading = overdueQ.loading || upcomingQ.loading
+    const error = overdueQ.error || upcomingQ.error
 
     if (loading) return <div className="card p-8 flex items-center justify-center text-slate-500 text-sm">Loading follow-ups…</div>
     if (error) return <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"><AlertCircle size={15} />{error}</div>
@@ -41,33 +46,45 @@ export default function AdminInsuranceFollowUpsPage() {
                 <p className="text-sm text-slate-500 mt-1">Every agent&apos;s upcoming and overdue follow-ups in one place.</p>
             </div>
 
+            {/* Server counts — these cover every matching case, not just the rows
+                loaded so far, so the stat tiles are correct at any size. */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                <StatsCard title="Total" value={overdue.length + upcoming.length} icon={CalendarDays} color="#8b5cf6" />
-                <StatsCard title="Overdue" value={overdue.length} icon={AlertTriangle} color="#dc2626" variant="alert" />
-                <StatsCard title="Upcoming" value={upcoming.length} icon={Clock} color="#f59e0b" />
+                <StatsCard title="Total" value={overdueQ.total + upcomingQ.total} icon={CalendarDays} color="#8b5cf6" />
+                <StatsCard title="Overdue" value={overdueQ.total} icon={AlertTriangle} color="#dc2626" variant="alert" />
+                <StatsCard title="Upcoming" value={upcomingQ.total} icon={Clock} color="#f59e0b" />
             </div>
 
-            {overdue.length === 0 && upcoming.length === 0 ? (
+            {overdueQ.total === 0 && upcomingQ.total === 0 ? (
                 <div className="card p-12 text-center">
                     <Clock size={32} className="mx-auto mb-3 text-slate-300" />
                     <p className="text-slate-500 text-sm">No follow-ups scheduled across any agent.</p>
                 </div>
             ) : (
                 <>
-                    {overdue.length > 0 && <FollowUpTable title="Overdue" accent="#dc2626" rows={overdue} onOpen={id => router.push(`/admin/insurance/cases/${id}`)} />}
-                    {upcoming.length > 0 && <FollowUpTable title="Upcoming" accent="#0369a1" rows={upcoming} onOpen={id => router.push(`/admin/insurance/cases/${id}`)} />}
+                    {overdue.length > 0 && <FollowUpTable title="Overdue" accent="#dc2626" rows={overdue} total={overdueQ.total} hasMore={overdueQ.hasMore} loadingMore={overdueQ.loadingMore} onLoadMore={overdueQ.loadMore} onOpen={id => router.push(`/admin/insurance/cases/${id}`)} />}
+                    {upcoming.length > 0 && <FollowUpTable title="Upcoming" accent="#0369a1" rows={upcoming} total={upcomingQ.total} hasMore={upcomingQ.hasMore} loadingMore={upcomingQ.loadingMore} onLoadMore={upcomingQ.loadMore} onOpen={id => router.push(`/admin/insurance/cases/${id}`)} />}
                 </>
             )}
         </div>
     )
 }
 
-function FollowUpTable({ title, accent, rows, onOpen }: { title: string; accent: string; rows: CaseRow[]; onOpen: (id: string) => void }) {
+function FollowUpTable({ title, accent, rows, total, hasMore, loadingMore, onLoadMore, onOpen }: {
+    title: string
+    accent: string
+    rows: CaseRow[]
+    total: number
+    hasMore: boolean
+    loadingMore: boolean
+    onLoadMore: () => void
+    onOpen: (id: string) => void
+}) {
     return (
         <div className="card overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full" style={{ background: accent }} />
-                <span className="text-sm font-semibold text-slate-700">{title} ({rows.length})</span>
+                {/* Server count, so it stays right even when only a page is loaded. */}
+                <span className="text-sm font-semibold text-slate-700">{title} ({total})</span>
             </div>
             <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -113,6 +130,18 @@ function FollowUpTable({ title, accent, rows, onOpen }: { title: string; accent:
                     </tbody>
                 </table>
             </div>
+            {/* Appends the next page, so scroll position is preserved. */}
+            {hasMore && (
+                <div className="px-4 py-3 border-t border-slate-100 text-right">
+                    <button
+                        onClick={onLoadMore}
+                        disabled={loadingMore}
+                        className="text-xs font-semibold text-purple-600 hover:text-purple-800 disabled:text-slate-300"
+                    >
+                        {loadingMore ? 'Loading…' : `Load more (${total - rows.length} remaining)`}
+                    </button>
+                </div>
+            )}
         </div>
     )
 }

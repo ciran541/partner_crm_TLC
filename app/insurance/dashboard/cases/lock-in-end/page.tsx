@@ -6,7 +6,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, AlertCircle } from 'lucide-react'
 import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
-import { useCases } from '@/lib/insurance/useCases'
+import { usePagedCases } from '@/lib/insurance/usePagedCases'
 
 function daysLeft(dateString: string) {
     const now = new Date(); now.setHours(0, 0, 0, 0)
@@ -24,22 +24,40 @@ function timingTone(dateString: string) {
 
 export default function UpcomingLockInsPage() {
     const router = useRouter()
-    const { cases: allCases, loading, error } = useCases()
 
-    // Derive the lock-in list from the shared cache (same 90-day window the
-    // dashboard counts), sorted by soonest expiry.
-    const cases = useMemo(() => {
-        const now = new Date()
-        const in90 = new Date(now)
-        in90.setDate(now.getDate() + 90)
-        return allCases
-            .filter(c => {
-                if (!c.lock_in_end_date || c.stage === 'Closed Lost') return false
-                const d = new Date(c.lock_in_end_date)
-                return d >= now && d <= in90
-            })
-            .sort((a, b) => new Date(a.lock_in_end_date!).getTime() - new Date(b.lock_in_end_date!).getTime())
-    }, [allCases])
+    // Same 90-day window as before, now applied server-side and sorted by
+    // soonest expiry.
+    //
+    // One deliberate change: the old check was `date >= new Date()`, comparing a
+    // midnight date against the current instant, so a lock-in ending TODAY was
+    // excluded any time after midnight. The window now starts at today's date, so
+    // a lock-in expiring today appears on the screen whose whole purpose is to
+    // warn about imminent expiries.
+    const { from, to } = useMemo(() => {
+        const start = new Date()
+        const end = new Date(start)
+        end.setDate(start.getDate() + 90)
+        return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) }
+    }, [])
+
+    const {
+        rows: cases,
+        total,
+        hasMore,
+        loading,
+        loadingMore,
+        error,
+        loadMore,
+    } = usePagedCases({
+        stage: 'all',
+        // Drafts were never filtered out here, and still are not.
+        includeDrafts: true,
+        excludeStages: ['Closed Lost'],
+        lockInFrom: from,
+        lockInTo: to,
+        sort: 'lock_in_end_date',
+        dir: 'asc',
+    })
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -123,7 +141,7 @@ export default function UpcomingLockInsPage() {
                             </table>
                         </div>
                         <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9', fontSize: 12, color: '#94a3b8' }}>
-                            {cases.length} case{cases.length !== 1 ? 's' : ''}
+                            Showing {cases.length} of {total} case{total !== 1 ? 's' : ''}
                         </div>
                     </div>
 
@@ -151,6 +169,22 @@ export default function UpcomingLockInsPage() {
                             )
                         })}
                     </div>
+
+                    {/* Appends, so scroll position is preserved. */}
+                    {hasMore && (
+                        <button
+                            onClick={loadMore}
+                            disabled={loadingMore}
+                            className="card"
+                            style={{
+                                padding: '12px 20px', width: '100%', cursor: loadingMore ? 'default' : 'pointer',
+                                background: 'none', border: '1px solid #e2e8f0',
+                                fontSize: 13, fontWeight: 600, color: '#0369a1',
+                            }}
+                        >
+                            {loadingMore ? 'Loading…' : `Load more (${total - cases.length} remaining)`}
+                        </button>
+                    )}
                 </>
             )}
         </div>

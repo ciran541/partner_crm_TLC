@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase/client'
 import { useRouter, usePathname } from 'next/navigation'
 import { canAccessInsurance, getSafeRoute, isAdmin as isAdminRole } from '@/lib/permissions'
 import type { UserRole } from '@/lib/types/shared'
-import { clearCasesCache } from '@/lib/insurance/useCases'
+import { clearCaseCaches } from '@/lib/insurance/caseCache'
 import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import { needsReconsent } from '@/lib/legal/checkConsent'
@@ -238,7 +238,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     }, [router])
 
     const handleSignOut = async () => {
-        clearCasesCache()
+        clearCaseCaches()
         const { data: { user } } = await supabase.auth.getUser()
         if (user) removeLinkedAccount(user.id)
         await supabase.auth.signOut()

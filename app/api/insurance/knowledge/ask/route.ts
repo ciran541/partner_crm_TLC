@@ -5,6 +5,7 @@ import { canAccessInsurance } from '@/lib/permissions'
 import { composeAnswer } from '@/lib/insurance/askGemini'
 import { normalizeQuery } from '@/lib/insurance/normalizeQuery'
 import { retrieveArticles } from '@/lib/insurance/retrieveKnowledge'
+import { rateLimitUser } from '@/lib/rateLimit'
 
 // POST /api/insurance/knowledge/ask  { question }
 // Grounded RAG: retrieve matching articles, then Gemini composes an answer
@@ -16,6 +17,11 @@ export async function POST(request: Request) {
     if (!user || !profile || !canAccessInsurance(profile.role, profile.app_type)) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Every call spends a Gemini request (plus an embedding). Bound it per agent
+    // so a runaway client loop can't run up an unbounded bill.
+    const limited = await rateLimitUser(user.id, 'knowledge-ask', 'ai')
+    if (limited) return limited
 
     let question = ''
     try { question = (await request.json())?.question?.trim() ?? '' } catch { /* noop */ }

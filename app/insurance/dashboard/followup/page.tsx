@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useCases, refreshCases } from '@/lib/insurance/useCases'
-import type { Case } from '@/lib/types'
+import { invalidateCaseData } from '@/lib/insurance/caseCache'
+import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import { Clock, CalendarDays, CheckCircle2, AlertCircle, ChevronRight, TrendingUp } from 'lucide-react'
@@ -18,19 +18,33 @@ function diffDays(iso: string): number {
     return Math.round((target.getTime() - today.getTime()) / 86400000)
 }
 const money = (n?: number) => (n && n > 0 ? `$${Math.round(n).toLocaleString()}` : null)
-const caseFigure = (c: Case) => money(c.loan_size) ?? money(c.property_price) ?? money(c.existing_loan_amount)
+const caseFigure = (c: CaseListRow) => money(c.loan_size) ?? money(c.property_price) ?? money(c.existing_loan_amount)
 
 export default function InsuranceFollowUpPage() {
-    const { cases, loading } = useCases()
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
     const [adjustingId, setAdjustingId] = useState<string | null>(null)
     const [newDate, setNewDate] = useState('')
     const [saving, setSaving] = useState(false)
 
-    const withFollowUp = useMemo(() => cases.filter(c => c.follow_up_date), [cases])
-    const today = new Date().toISOString().split('T')[0]
-    const overdue = withFollowUp.filter(c => c.follow_up_date! <= today).sort((a, b) => b.follow_up_date!.localeCompare(a.follow_up_date!))
-    const upcoming = withFollowUp.filter(c => c.follow_up_date! > today).sort((a, b) => a.follow_up_date!.localeCompare(b.follow_up_date!))
+    const today = useMemo(() => new Date().toISOString().split('T')[0], [])
+
+    // Two queries rather than one, so each half is ordered by the server the way
+    // this screen wants it (overdue newest-first, upcoming soonest-first) and each
+    // gets its own accurate count and its own paging.
+    //
+    // includeDrafts is TRUE here on purpose: the old store returned every case
+    // and this screen never filtered drafts out, so a draft carrying a follow-up
+    // date has always appeared. The admin follow-ups screen DID filter them, and
+    // keeps doing so — the two are deliberately different, not an oversight.
+    const commonQuery = { stage: 'all', includeDrafts: true, hasFollowUp: true, sort: 'follow_up_date' } as const
+
+    const overdueQ = usePagedCases({ ...commonQuery, followUpTo: today, dir: 'desc' })
+    const upcomingQ = usePagedCases({ ...commonQuery, followUpAfter: today, dir: 'asc' })
+
+    const overdue = overdueQ.rows
+    const upcoming = upcomingQ.rows
+    const loading = overdueQ.loading || upcomingQ.loading
+    const totalFollowUps = overdueQ.total + upcomingQ.total
 
     // Routed through the API so the change also syncs to the agent's Google Calendar.
     async function persist(id: string, followUpDate: string | null): Promise<string | null> {
@@ -48,7 +62,8 @@ export default function InsuranceFollowUpPage() {
         setSaving(false)
         if (err) { setAlert({ type: 'error', message: err }); return }
         setAlert({ type: 'success', message: 'Follow-up cleared.' })
-        refreshCases()
+        // Refreshes both stores — see invalidateCaseData().
+        invalidateCaseData()
     }
 
     async function saveDate(id: string) {
@@ -59,10 +74,10 @@ export default function InsuranceFollowUpPage() {
         if (err) { setAlert({ type: 'error', message: err }); return }
         setAdjustingId(null); setNewDate('')
         setAlert({ type: 'success', message: 'Follow-up date updated.' })
-        refreshCases()
+        invalidateCaseData()
     }
 
-    if (loading && !cases.length) {
+    if (loading) {
         return <div className="flex items-center justify-center py-20"><Spinner size="md" color="#03a9e7" label="Loading follow-ups…" /></div>
     }
 
@@ -75,7 +90,7 @@ export default function InsuranceFollowUpPage() {
 
             {alert && <InlineAlert type={alert.type} message={alert.message} onDismiss={() => setAlert(null)} />}
 
-            {withFollowUp.length === 0 ? (
+            {totalFollowUps === 0 ? (
                 <div className="card p-12 text-center space-y-3">
                     <div className="w-14 h-14 rounded-2xl bg-sky-50 flex items-center justify-center mx-auto"><Clock size={26} className="text-[#03a9e7]" /></div>
                     <p className="font-semibold text-slate-700">No follow-ups yet</p>
@@ -88,7 +103,9 @@ export default function InsuranceFollowUpPage() {
                         <section>
                             <div className="flex items-center gap-2 mb-3">
                                 <AlertCircle size={16} className="text-red-500" />
-                                <h2 className="text-sm font-bold text-red-500 uppercase tracking-wide">Overdue ({overdue.length})</h2>
+                                {/* Server count — accurate even when only the first
+                                    page of rows has been loaded. */}
+                                <h2 className="text-sm font-bold text-red-500 uppercase tracking-wide">Overdue ({overdueQ.total})</h2>
                             </div>
                             <div className="space-y-2.5">
                                 {overdue.map(c => (
@@ -99,13 +116,14 @@ export default function InsuranceFollowUpPage() {
                                         onNewDate={setNewDate} onSaveDate={() => saveDate(c.id)} onMarkDone={() => markDone(c.id)} />
                                 ))}
                             </div>
+                            <LoadMore q={overdueQ} />
                         </section>
                     )}
                     {upcoming.length > 0 && (
                         <section>
                             <div className="flex items-center gap-2 mb-3">
                                 <Clock size={16} className="text-[#03a9e7]" />
-                                <h2 className="text-sm font-bold text-[#03a9e7] uppercase tracking-wide">Upcoming ({upcoming.length})</h2>
+                                <h2 className="text-sm font-bold text-[#03a9e7] uppercase tracking-wide">Upcoming ({upcomingQ.total})</h2>
                             </div>
                             <div className="space-y-2.5">
                                 {upcoming.map(c => (
@@ -116,6 +134,7 @@ export default function InsuranceFollowUpPage() {
                                         onNewDate={setNewDate} onSaveDate={() => saveDate(c.id)} onMarkDone={() => markDone(c.id)} />
                                 ))}
                             </div>
+                            <LoadMore q={upcomingQ} />
                         </section>
                     )}
                 </div>
@@ -124,8 +143,22 @@ export default function InsuranceFollowUpPage() {
     )
 }
 
+/** Appends the next page of a section, so scroll position is preserved. */
+function LoadMore({ q }: { q: { rows: unknown[]; total: number; hasMore: boolean; loadingMore: boolean; loadMore: () => void } }) {
+    if (!q.hasMore) return null
+    return (
+        <button
+            onClick={q.loadMore}
+            disabled={q.loadingMore}
+            className="mt-2.5 w-full py-2.5 text-xs font-semibold rounded-lg border border-slate-200 text-[#0369a1] hover:bg-slate-50 disabled:text-slate-300"
+        >
+            {q.loadingMore ? 'Loading…' : `Load more (${q.total - q.rows.length} remaining)`}
+        </button>
+    )
+}
+
 interface CardProps {
-    c: Case
+    c: CaseListRow
     overdue: boolean
     adjusting: boolean
     newDate: string

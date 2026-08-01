@@ -5,6 +5,7 @@ import { getCurrentSora } from '@/lib/insurance/sora'
 import { loadPackages } from '@/lib/insurance/ratesCache'
 import { buildCompareReportHtml } from '@/lib/insurance/compareReport'
 import { generatePdf } from '@/lib/email/generatePdf'
+import { rateLimitUser } from '@/lib/rateLimit'
 
 // POST /api/insurance/rates/compare-pdf
 // Body: { packageIds: string[], loan?: number, tenure?: number }
@@ -18,6 +19,12 @@ export async function POST(request: Request) {
     if (!(canAccessInsurance(profile.role, profile.app_type) || canAccessProperty(profile.role, profile.app_type))) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // The heaviest thing this app runs: each call launches chromium (~1GB, a few
+    // seconds). Unbounded, a handful of concurrent callers can saturate the
+    // function's memory and slow every other route on the deployment.
+    const limited = await rateLimitUser(user.id, 'rates-compare-pdf', 'heavy')
+    if (limited) return limited
 
     let body: { packageIds?: unknown; loan?: unknown; tenure?: unknown; clientName?: unknown; advisorName?: unknown }
     try {

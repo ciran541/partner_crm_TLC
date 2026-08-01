@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { CaseType } from '@/lib/types'
-import { useCases, refreshCases } from '@/lib/insurance/useCases'
-import { isDraftCase } from '@/lib/insurance/caseFilters'
+import { invalidateCaseData } from '@/lib/insurance/caseCache'
+import { usePagedCases } from '@/lib/insurance/usePagedCases'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import WelcomeChecklist from '@/components/insurance/onboarding/WelcomeChecklist'
@@ -40,30 +40,30 @@ function relativeTime(iso: string): string {
 
 export default function MortgagePlannerPage() {
     const router = useRouter()
-    const { cases } = useCases()
-    const [userId, setUserId] = useState<string | null>(null)
     const [creating, setCreating] = useState<CaseType | null>(null)
     const [discardingId, setDiscardingId] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [clientSearch, setClientSearch] = useState('')
 
-    // Jump straight back into an existing client's workflow — name / mobile / email.
-    const clientMatches = useMemo(() => {
-        const q = clientSearch.trim().toLowerCase()
-        if (!q) return []
-        return cases
-            .filter(c => !isDraftCase(c))
-            .filter(c => `${c.client_name ?? ''} ${c.client_mobile ?? ''} ${c.client_email ?? ''}`.toLowerCase().includes(q))
-            .slice(0, 6)
-    }, [cases, clientSearch])
+    // Jump straight back into an existing client's workflow — name / mobile /
+    // email, searched server-side across every case rather than over a downloaded
+    // subset. `enabled` holds the request back until something is typed, so
+    // landing on this page costs nothing.
+    const { rows: clientMatches } = usePagedCases(
+        { search: clientSearch, stage: 'all', limit: 6 },
+        { enabled: clientSearch.trim().length > 0 },
+    )
 
-    useEffect(() => {
-        supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id ?? null))
-    }, [])
-
-    // The agent's own in-progress planner sessions — no client data on these yet,
-    // so they're safe to surface on the client-facing landing screen.
-    const drafts = cases.filter(c => isDraftCase(c) && (!userId || c.created_by === userId))
+    // The signed-in user's own in-progress planner sessions — no client data on
+    // these yet, so they are safe to surface on a screen an agent opens in front
+    // of a client. `mine` is resolved from the session server-side, so an admin
+    // sees their own drafts here rather than everybody's.
+    const { rows: drafts } = usePagedCases({
+        draftsOnly: true,
+        mine: true,
+        stage: 'all',
+        limit: 10,
+    })
 
     const startPlan = async (type: CaseType) => {
         if (creating) return
@@ -80,7 +80,7 @@ export default function MortgagePlannerPage() {
                 .single()
 
             if (insertError) throw new Error(insertError.message)
-            refreshCases()
+            invalidateCaseData()
             router.push(`/insurance/dashboard/cases/${data.id}?tab=workflow`)
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Could not start the plan. Please try again.')
@@ -100,7 +100,7 @@ export default function MortgagePlannerPage() {
             setError('Could not delete this draft — please refresh and try again.')
             return
         }
-        refreshCases()
+        invalidateCaseData()
     }
 
     return (

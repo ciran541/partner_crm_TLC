@@ -1,12 +1,15 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { DollarSign, ArrowRight, ArrowLeft, Check, Clock } from 'lucide-react'
 import EmptyState from '@/components/shared/EmptyState'
+import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { caseCommission, caseLoanBase, commissionBucket, commissionTotals, type CommissionBucket, type AgentCommissionRow } from '@/lib/insurance/commission'
-import type { Case } from '@/lib/types'
+import { calculateCommission } from '@/lib/property/commission'
+import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
+import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
+import type { CommissionBucket, AgentCommissionRow } from '@/lib/insurance/commission'
 
 const money = (n: number) => formatCurrency(n)
 
@@ -76,31 +79,68 @@ export function MasterEarningsTable({ rows, onOpen }: { rows: AgentCommissionRow
 // ─── Agent earnings view (self, or admin drill-down) ──────────────────────────
 type Tab = 'all' | CommissionBucket
 
-export function AgentEarningsView({ cases, title, subtitle, isAdmin, savingId, onTogglePaid, onRowOpen, onBack }: {
-    cases: Case[]
+/**
+ * Owns its own data rather than receiving a case array.
+ *
+ * The tabs are a server-side filter now, so the component that knows which tab
+ * is selected has to be the one issuing the query — passing rows in from the
+ * parent would mean every parent re-implementing the tab-to-query mapping.
+ *
+ * `agentId` scopes it: omitted for an agent looking at their own earnings (the
+ * server scopes by session), set for the admin drill-down.
+ */
+export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId, onTogglePaid, onRowOpen, onBack }: {
+    agentId?: string
     title: string
     subtitle: string
     isAdmin?: boolean
     savingId?: string | null
-    onTogglePaid?: (c: Case) => void
+    onTogglePaid?: (c: CaseListRow) => void
     onRowOpen: (id: string) => void
     onBack?: () => void
 }) {
     const [tab, setTab] = useState<Tab>('all')
-    const totals = useMemo(() => commissionTotals(cases), [cases])
 
-    const bucketed = useMemo(() =>
-        cases.map(c => ({ c, bucket: commissionBucket(c) })).filter((x): x is { c: Case; bucket: CommissionBucket } => x.bucket !== null),
-        [cases])
+    // Totals and per-tab counts come from the database over EVERY case in scope,
+    // so the hero cards and tab badges stay correct however many rows are loaded.
+    const { summary, loading: summaryLoading } = useCaseSummary({ agent: agentId })
+    const c = summary.commission
 
-    const filtered = tab === 'all' ? bucketed : bucketed.filter(x => x.bucket === tab)
+    const totals = {
+        open: c.open,
+        closedUnpaid: c.closed_unpaid,
+        closedPaid: c.closed_paid,
+        activeCases: c.active_cases,
+        total: c.total,
+    }
+
+    const {
+        rows: filtered,
+        total: filteredTotal,
+        hasMore,
+        loading: rowsLoading,
+        refreshing,
+        loadingMore,
+        loadMore,
+    } = usePagedCases({ agent: agentId, stage: 'all', bucket: tab })
+
+    const bucketedCount = c.count_open + c.count_closed_unpaid + c.count_closed_paid
+    const loading = summaryLoading || rowsLoading
 
     const tabs: { key: Tab; label: string; count: number }[] = [
-        { key: 'all', label: 'All', count: bucketed.length },
-        { key: 'open', label: 'Open', count: bucketed.filter(x => x.bucket === 'open').length },
-        { key: 'closed_unpaid', label: 'Unpaid', count: bucketed.filter(x => x.bucket === 'closed_unpaid').length },
-        { key: 'closed_paid', label: 'Paid', count: bucketed.filter(x => x.bucket === 'closed_paid').length },
+        { key: 'all', label: 'All', count: bucketedCount },
+        { key: 'open', label: 'Open', count: c.count_open },
+        { key: 'closed_unpaid', label: 'Unpaid', count: c.count_closed_unpaid },
+        { key: 'closed_paid', label: 'Paid', count: c.count_closed_paid },
     ]
+
+    // Agent-share total for the tab on screen — again from the server, so the
+    // footer figure covers the whole tab rather than the rows loaded so far.
+    const tabAgentTotal =
+        tab === 'open' ? c.open
+        : tab === 'closed_unpaid' ? c.closed_unpaid
+        : tab === 'closed_paid' ? c.closed_paid
+        : c.total
 
     const bucketBadge = (b: CommissionBucket) =>
         b === 'open' ? { label: 'Open', color: '#0369a1', bg: '#e0f2fe' }
@@ -125,11 +165,15 @@ export function AgentEarningsView({ cases, title, subtitle, isAdmin, savingId, o
                 <HeroCard label="Closed — Paid" value={money(totals.closedPaid)} sub="Paid out" accent="#16a34a" bg="#f0fdf4" />
             </div>
 
-            {bucketed.length === 0 ? (
+            {loading ? (
+                <Skeleton height={320} radius={14} />
+            ) : bucketedCount === 0 ? (
                 <EmptyState icon={DollarSign} iconColor="#03a9e7" title="No commission yet"
                     description="Cases with a loan amount will show potential commission here; closed-won cases show earned commission." />
             ) : (
-                <div className="card" style={{ overflow: 'hidden' }}>
+                /* Dim while a tab switch loads over the existing rows — no spinner
+                   flash, no layout jump. */
+                <div className="card transition-opacity duration-150" style={{ overflow: 'hidden', opacity: refreshing ? 0.55 : 1 }}>
                     <div className="scroll-x" style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4 }}>
                         {tabs.map(t => {
                             const active = tab === t.key
@@ -163,8 +207,13 @@ export function AgentEarningsView({ cases, title, subtitle, isAdmin, savingId, o
                                 </tr>
                             </thead>
                             <tbody>
-                                {filtered.map(({ c, bucket }) => {
-                                    const comm = caseCommission(c)
+                                {filtered.map(c => {
+                                    // loan_value and bucket are computed by SQL, so
+                                    // the row and the totals above it can never be
+                                    // derived from two different rules.
+                                    const loan = c.loan_value ?? 0
+                                    const comm = calculateCommission(loan)
+                                    const bucket = (c.bucket ?? 'open') as CommissionBucket
                                     const badge = bucketBadge(bucket)
                                     return (
                                         <tr key={c.id}
@@ -174,7 +223,7 @@ export function AgentEarningsView({ cases, title, subtitle, isAdmin, savingId, o
                                             onMouseLeave={e => (e.currentTarget.style.background = '')}>
                                             <td className="table-td" style={{ fontWeight: 600, color: '#0f172a' }}>{c.client_name || 'Unnamed'}</td>
                                             <td className="table-td" style={{ color: '#475569' }}>{c.case_type}</td>
-                                            <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>{caseLoanBase(c) ? money(caseLoanBase(c)) : '—'}</td>
+                                            <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>{loan ? money(loan) : '—'}</td>
                                             <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>{money(comm.gross)}</td>
                                             <td className="table-td" style={{ textAlign: 'right', fontWeight: 800, color: '#059669', fontSize: 15 }}>{money(comm.agent)}</td>
                                             <td className="table-td"><span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span></td>
@@ -202,10 +251,27 @@ export function AgentEarningsView({ cases, title, subtitle, isAdmin, savingId, o
                             </tbody>
                         </table>
                     </div>
+                    {/* Appends the next page, so scroll position is preserved. */}
+                    {hasMore && (
+                        <button
+                            onClick={loadMore}
+                            disabled={loadingMore}
+                            style={{
+                                width: '100%', padding: '11px 20px', borderTop: '1px solid #f1f5f9',
+                                background: 'none', border: 'none', cursor: loadingMore ? 'default' : 'pointer',
+                                fontSize: 13, fontWeight: 600, color: '#0369a1',
+                            }}
+                        >
+                            {loadingMore ? 'Loading…' : `Load more (${filteredTotal - filtered.length} remaining)`}
+                        </button>
+                    )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid #f1f5f9', background: '#f8fafc' }}>
-                        <span style={{ fontSize: 12, color: '#94a3b8' }}>{filtered.length} case{filtered.length !== 1 ? 's' : ''}</span>
+                        {/* Both figures span the whole tab, not the loaded page. */}
+                        <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                            Showing {filtered.length} of {filteredTotal} case{filteredTotal !== 1 ? 's' : ''}
+                        </span>
                         <span style={{ fontSize: 15, fontWeight: 800, color: '#059669' }}>
-                            {money(filtered.reduce((s, x) => s + caseCommission(x.c).agent, 0))} total
+                            {money(tabAgentTotal)} total
                         </span>
                     </div>
                 </div>
