@@ -84,11 +84,35 @@ const nextConfig: NextConfig = {
   },
 };
 
-// Source-map upload needs SENTRY_ORG/SENTRY_PROJECT/SENTRY_AUTH_TOKEN, which
-// aren't set up yet — disabled for now so the build never depends on them.
-// Sentry.init() in instrumentation.ts/instrumentation-client.ts still
-// captures and reports errors regardless.
+// Source-map upload turns a minified production stack trace ("a.f is not a
+// function" at bundle-3f2a.js:1:48210) into real file names and line numbers.
+// Sentry.init() in instrumentation.ts/instrumentation-client.ts reports errors
+// either way; this is purely about them being readable.
+//
+// Gated on SENTRY_AUTH_TOKEN rather than switched on outright: a local `npm run
+// build` has no token and must not fail because of it. Set the token in Vercel
+// and production builds start uploading; leave it unset anywhere else and the
+// build behaves exactly as before.
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
+
 export default withSentryConfig(nextConfig, {
     silent: true,
-    sourcemaps: { disable: true },
+    // Slugs, not secrets — they appear in the Sentry dashboard URL. Defaulted
+    // here so the only thing that has to be configured in Vercel is the token.
+    org: process.env.SENTRY_ORG ?? 'the-loan-connection',
+    project: process.env.SENTRY_PROJECT ?? 'javascript-nextjs',
+    authToken: sentryAuthToken,
+    // Deliberately NOT pinned to a region. This org's data lives on Sentry's EU
+    // instance, but an `sntrys_…` org token already carries its own region_url
+    // and sentry-cli reads it — hardcoding de.sentry.io here would override the
+    // token's own auth URL and can fail authentication instead of fixing it.
+    // SENTRY_URL stays available as an escape hatch if upload ever 404s.
+    sentryUrl: process.env.SENTRY_URL,
+    sourcemaps: {
+        disable: !sentryAuthToken,
+        // Upload the maps to Sentry, then delete them from the build output.
+        // Without this they are served publicly alongside the bundles and
+        // anyone can reconstruct the entire source of the app.
+        deleteSourcemapsAfterUpload: true,
+    },
 });
