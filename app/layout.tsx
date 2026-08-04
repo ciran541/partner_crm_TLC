@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Partner CRM - Manage Your Business Relationships",
-  description: "A modern CRM platform for managing partner relationships, deals, and analytics",
+  title: "The Loan Connection CRM",
+  description: "The Loan Connection CRM is the partner platform for our mortgage insurance and property agents — manage client cases, track pipeline and commissions, and sync follow-ups to Google Calendar.",
   manifest: "/manifest.json?v=3",
   appleWebApp: {
     capable: true,

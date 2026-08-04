@@ -9,6 +9,22 @@ import { withSentryConfig } from "@sentry/nextjs";
 // from an attacker-controlled origin) by restricting every source list to
 // 'self' plus the specific external hosts this app actually uses.
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+
+// The browser SDK POSTs events to Sentry's ingest host, which connect-src must
+// allow or the browser refuses the request outright — errors are captured by the
+// SDK and then silently dropped, with nothing visible except a console warning
+// nobody is watching in production. That was the state of this app until now.
+//
+// Derived from the DSN rather than hardcoded so the two can never drift: the
+// ingest origin IS the DSN's origin (https://oXXXX.ingest.<region>.sentry.io).
+// A missing or malformed DSN just leaves the directive unchanged.
+let sentryIngestOrigin = "";
+try {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (dsn) sentryIngestOrigin = new URL(dsn).origin;
+} catch {
+  console.warn("[csp] NEXT_PUBLIC_SENTRY_DSN is not a valid URL — Sentry ingest not added to connect-src");
+}
 // React's dev-mode debugging (stack-trace reconstruction) needs eval() —
 // harmless to allow only in development since React never uses eval() in
 // production (confirmed via the browser's own console warning without this).
@@ -21,7 +37,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https://theloanconnection.com.sg",
   "font-src 'self' data:",
-  `connect-src 'self' ${supabaseUrl}`,
+  `connect-src ${["'self'", supabaseUrl, sentryIngestOrigin].filter(Boolean).join(" ")}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",

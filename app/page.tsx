@@ -42,6 +42,17 @@ export default function LandingPage() {
           }}
         />
 
+        <p style={{
+          fontSize: '0.85rem',
+          fontWeight: '700',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          color: '#03a9e7',
+          marginBottom: '0.75rem'
+        }}>
+          The Loan Connection CRM
+        </p>
+
         <h1 style={{
           fontSize: '3.5rem',
           fontWeight: '800',
@@ -54,15 +65,18 @@ export default function LandingPage() {
         </h1>
 
         <p style={{
-          fontSize: '1.25rem',
+          fontSize: '0.95rem',
           color: '#cbd5e1',
           marginBottom: '3rem',
-          maxWidth: '600px',
+          maxWidth: '560px',
           marginLeft: 'auto',
           marginRight: 'auto',
           lineHeight: 1.6
         }}>
-          Manage your mortgage cases, track your pipeline, and close deals faster with our professional partner platforms.
+          The Loan Connection CRM is the partner platform for our mortgage insurance and property agents.
+          Agents manage client cases end-to-end, track their pipeline and commissions, browse bank rate
+          packages, and — for agents who choose to connect Google Calendar — keep case follow-up reminders
+          synced automatically so nothing falls through the cracks.
         </p>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'center' }}>
