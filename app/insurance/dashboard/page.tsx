@@ -9,6 +9,7 @@ import { usePagedCases } from '@/lib/insurance/usePagedCases'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import WelcomeChecklist from '@/components/insurance/onboarding/WelcomeChecklist'
+import DashboardPromoBanner from '@/components/insurance/promotions/DashboardPromoBanner'
 import {
     RefreshCcw, ShoppingCart, Users, TrendingUp, ArrowRight,
     Clock, Trash2, FileText, Search,
@@ -111,6 +112,10 @@ export default function MortgagePlannerPage() {
                 <h1 className="ios-page-title">Mortgage Planner</h1>
                 <p className="page-subtitle">Pick a case type to start planning with your client.</p>
             </div>
+
+            {/* Bank promotions expire — surface them where every agent starts the
+                day, before they open a case. Renders nothing when none are live. */}
+            <DashboardPromoBanner />
 
             {/* Quick-open an existing client's workflow — no need to dig through Cases */}
             <div className="relative">

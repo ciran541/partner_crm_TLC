@@ -74,6 +74,11 @@ export interface RefinancingWorkflow {
     // Frozen snapshot of the package the agent picked (so a later admin edit to the
     // package can't silently change a client's proposal).
     selected_package_snapshot?: Record<string, unknown>
+    // Promotions that applied to that package at the moment it was picked, with
+    // the tier already resolved for this loan. Frozen for the same reason as the
+    // package itself: a promotion that later expires or is edited must not change
+    // a figure the client has already been quoted.
+    promo_snapshot?: Record<string, unknown>[]
     // Non-blocking "next actions" the agent has ticked off (guidance, not a gate).
     next_actions_done?: string[]
     // Case-specific documents the client has gathered (ticked in Documents to prepare).
@@ -155,6 +160,11 @@ export interface PurchaseWorkflow {
     // Frozen snapshot of the package the agent picked (mirrors the refi pattern so
     // a later admin edit to the package can't silently change a client's proposal).
     selected_package_snapshot?: Record<string, unknown>
+    // Promotions that applied to that package at the moment it was picked, with
+    // the tier already resolved for this loan. Frozen for the same reason as the
+    // package itself: a promotion that later expires or is edited must not change
+    // a figure the client has already been quoted.
+    promo_snapshot?: Record<string, unknown>[]
     // Non-blocking "next actions" the agent has ticked off (guidance, not a gate).
     next_actions_done?: string[]
     // Case-specific documents the client has gathered (ticked in Documents to prepare).
@@ -243,6 +253,11 @@ export interface DecoupleWorkflow {
     preferred_tenure_1?: number         // Tenure Planner comparison slot 1
     preferred_tenure_2?: number         // Tenure Planner comparison slot 2
     selected_package_snapshot?: Record<string, unknown>
+    // Promotions that applied to that package at the moment it was picked, with
+    // the tier already resolved for this loan. Frozen for the same reason as the
+    // package itself: a promotion that later expires or is edited must not change
+    // a figure the client has already been quoted.
+    promo_snapshot?: Record<string, unknown>[]
 
     // Non-blocking "next actions" the agent has ticked off (guidance, not a gate).
     next_actions_done?: string[]
@@ -314,6 +329,11 @@ export interface EquityLoanWorkflow {
     reference_lockin_years?: number
     manual_rate_schedule?: import('@/lib/types/rates').RateScheduleEntry[]
     selected_package_snapshot?: Record<string, unknown>
+    // Promotions that applied to that package at the moment it was picked, with
+    // the tier already resolved for this loan. Frozen for the same reason as the
+    // package itself: a promotion that later expires or is edited must not change
+    // a figure the client has already been quoted.
+    promo_snapshot?: Record<string, unknown>[]
 
     // Amortization comparison
     preferred_tenure_1?: number

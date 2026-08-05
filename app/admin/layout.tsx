@@ -23,6 +23,7 @@ import {
     CalendarClock,
     Landmark,
     History,
+    Gift,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
@@ -112,6 +113,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         { name: 'Insurance Analytics', href: '/admin/insurance/analytics', icon: BarChart3 },
         { name: 'Insurance Follow-ups', href: '/admin/insurance/follow-ups', icon: Clock },
         { name: 'Insurance Rates', href: '/admin/insurance/rates', icon: Percent },
+        { name: 'Bank Promotions', href: '/admin/insurance/promotions', icon: Gift },
         { name: 'Insurance Knowledge', href: '/admin/insurance/knowledge', icon: BookOpen },
         { name: 'Mortgage News', href: '/admin/insurance/news', icon: Newspaper },
         { name: 'Economic Calendar', href: '/admin/insurance/calendar', icon: CalendarClock },

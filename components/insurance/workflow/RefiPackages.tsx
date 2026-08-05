@@ -6,6 +6,11 @@ import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPackages, type RecommendedPackage } from '@/lib/insurance/rateRecommend'
 import { workflowPropType, packageStyle, stripBankPrefix, shortLoan, groupByRateTypeColumn, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule, isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
+import { matchPromotions, type MatchedPromotion } from '@/lib/insurance/promotions'
+import type { BankPromotion } from '@/lib/types/promotions'
+import type { CaseType } from '@/lib/types/insurance'
+import PromoBadge from '@/components/insurance/promotions/PromoBadge'
+import PromoDetail from '@/components/insurance/promotions/PromoDetail'
 import Spinner from '@/components/shared/Spinner'
 import RateCompareModal from '@/components/insurance/rates/RateCompareModal'
 import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, TrendingDown, SlidersHorizontal, RefreshCcw, Columns2, CheckSquare, Square, Crown } from 'lucide-react'
@@ -45,16 +50,20 @@ interface Props {
     caseId?: string                 // enables emailing the comparison to the client
     clientEmail?: string
     clientName?: string
-    onSelect: (rec: RecommendedPackage, sora: SoraRates | null) => void
+    // Shared by Refinancing, Equity Loan and Decoupling — promotions are filtered
+    // on it, since a bank may run one for refinancing but not equity.
+    caseType?: CaseType
+    onSelect: (rec: RecommendedPackage, sora: SoraRates | null, promos: MatchedPromotion[]) => void
 }
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 
 export default function RefiPackages({
-    loan, tenureYears, propertyType, includeBuc, currentRatePct, clawbackAmount, priorityBanks, currentBank, selectedId, caseId, clientEmail, clientName, onSelect,
+    loan, tenureYears, propertyType, includeBuc, currentRatePct, clawbackAmount, priorityBanks, currentBank, selectedId, caseId, clientEmail, clientName, caseType = 'Refinancing', onSelect,
 }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
+    const [promotions, setPromotions] = useState<BankPromotion[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({})
@@ -94,6 +103,7 @@ export default function RefiPackages({
                 if (!res.ok) throw new Error(json.error || 'Failed to load packages')
                 setPackages(json.data ?? [])
                 setSora(json.sora ?? null)
+                setPromotions(json.promotions ?? [])
             } catch (e) {
                 if (active) setError(e instanceof Error ? e.message : 'Failed to load packages')
             } finally {
@@ -117,6 +127,20 @@ export default function RefiPackages({
         includeBuc,
     }), [packages, sora, loan, tenureYears, currentRatePct, clawbackAmount, propertyType, includeBuc, priorityBanks, currentBank, rateTypes, features])
 
+    // Promotions that apply to THIS case, keyed by bank. The tier is resolved
+    // against this loan, so a card shows the client's actual figure ("$1,200")
+    // rather than the promotion's whole range — and a bank whose promo excludes
+    // this loan size gets nothing, which is the point of matching here.
+    const promosByBank = useMemo(() => {
+        const map = new Map<string, MatchedPromotion[]>()
+        if (!promotions.length) return map
+        for (const bank of new Set(packages.map(p => p.bank))) {
+            const matched = matchPromotions(promotions, { bank, caseType, loanAmount: loan })
+            if (matched.length) map.set(bank, matched)
+        }
+        return map
+    }, [promotions, packages, caseType, loan])
+
     if (loading) return (
         <div className="rounded-xl border border-slate-200 bg-white p-6 flex items-center justify-center">
             <Spinner size="sm" color="#03a9e7" label="Finding the best packages…" />
@@ -136,6 +160,7 @@ export default function RefiPackages({
         .filter((p): p is MortgagePackage => !!p)
 
     const card = (rec: RecommendedPackage, best: boolean) => {
+        const promos = promosByBank.get(rec.pkg.bank) ?? []
         const isSelected = rec.pkg.id === selectedId
         const inCompare = compareIds.includes(rec.pkg.id)
         const compareDisabled = !inCompare && compareIds.length >= MAX_COMPARE
@@ -147,7 +172,7 @@ export default function RefiPackages({
         return (
             <div key={rec.pkg.id}
                 className={`rounded-lg border transition-all overflow-hidden ${isSelected ? 'border-[#03a9e7] bg-sky-50 shadow-sm' : 'border-slate-200 bg-white'}`}>
-                <button type="button" onClick={() => onSelect(rec, sora)} className="w-full text-left p-3">
+                <button type="button" onClick={() => onSelect(rec, sora, promos)} className="w-full text-left p-3">
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                             <p className="text-sm font-semibold text-[#052d4a] truncate flex items-center gap-1.5">
@@ -162,6 +187,7 @@ export default function RefiPackages({
                                 {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(rec.pkg.min_loan_size)}</span>}
                                 {saving != null && saving > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1"><TrendingDown size={10} /> Save {fmt(saving)}</span>}
                                 <StyleBadge style={packageStyle(rec.pkg)} />
+                                {promos.map(m => <PromoBadge key={m.promo.id} matched={m} compact />)}
                             </div>
                         </div>
                         <div className="text-right shrink-0">
@@ -198,6 +224,7 @@ export default function RefiPackages({
                         )}
                         {rec.pkg.subsidies && <p><span className="font-semibold text-slate-500">Subsidies: </span>{rec.pkg.subsidies}</p>}
                         {rec.pkg.min_loan_note && <p><span className="font-semibold text-slate-500">Min loan: </span>{rec.pkg.min_loan_note}</p>}
+                        {promos.map(m => <PromoDetail key={m.promo.id} matched={m} />)}
                         {rec.savings?.netSaving2yr != null && <p><span className="font-semibold text-slate-500">2-yr net saving: </span>{fmt(rec.savings.netSaving2yr)}</p>}
                         {rec.projection.notes.length > 0 && <p className="text-[11px] text-amber-600">{rec.projection.notes.join(' · ')}</p>}
                     </div>

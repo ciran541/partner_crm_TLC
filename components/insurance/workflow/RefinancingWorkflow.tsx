@@ -20,6 +20,7 @@ import { type RateScheduleEntry } from '@/lib/types/rates'
 import type { RefiProposalPackage } from '@/lib/insurance/refiProposal'
 import { buildRefiProposalText } from '@/lib/insurance/refiProposal'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
+import { promoSnapshot, type MatchedPromotion } from '@/lib/insurance/promotions'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
@@ -169,8 +170,9 @@ export default function RefinancingWorkflowPanel({
         update({ considerations: c })
     }
 
-    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null) => {
+    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null, promos: MatchedPromotion[]) => {
         update({
+            promo_snapshot: promoSnapshot(promos),
             selected_package_snapshot: {
                 id: rec.pkg.id,
                 bank: rec.pkg.bank,

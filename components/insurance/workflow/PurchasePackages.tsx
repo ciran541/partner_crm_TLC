@@ -6,6 +6,10 @@ import type { SoraRates } from '@/lib/insurance/sora'
 import { recommendPurchasePackages, type PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
 import { workflowPropType, packageStyle, stripBankPrefix, shortLoan, groupByRateTypeColumn, RATE_TYPE_OPTIONS, FEATURE_OPTIONS } from '@/lib/insurance/rateFilters'
 import { formatRateSchedule, isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
+import { matchPromotions, type MatchedPromotion } from '@/lib/insurance/promotions'
+import type { BankPromotion } from '@/lib/types/promotions'
+import PromoBadge from '@/components/insurance/promotions/PromoBadge'
+import PromoDetail from '@/components/insurance/promotions/PromoDetail'
 import Spinner from '@/components/shared/Spinner'
 import RateCompareModal from '@/components/insurance/rates/RateCompareModal'
 import { Sparkles, Check, AlertTriangle, ChevronDown, Lock, LockOpen, SlidersHorizontal, RefreshCcw, Columns2, CheckSquare, Square, Crown } from 'lucide-react'
@@ -42,7 +46,7 @@ interface Props {
     caseId?: string                                // enables emailing the comparison to the client
     clientEmail?: string
     clientName?: string
-    onSelect: (rec: PurchaseRecommendation, sora: SoraRates | null) => void
+    onSelect: (rec: PurchaseRecommendation, sora: SoraRates | null, promos: MatchedPromotion[]) => void
 }
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
@@ -53,6 +57,7 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString()}`
 export default function PurchasePackages({ loan, tenureYears, propertyType, bucOnly, priorityBanks, selectedId, caseId, clientEmail, clientName, onSelect }: Props) {
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
+    const [promotions, setPromotions] = useState<BankPromotion[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({})
@@ -92,6 +97,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                 if (!res.ok) throw new Error(json.error || 'Failed to load packages')
                 setPackages(json.data ?? [])
                 setSora(json.sora ?? null)
+                setPromotions(json.promotions ?? [])
             } catch (e) {
                 if (active) setError(e instanceof Error ? e.message : 'Failed to load packages')
             } finally {
@@ -108,6 +114,19 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
         preference: 'either',          // BUC boundary only; the rate-type pills drive fixed/floating
         rateTypes, features, priorityBanks,
     }), [packages, sora, loan, tenureYears, propertyType, bucOnly, rateTypes, features, priorityBanks])
+
+    // Promotions applying to this purchase, keyed by bank, with the tier already
+    // resolved against this loan — a bank whose promo excludes this loan size
+    // gets no badge at all rather than a benefit the client can't claim.
+    const promosByBank = useMemo(() => {
+        const map = new Map<string, MatchedPromotion[]>()
+        if (!promotions.length) return map
+        for (const bank of new Set(packages.map(p => p.bank))) {
+            const matched = matchPromotions(promotions, { bank, caseType: 'Purchase', loanAmount: loan })
+            if (matched.length) map.set(bank, matched)
+        }
+        return map
+    }, [promotions, packages, loan])
 
     // Don't surface any package until the agent has narrowed with at least one
     // filter. BUC has no rate-type pills to pick, so it shows immediately.
@@ -262,6 +281,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
     )
 
     function renderCard(rec: PurchaseRecommendation) {
+        const promos = promosByBank.get(rec.pkg.bank) ?? []
         const isSelected = rec.pkg.id === selectedId
         const inCompare = compareIds.includes(rec.pkg.id)
         const compareDisabled = !inCompare && compareIds.length >= MAX_COMPARE
@@ -279,7 +299,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                 }`}
             >
                 {/* Click body to select */}
-                <button type="button" onClick={() => onSelect(rec, sora)} className="w-full text-left p-3">
+                <button type="button" onClick={() => onSelect(rec, sora, promos)} className="w-full text-left p-3">
                     <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                             <p className="text-sm font-semibold text-[#052d4a] truncate flex items-center gap-1.5">
@@ -288,13 +308,14 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                                 {rec.pkg.lockin_years ? ` · ${rec.pkg.lockin_years}Y lock-in` : ' · No lock-in'}
                             </p>
                             <p className="text-xs text-slate-500 truncate">{stripBankPrefix(rec.pkg.package_name, rec.pkg.bank)}</p>
-                            {(isCheapest || hasSubsidy || rec.appeal || rec.priority || style) && (
+                            {(isCheapest || hasSubsidy || rec.appeal || rec.priority || style || promos.length > 0) && (
                                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                                     {isCheapest && !rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Lowest rate</span>}
                                     {rec.priority && <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200"><Crown size={10} /> Priority</span>}
                                     {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(rec.pkg.min_loan_size)}</span>}
                                     {hasSubsidy && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Subsidy / rebate</span>}
                                     <StyleBadge style={style} />
+                                    {promos.map(m => <PromoBadge key={m.promo.id} matched={m} compact />)}
                                 </div>
                             )}
                         </div>
@@ -340,6 +361,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                         {rec.pkg.subsidies && <p><span className="font-semibold text-slate-500">Subsidies: </span>{rec.pkg.subsidies}</p>}
                         {rec.pkg.min_loan_note && <p><span className="font-semibold text-slate-500">Min loan: </span>{rec.pkg.min_loan_note}</p>}
                         {rec.pkg.remarks && <p className="text-slate-500 italic">{rec.pkg.remarks}</p>}
+                        {promos.map(m => <PromoDetail key={m.promo.id} matched={m} />)}
                         {rec.projection.notes.length > 0 && (
                             <p className="text-[11px] text-amber-600">{rec.projection.notes.join(' · ')}</p>
                         )}

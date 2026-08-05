@@ -32,6 +32,7 @@ import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/component
 import Modal from '@/components/shared/Modal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import type { PurchaseRecommendation } from '@/lib/insurance/purchaseRecommend'
+import { promoSnapshot, type MatchedPromotion } from '@/lib/insurance/promotions'
 import type { SoraRates } from '@/lib/insurance/sora'
 import PurchasePackages from './PurchasePackages'
 import PurchasePresentation from './PurchasePresentation'
@@ -180,8 +181,9 @@ export default function PurchaseWorkflowPanel({
     const foreignerBlocked = restrictsForeigner(data.property_type)
     const outstandingLocked = locksOutstandingToZero(data.property_type)
 
-    const onSelectPackage = (rec: PurchaseRecommendation, sora: SoraRates | null) => {
+    const onSelectPackage = (rec: PurchaseRecommendation, sora: SoraRates | null, promos: MatchedPromotion[]) => {
         update({
+            promo_snapshot: promoSnapshot(promos),
             selected_package_snapshot: {
                 id: rec.pkg.id,
                 bank: rec.pkg.bank,

@@ -8,6 +8,11 @@ import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType,
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
 import RateIngestionModal from '@/components/insurance/rates/RateIngestionModal'
 import RateCompareModal from '@/components/insurance/rates/RateCompareModal'
+import { matchPromotions, type MatchedPromotion } from '@/lib/insurance/promotions'
+import type { BankPromotion } from '@/lib/types/promotions'
+import PromoBanner from '@/components/insurance/promotions/PromoBanner'
+import PromoBadge from '@/components/insurance/promotions/PromoBadge'
+import PromoDetail from '@/components/insurance/promotions/PromoDetail'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
@@ -88,6 +93,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
     const [admin, setAdmin] = useState(false)
     const [packages, setPackages] = useState<MortgagePackage[]>([])
     const [sora, setSora] = useState<SoraRates | null>(null)
+    const [promotions, setPromotions] = useState<BankPromotion[]>([])
     const [refreshingSora, setRefreshingSora] = useState(false)
     const [editingBenchmark, setEditingBenchmark] = useState<string | null>(null)
     const [benchmarkInput, setBenchmarkInput] = useState('')
@@ -116,7 +122,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
         setLoading(true)
         const res  = await fetch('/api/insurance/rates')
         const json = await res.json()
-        if (res.ok) { setPackages(json.data ?? []); setAdmin(!forceReadOnly && !!json.isAdmin); setSora(json.sora ?? null) }
+        if (res.ok) { setPackages(json.data ?? []); setAdmin(!forceReadOnly && !!json.isAdmin); setSora(json.sora ?? null); setPromotions(json.promotions ?? []) }
         else setAlert({ type: 'error', message: json.error || 'Failed to load packages' })
         setLoading(false)
     }, [forceReadOnly])
@@ -125,6 +131,24 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
     const rawLoanNum   = useMemo(() => { const n = parseFloat(loanSize.replace(/[,$\s]/g, '')); return isNaN(n) ? null : n }, [loanSize])
     const parsedLoan   = rawLoanNum !== null && rawLoanNum >= 100_000 ? rawLoanNum : null
     const loanSizeErr  = rawLoanNum !== null && rawLoanNum < 100_000 ? 'Min $100,000' : null
+
+    // Promotions. When the agent has typed a loan size the badges resolve to the
+    // exact figure for that loan; with the field empty they show the full range,
+    // which is the honest label when no client is in context.
+    const promoLoan = parsedLoan ?? undefined
+    const activePromos = useMemo(
+        () => matchPromotions(promotions, { loanAmount: promoLoan, includeUpcoming: true }),
+        [promotions, promoLoan],
+    )
+    const promosByBank = useMemo(() => {
+        const map = new Map<string, MatchedPromotion[]>()
+        if (!promotions.length) return map
+        for (const bank of new Set(packages.map(p => p.bank))) {
+            const matched = matchPromotions(promotions, { bank, loanAmount: promoLoan })
+            if (matched.length) map.set(bank, matched)
+        }
+        return map
+    }, [promotions, packages, promoLoan])
 
     const toggleSet = (set: Set<string>, key: string) => { const n = new Set(set); n.has(key) ? n.delete(key) : n.add(key); return n }
 
@@ -368,6 +392,13 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                 </div>
             )}
 
+            {/* ── Live bank promotions ─────────────────────────────────── */}
+            {activePromos.length > 0 && (
+                <div className="mb-6">
+                    <PromoBanner promotions={activePromos} />
+                </div>
+            )}
+
             {/* ── Filter panel ─────────────────────────────────────────── */}
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm mb-6 overflow-hidden">
                 {/* Row 1 */}
@@ -563,6 +594,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                                             busy={busyId === pkg.id}
                                             confirming={confirmDelete === pkg.id}
                                             priorityMin={priorityBanks.has(pkg.bank) ? parsePriorityMin(pkg.min_loan_note) : null}
+                                            promos={promosByBank.get(pkg.bank) ?? []}
                                             selected={compareIds.has(pkg.id)}
                                             selectDisabled={!compareIds.has(pkg.id) && compareIds.size >= MAX_COMPARE}
                                             onToggleCompare={() => toggleCompare(pkg.id)}
@@ -640,7 +672,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
 // Expanded: rate schedule, features, subsidies revealed below.
 
 function RateCard({
-    pkg, sora, admin, appeal, busy, confirming, priorityMin,
+    pkg, sora, admin, appeal, busy, confirming, priorityMin, promos,
     selected, selectDisabled, onToggleCompare,
     onEdit, onDuplicate, onPublish, onAskDelete, onCancelDelete, onConfirmDelete,
 }: {
@@ -651,6 +683,7 @@ function RateCard({
     busy: boolean
     confirming: boolean
     priorityMin?: number | null
+    promos: MatchedPromotion[]
     selected: boolean
     selectDisabled: boolean
     onToggleCompare: () => void
@@ -702,6 +735,7 @@ function RateCard({
                                           <Lock size={9} className="text-slate-400 shrink-0" />Traditional
                                       </span>
                             })()}
+                            {promos.map(m => <PromoBadge key={m.promo.id} matched={m} compact />)}
                         </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -731,6 +765,8 @@ function RateCard({
             {/* ── Expandable section ─────────────────────────────── */}
             {expanded && (
                 <div className="px-3 pb-3 pt-2 space-y-3 bg-slate-50/60 border-t border-slate-100">
+                    {promos.map(m => <PromoDetail key={m.promo.id} matched={m} />)}
+
                     {/* Rate schedule */}
                     <div className="rounded-xl overflow-hidden border border-slate-100 divide-y divide-slate-100 bg-white">
                         {pkg.rate_schedule.map((e, i) => {

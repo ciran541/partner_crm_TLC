@@ -6,6 +6,7 @@ import { effectiveMonthlyIncome, incomeWeightedAge, monthlyInstallment, maxLoanF
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
+import { promoSnapshot, type MatchedPromotion } from '@/lib/insurance/promotions'
 import type { SoraRates } from '@/lib/insurance/sora'
 import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
@@ -182,8 +183,9 @@ export default function EquityLoanWorkflowPanel({
     const cashPct = Math.max(0, 1 - loanPctOfVal - cpfPct)
 
     // ── Package selection ──
-    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null) => {
+    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null, promos: MatchedPromotion[]) => {
         update({
+            promo_snapshot: promoSnapshot(promos),
             selected_package_snapshot: {
                 id: rec.pkg.id,
                 bank: rec.pkg.bank,
@@ -982,6 +984,7 @@ export default function EquityLoanWorkflowPanel({
                     caseId={caseId}
                     clientEmail={clientEmail}
                     clientName={clientName}
+                    caseType="Equity Loan"
                     onSelect={onSelectPackage}
                 />
             )}

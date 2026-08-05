@@ -16,6 +16,7 @@ import type { DecouplePledge } from '@/lib/insurance/decoupleCalc'
 import { maxLoanFromPayment, monthlyInstallment, tdsrAvailable, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RecommendedPackage } from '@/lib/insurance/rateRecommend'
+import { promoSnapshot, type MatchedPromotion } from '@/lib/insurance/promotions'
 import { type SoraRates } from '@/lib/insurance/sora'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 import RefiPackages from './RefiPackages'
@@ -160,8 +161,9 @@ export default function DecouplingWorkflowPanel({
         if (set.has(id)) set.delete(id); else set.add(id)
         update({ documents_done: [...set] })
     }
-    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null) => {
+    const onSelectPackage = (rec: RecommendedPackage, sora: SoraRates | null, promos: MatchedPromotion[]) => {
         update({
+            promo_snapshot: promoSnapshot(promos),
             selected_package_snapshot: {
                 id: rec.pkg.id,
                 bank: rec.pkg.bank,
@@ -1082,6 +1084,7 @@ export default function DecouplingWorkflowPanel({
                     caseId={caseId}
                     clientEmail={clientEmail}
                     clientName={clientName}
+                    caseType="Decouple"
                     onSelect={onSelectPackage}
                 />
             )}
