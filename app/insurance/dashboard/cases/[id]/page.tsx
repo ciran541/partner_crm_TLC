@@ -1619,6 +1619,16 @@ function FollowUpControl({ value, onSave, saving }: { value?: string; onSave: (d
                     {saving ? 'Saving…' : 'Set reminder'}
                 </button>
                 {value && (
+                    <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => { setDate(''); onSave('') }}
+                        className="text-sm px-3 py-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-red-600 hover:border-red-200 disabled:opacity-40 flex items-center gap-1.5"
+                    >
+                        <X size={14} /> Clear
+                    </button>
+                )}
+                {value && (
                     <span className="text-xs font-medium text-emerald-600 flex items-center gap-1">
                         <CheckCircle2 size={13} /> Saved · {new Date(value).toLocaleDateString()}
                     </span>
