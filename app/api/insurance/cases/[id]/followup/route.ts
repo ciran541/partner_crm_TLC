@@ -62,7 +62,13 @@ export async function PATCH(
     }
 
     // Calendar event lands in the OWNING agent's calendar regardless of who edits.
-    syncInsuranceFollowUp(
+    // Awaited (not fire-and-forget) so the DB row is committed before this
+    // response returns — otherwise a second quick follow-up change (the
+    // "Saving…" button re-enables as soon as this request resolves) can race
+    // the still-in-flight first sync and see "no existing event", creating a
+    // duplicate instead of updating. syncInsuranceFollowUp never throws
+    // (internal try/catch), so this still can't fail the save.
+    await syncInsuranceFollowUp(
         existing.created_by,
         id,
         clearing ? 'delete' : 'upsert',

@@ -53,12 +53,17 @@ export async function PATCH(
         return NextResponse.json({ error: 'Failed to update follow-up' }, { status: 500 })
     }
 
-    // Sync Google Calendar (non-blocking — errors never surface to agent)
+    // Sync Google Calendar. Awaited (not fire-and-forget) so the DB row is
+    // committed before this response returns — otherwise a second quick
+    // follow-up change can race the still-in-flight first sync and see "no
+    // existing event", creating a duplicate instead of updating.
+    // syncFollowUpToCalendar never throws (internal try/catch), so errors
+    // still never surface to the agent or fail this save.
     const preference = existing.followup_preference as 'self' | 'tlc' | null
     const newDate = body.follow_up_date ?? existing.follow_up_date
     const action = body.completed ? 'delete' : 'upsert'
 
-    syncFollowUpToCalendar(
+    await syncFollowUpToCalendar(
         auth.userId,
         id,
         preference,
