@@ -94,5 +94,24 @@ export async function syncInsuranceFollowUp(
         }
     } catch (err) {
         console.error('[syncInsuranceFollowUp] error:', err)
+        await handleInvalidGrant(agentId, err)
     }
+}
+
+// Google returns invalid_grant when a refresh token has been revoked or expired
+// (e.g. the agent removed the app's access from their Google Account) — that
+// token is now permanently dead. Without this, Profile keeps claiming
+// "Connected" forever and every future sync fails the same way with no visible
+// error to the agent. Clearing it here flips Profile to "Disconnected" so the
+// agent is naturally prompted to reconnect.
+async function handleInvalidGrant(agentId: string, err: unknown): Promise<void> {
+    const isInvalidGrant =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error === 'invalid_grant' ||
+        (err instanceof Error && err.message === 'invalid_grant')
+    if (!isInvalidGrant) return
+
+    await createAdminClient()
+        .from('profiles')
+        .update({ google_refresh_token: null, google_calendar_connected: false })
+        .eq('id', agentId)
 }
