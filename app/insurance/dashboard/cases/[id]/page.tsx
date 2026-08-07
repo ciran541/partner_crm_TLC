@@ -88,6 +88,7 @@ function CaseDetailContent() {
     const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow>({})
     const [workflowSaving, setWorkflowSaving] = useState(false)
     const [workflowSaved, setWorkflowSaved] = useState(false)
+    const [followUpSaving, setFollowUpSaving] = useState(false)
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     // Always-current case type — extractCaseFields runs inside a memoized callback
     // whose caseData closure can be stale, which would mis-route the column sync.
@@ -313,7 +314,17 @@ function CaseDetailContent() {
 
     // Set a follow-up reminder date — routed through the API so it also syncs to
     // the agent's Google Calendar (non-blocking) and the Follow-Up tab.
+    // followUpSavingRef guards against a double-click firing two concurrent
+    // PATCHes — each triggers its own calendar sync, and two racing syncs for
+    // the same case is exactly what produced duplicate/broken calendar rows
+    // (see migration 20260807000000). A ref (not just the state var) is used
+    // for the check so it's read synchronously, not subject to a stale closure
+    // from an in-flight re-render.
+    const followUpSavingRef = useRef(false)
     const handleSetFollowUp = useCallback(async (date: string) => {
+        if (followUpSavingRef.current) return
+        followUpSavingRef.current = true
+        setFollowUpSaving(true)
         setCaseData(prev => prev ? { ...prev, follow_up_date: date } : prev)
         try {
             const res = await fetch(`/api/insurance/cases/${caseId}/followup`, {
@@ -326,6 +337,9 @@ function CaseDetailContent() {
             setAlert({ type: 'success', message: 'Follow-up reminder set.' })
         } catch (e) {
             setAlert({ type: 'error', message: `Follow-up save failed: ${e instanceof Error ? e.message : ''}` })
+        } finally {
+            followUpSavingRef.current = false
+            setFollowUpSaving(false)
         }
     }, [caseId])
 
@@ -603,7 +617,7 @@ function CaseDetailContent() {
                         <BankerControl value={caseData.referred_bankers ?? []} onSave={handleSetBankers} />
 
                         {/* Follow-up reminder — internal CRM, never on the client-facing workflow */}
-                        <FollowUpControl value={caseData.follow_up_date} onSave={handleSetFollowUp} />
+                        <FollowUpControl value={caseData.follow_up_date} onSave={handleSetFollowUp} saving={followUpSaving} />
                     </div>
                 </div>
             )}
@@ -1578,7 +1592,7 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
 
 // ─── Follow-up reminder (internal CRM) ────────────────────────────────────────
 // Lives on the Overview tab, never inside the client-facing Workflow tab.
-function FollowUpControl({ value, onSave }: { value?: string; onSave: (date: string) => void }) {
+function FollowUpControl({ value, onSave, saving }: { value?: string; onSave: (date: string) => void; saving?: boolean }) {
     const [date, setDate] = useState(value ?? '')
     return (
         <div className="card p-6">
@@ -1598,11 +1612,11 @@ function FollowUpControl({ value, onSave }: { value?: string; onSave: (date: str
                 />
                 <button
                     type="button"
-                    disabled={!date}
+                    disabled={!date || saving}
                     onClick={() => onSave(date)}
                     className="btn-primary text-sm px-4 py-2 disabled:opacity-40"
                 >
-                    Set reminder
+                    {saving ? 'Saving…' : 'Set reminder'}
                 </button>
                 {value && (
                     <span className="text-xs font-medium text-emerald-600 flex items-center gap-1">

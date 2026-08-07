@@ -56,12 +56,19 @@ export async function syncFollowUpToCalendar(
             calendarId = process.env.TLC_GOOGLE_CALENDAR_ID ?? 'primary'
         }
 
-        // Look up any existing calendar event row for this case
-        const { data: existingEvent } = await admin
+        // Look up any existing calendar event row for this case. Not .single() —
+        // it errors on more than one row and that error is silently swallowed
+        // below, which would make every branch wrongly act as "no event yet".
+        // order + limit(1) is defensive here even though case_id is already
+        // unique-indexed (see the matching insurance fix, migration 20260807000000,
+        // for what happens without it).
+        const { data: existingEvents } = await admin
             .from('property_calendar_events')
             .select('id, google_event_id')
             .eq('case_id', caseId)
-            .single()
+            .order('updated_at', { ascending: false })
+            .limit(1)
+        const existingEvent = existingEvents?.[0]
 
         if (action === 'delete') {
             if (existingEvent?.google_event_id) {
@@ -82,8 +89,17 @@ export async function syncFollowUpToCalendar(
             await updateFollowUpEvent(calendarClient, existingEvent.google_event_id, followUpDate, calendarId)
             await admin
                 .from('property_calendar_events')
-                .update({ event_date: followUpDate, updated_at: new Date().toISOString() })
-                .eq('case_id', caseId)
+                .upsert(
+                    {
+                        case_id: caseId,
+                        agent_id: agentId,
+                        google_event_id: existingEvent.google_event_id,
+                        calendar_target: followupPreference,
+                        event_date: followUpDate,
+                        updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: 'case_id' },
+                )
         } else {
             // Create new event
             const googleEventId = await createFollowUpEvent(
@@ -94,13 +110,19 @@ export async function syncFollowUpToCalendar(
                 calendarId
             )
 
-            await admin.from('property_calendar_events').insert({
-                case_id: caseId,
-                agent_id: agentId,
-                google_event_id: googleEventId,
-                calendar_target: followupPreference,
-                event_date: followUpDate,
-            })
+            // upsert, not insert — a concurrent duplicate save now converges on
+            // one row via the case_id unique index instead of throwing a unique-
+            // violation error that silently drops the sync.
+            await admin.from('property_calendar_events').upsert(
+                {
+                    case_id: caseId,
+                    agent_id: agentId,
+                    google_event_id: googleEventId,
+                    calendar_target: followupPreference,
+                    event_date: followUpDate,
+                },
+                { onConflict: 'case_id' },
+            )
         }
     } catch (err) {
         // Non-blocking — log but never let calendar errors surface to the user

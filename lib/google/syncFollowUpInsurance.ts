@@ -32,11 +32,18 @@ export async function syncInsuranceFollowUp(
         const calendarClient = getCalendarClientForAgent(profile.google_refresh_token)
         const calendarId = 'primary'
 
-        const { data: existingEvent } = await admin
+        // Not .single() — that errors out on more than one row for this case_id,
+        // and the error is silently swallowed below, causing every branch to
+        // wrongly behave as "no event yet". Ordering + limit(1) tolerates any
+        // pre-existing duplicates (see migration 20260807000000) instead of
+        // breaking on them.
+        const { data: existingEvents } = await admin
             .from('insurance_calendar_events')
             .select('id, google_event_id')
             .eq('case_id', caseId)
-            .single()
+            .order('updated_at', { ascending: false })
+            .limit(1)
+        const existingEvent = existingEvents?.[0]
 
         if (action === 'delete') {
             if (existingEvent?.google_event_id) {
@@ -52,8 +59,17 @@ export async function syncInsuranceFollowUp(
             await updateFollowUpEvent(calendarClient, existingEvent.google_event_id, followUpDate, calendarId)
             await admin
                 .from('insurance_calendar_events')
-                .update({ event_date: followUpDate, updated_at: new Date().toISOString() })
-                .eq('case_id', caseId)
+                .upsert(
+                    {
+                        case_id: caseId,
+                        agent_id: agentId,
+                        google_event_id: existingEvent.google_event_id,
+                        calendar_target: 'self',
+                        event_date: followUpDate,
+                        updated_at: new Date().toISOString(),
+                    },
+                    { onConflict: 'case_id' },
+                )
         } else {
             const googleEventId = await createFollowUpEvent(
                 calendarClient,
@@ -62,13 +78,19 @@ export async function syncInsuranceFollowUp(
                 caseUrl ?? '',
                 calendarId,
             )
-            await admin.from('insurance_calendar_events').insert({
-                case_id: caseId,
-                agent_id: agentId,
-                google_event_id: googleEventId,
-                calendar_target: 'self',
-                event_date: followUpDate,
-            })
+            // upsert, not insert — the case_id unique index (migration 20260807000000)
+            // means a race with another concurrent sync now safely converges on one
+            // row instead of erroring out or duplicating.
+            await admin.from('insurance_calendar_events').upsert(
+                {
+                    case_id: caseId,
+                    agent_id: agentId,
+                    google_event_id: googleEventId,
+                    calendar_target: 'self',
+                    event_date: followUpDate,
+                },
+                { onConflict: 'case_id' },
+            )
         }
     } catch (err) {
         console.error('[syncInsuranceFollowUp] error:', err)
