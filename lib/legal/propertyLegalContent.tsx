@@ -117,7 +117,7 @@ export const propertyTerms = (
 export const propertyPrivacy = (
     <div className="space-y-4">
         <h2 className="text-xl font-bold text-slate-800">TLC Property Agent Platform – Privacy Policy</h2>
-        <p className="text-xs text-slate-500">Last Updated: 11 July 2026</p>
+        <p className="text-xs text-slate-500">Last Updated: 7 August 2026</p>
         <p className="text-slate-600">
             The Loan Connection (&ldquo;TLC&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) is committed to protecting
             personal data in accordance with Singapore&rsquo;s Personal Data Protection Act 2012 (&ldquo;PDPA&rdquo;).
@@ -170,7 +170,9 @@ export const propertyPrivacy = (
             <li><strong>Supabase</strong> — our database, authentication, and file-storage infrastructure provider</li>
             <li><strong>Vercel</strong> — our application hosting provider</li>
             <li><strong>Resend</strong> — for sending transactional email (account, case, and follow-up notifications)</li>
-            <li><strong>Google</strong> — for internal reporting via Google Sheets, and for Google Calendar sync if you connect your calendar (initiated and controlled by you)</li>
+            <li><strong>Google Sheets</strong> — for internal reporting</li>
+            <li><strong>Google Calendar</strong> — for case follow-up reminders, only if you choose to connect your calendar (initiated and controlled by you). This data is never shared with any other recipient in this list, including the AI provider below</li>
+            <li><strong>DeepSeek</strong> — an AI provider used to extract structured data from Letters of Offer you upload. Only the document text needed for extraction is sent — no other case or client data, and no data obtained from any Google API, including Google Calendar</li>
             <li><strong>Sentry</strong> — for error monitoring, to help us detect and fix technical issues</li>
             <li>Banking or operational partners, where required to verify or process a case</li>
         </ul>

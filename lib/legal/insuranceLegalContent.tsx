@@ -112,7 +112,7 @@ export const insuranceTerms = (
 export const insurancePrivacy = (
     <div className="space-y-4">
         <h2 className="text-xl font-bold text-slate-800">TLC Insurance Agent Platform – Privacy Policy</h2>
-        <p className="text-xs text-slate-500">Last Updated: 11 July 2026</p>
+        <p className="text-xs text-slate-500">Last Updated: 7 August 2026</p>
         <p className="text-slate-600">
             The Loan Connection (&ldquo;TLC&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) is committed to protecting
             personal data in accordance with Singapore&rsquo;s Personal Data Protection Act 2012 (&ldquo;PDPA&rdquo;).
@@ -166,7 +166,8 @@ export const insurancePrivacy = (
             <li><strong>Vercel</strong> — our application hosting provider</li>
             <li><strong>Resend</strong> — for sending transactional email (invites, account setup, password resets, case notifications)</li>
             <li><strong>Google Sheets</strong> — for internal reporting</li>
-            <li><strong>Google Gemini and DeepSeek</strong> — AI providers that help power the knowledge assistant, rate-sheet processing, and news/bank-report summaries. Case or client data is not sent to these providers — only the specific content needed for the feature in question (e.g. a rate-sheet extract, a news article, a knowledge-base question)</li>
+            <li><strong>Google Calendar</strong> — for case follow-up reminders, only if you choose to connect your calendar (initiated and controlled by you). This data is never shared with any other recipient in this list, including the AI providers below</li>
+            <li><strong>Google Gemini and DeepSeek</strong> — AI providers that help power the knowledge assistant, rate-sheet processing, and news/bank-report summaries. Case or client data is not sent to these providers — only the specific content needed for the feature in question (e.g. a rate-sheet extract, a news article, a knowledge-base question). Data obtained from any Google API, including Google Calendar, is never sent to these providers</li>
             <li><strong>Sentry</strong> — for error monitoring, to help us detect and fix technical issues</li>
             <li>Banking or operational partners, where required to verify or process a case</li>
         </ul>
