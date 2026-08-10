@@ -42,11 +42,22 @@ export default function PrivacyPolicyPage() {
                             Google API Services User Data Policy
                         </a>, including the Limited Use requirements. Calendar data is used solely to create,
                         update, and delete a single case follow-up reminder event on the connecting agent&rsquo;s
-                        own calendar — it is never read for any other purpose. Separately, the Platform uses AI/ML
-                        services (Google Gemini and DeepSeek) for unrelated features such as knowledge-article
-                        search and document summarization; no data obtained from Google APIs, including Google
-                        Calendar, is ever used to train, develop, or improve any artificial intelligence or machine
-                        learning model, foundational or otherwise.
+                        own calendar — it is never read for any other purpose, and it is never sent to, or
+                        processed by, any third-party AI/ML service.
+                    </p>
+                    <p style={{ color: '#334155', fontSize: 14, lineHeight: 1.6, marginTop: 12 }}>
+                        Data segregation: the Platform separately uses AI/ML services (Google Gemini and DeepSeek)
+                        for unrelated features — knowledge-article search, mortgage-document extraction, and
+                        summarization of bank rate sheets, bank research reports, and public mortgage news. These
+                        features are implemented in an entirely separate part of the codebase from the Google
+                        Calendar integration, with no shared code path between them. The only inputs these AI/ML
+                        services ever receive are: admin-authored knowledge base content, an agent&rsquo;s typed
+                        search query, text extracted from a document the agent uploaded, admin-pasted bank rate or
+                        promotion text, and content fetched from public bank and news websites. No data obtained
+                        from any Google API — including Google Calendar — is ever sent to, or used by, Gemini,
+                        DeepSeek, or any other AI/ML service, whether raw, aggregated, or derived, nor is it ever
+                        used to train, develop, or improve any artificial intelligence or machine learning model,
+                        foundational or otherwise.
                     </p>
                 </section>
 
