@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Plus, Trash2, Calculator, Lock } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Calculator, Lock, Copy, X } from 'lucide-react'
 import { monthlyInstallment } from '@/lib/insurance/loanCalc'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
@@ -111,19 +111,113 @@ function fmt(n: number | null): string {
 
 const inp = 'px-3 py-2.5 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/10 bg-white transition-colors'
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Packages ──────────────────────────────────────────────────────────────────
 
-const DEFAULT_SCHEDULE: RateScheduleEntry[] = [
+/**
+ * A package = one bank's offer: its own tenure, lock-in and year-by-year rates.
+ * The loan amount is shared — it is the same loan being quoted either way.
+ */
+interface PackageConfig {
+    id: string
+    name: string
+    tenure: string
+    lockIn: string
+    schedule: RateScheduleEntry[]
+}
+
+const MAX_PACKAGES = 3
+
+/** Full literal class strings — Tailwind cannot see dynamically built names. */
+const ACCENTS = [
+    {
+        dot: 'bg-[#03a9e7]', text: 'text-[#03a9e7]', chip: 'bg-sky-100 text-[#03a9e7]',
+        tabOn: 'bg-[#052d4a] text-white border-[#052d4a]',
+        rowBg: 'bg-sky-50/30 hover:bg-sky-50/60 border-sky-50',
+        pill: 'bg-sky-100 text-[#03a9e7]',
+        balancePill: 'text-[#052d4a] bg-sky-100 border-sky-200',
+        gradient: 'linear-gradient(135deg, #052d4a 0%, #0a4a7a 100%)',
+        gradLabel: 'text-sky-300', gradSub: 'text-sky-200/70',
+    },
+    {
+        dot: 'bg-violet-500', text: 'text-violet-600', chip: 'bg-violet-100 text-violet-600',
+        tabOn: 'bg-violet-600 text-white border-violet-600',
+        rowBg: 'bg-violet-50/30 hover:bg-violet-50/60 border-violet-50',
+        pill: 'bg-violet-100 text-violet-600',
+        balancePill: 'text-violet-800 bg-violet-100 border-violet-200',
+        gradient: 'linear-gradient(135deg, #3b1a78 0%, #6d33c4 100%)',
+        gradLabel: 'text-violet-200', gradSub: 'text-violet-100/70',
+    },
+    {
+        dot: 'bg-amber-500', text: 'text-amber-600', chip: 'bg-amber-100 text-amber-700',
+        tabOn: 'bg-amber-500 text-white border-amber-500',
+        rowBg: 'bg-amber-50/30 hover:bg-amber-50/60 border-amber-50',
+        pill: 'bg-amber-100 text-amber-700',
+        balancePill: 'text-amber-800 bg-amber-100 border-amber-200',
+        gradient: 'linear-gradient(135deg, #7a4106 0%, #c9750d 100%)',
+        gradLabel: 'text-amber-200', gradSub: 'text-amber-100/70',
+    },
+]
+
+const newSchedule = (): RateScheduleEntry[] => ([
     { year: 1, type: 'fixed', rate: undefined },
     { thereafter: true, type: 'floating', reference: '3M SORA', spread: 1.00 },
-]
+])
+
+const letterFor = (i: number) => String.fromCharCode(65 + i) // A, B, C
+
+let pkgSeq = 1
+const nextPkgId = () => `pkg-${++pkgSeq}`
+
+/** Everything derived from one package config. */
+interface PackageResult {
+    cfg: PackageConfig
+    ten: number
+    lockIn: number
+    rows: AmortRow[]
+    instalment: number | null       // year 1 monthly instalment
+    lockInInterest: number | null   // cumulative interest to end of lock-in
+    outstanding: number | null      // balance at end of lock-in
+    totalInstalment: number | null  // instalments actually paid during lock-in
+    totalInterest: number | null    // over full tenure
+    totalPrincipal: number
+}
+
+function buildResult(cfg: PackageConfig, loan: number, sora: SoraRates | null): PackageResult {
+    const tRaw = parseInt(cfg.tenure)
+    const ten = isNaN(tRaw) ? 0 : Math.min(Math.max(tRaw, 5), 35)
+    const lRaw = parseInt(cfg.lockIn)
+    const lockIn = isNaN(lRaw) || lRaw < 0 ? 0 : Math.min(lRaw, ten)
+
+    const rows = computeAmortization(loan, ten, cfg.schedule, sora)
+    const valid = rows.filter(r => r.cumulativeInterest != null)
+
+    const lockRow = lockIn > 0 ? rows.find(r => r.year === lockIn) ?? null : null
+    const lockRows = lockIn > 0 ? rows.filter(r => r.year <= lockIn) : []
+    // Sum each lock-in year's own instalment — the rate (and so the instalment)
+    // can change part-way through a lock-in, e.g. 1.40 / 1.40 / floating.
+    const totalInstalment = lockRows.length > 0 && lockRows.every(r => r.instalment != null)
+        ? lockRows.reduce((s, r) => s + (r.instalment ?? 0) * 12, 0)
+        : null
+
+    return {
+        cfg, ten, lockIn, rows,
+        instalment: rows[0]?.instalment ?? null,
+        lockInInterest: lockRow?.cumulativeInterest ?? null,
+        outstanding: lockRow?.balance ?? null,
+        totalInstalment,
+        totalInterest: valid.at(-1)?.cumulativeInterest ?? null,
+        totalPrincipal: valid.reduce((s, r) => s + (r.yearPrincipal ?? 0), 0),
+    }
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AmortizationPage() {
     const [loanAmount, setLoanAmount] = useState('300,000')
-    const [tenure, setTenure] = useState('25')
-    const [lockInInput, setLockInInput] = useState('')
-    const [compareTenure, setCompareTenure] = useState('')
-    const [schedule, setSchedule] = useState<RateScheduleEntry[]>(DEFAULT_SCHEDULE)
+    const [packages, setPackages] = useState<PackageConfig[]>([
+        { id: 'pkg-1', name: 'Package A', tenure: '25', lockIn: '', schedule: newSchedule() },
+    ])
+    const [activeId, setActiveId] = useState('pkg-1')
     const [sora, setSora] = useState<SoraRates | null>(null)
 
     useEffect(() => {
@@ -134,70 +228,85 @@ export default function AmortizationPage() {
     }, [])
 
     const loan = parseFloat(loanAmount.replace(/,/g, '')) || 0
-    const tenRaw = parseInt(tenure)
-    const ten = isNaN(tenRaw) ? 0 : Math.min(Math.max(tenRaw, 5), 35)
-    const compareTenRaw = parseInt(compareTenure)
-    const compareTen = isNaN(compareTenRaw) ? 0 : Math.min(Math.max(compareTenRaw, 5), 35)
 
-    const rows = useMemo(
-        () => computeAmortization(loan, ten, schedule, sora),
-        [loan, ten, schedule, sora]
-    )
-    const compareRows = useMemo(
-        () => compareTen > 0 && compareTen !== ten ? computeAmortization(loan, compareTen, schedule, sora) : [],
-        [loan, compareTen, ten, schedule, sora]
+    const results = useMemo(
+        () => packages.map(p => buildResult(p, loan, sora)),
+        [packages, loan, sora]
     )
 
-    const lockInRaw = parseInt(lockInInput)
-    const lockInYears = isNaN(lockInRaw) || lockInRaw < 0 ? 0 : lockInRaw
+    const activeIdx = Math.max(0, packages.findIndex(p => p.id === activeId))
+    const active = packages[activeIdx]
+    const result = results[activeIdx]
+    const accent = ACCENTS[activeIdx % ACCENTS.length]
+
+    const { ten, lockIn: lockInYears, rows, totalInterest, totalPrincipal } = result
+
     const lockInCards = Array.from({ length: lockInYears }, (_, i) => {
         const yr = i + 1
         return { year: yr, value: rows.find(r => r.year === yr)?.cumulativeInterest ?? null }
     })
-    const validRows = rows.filter(r => r.cumulativeInterest != null)
-    const totalPrincipal = validRows.reduce((s, r) => s + (r.yearPrincipal ?? 0), 0)
-    const totalInterest = validRows.at(-1)?.cumulativeInterest ?? null
-    const compareTotalInterest = compareRows.filter(r => r.cumulativeInterest != null).at(-1)?.cumulativeInterest ?? null
 
-    // Tenure comparison values
-    const primaryInstalment = rows[0]?.instalment ?? null
-    const primaryLockInInterest = lockInYears > 0 ? (rows.find(r => r.year === lockInYears)?.cumulativeInterest ?? null) : null
-    const compareInstalment = compareRows[0]?.instalment ?? null
-    const compareLockInInterest = lockInYears > 0 ? (compareRows.find(r => r.year === lockInYears)?.cumulativeInterest ?? null) : null
-    const primaryTotalInstalment = primaryInstalment != null && lockInYears > 0 ? primaryInstalment * lockInYears * 12 : null
-    const compareTotalInstalment = compareInstalment != null && lockInYears > 0 ? compareInstalment * lockInYears * 12 : null
-    const primaryOutstanding = lockInYears > 0 ? (rows.find(r => r.year === lockInYears)?.balance ?? null) : null
-    const compareOutstanding = lockInYears > 0 ? (compareRows.find(r => r.year === lockInYears)?.balance ?? null) : null
-    const showComparison = compareTen > 0 && compareTen !== ten && compareRows.length > 0
+    const showComparison = results.length > 1
+    const anyLockIn = results.some(r => r.lockIn > 0)
+    const mixedLockIn = anyLockIn && new Set(results.map(r => r.lockIn)).size > 1
 
-    function updateRow(idx: number, patch: Partial<RateScheduleEntry>) {
-        setSchedule(s => s.map((e, i) => i === idx ? { ...e, ...patch } : e))
+    // ── Package mutations ──
+    function patchPackage(id: string, patch: Partial<PackageConfig>) {
+        setPackages(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p))
     }
 
-    function addYear() {
-        setSchedule(s => {
-            const maxYear = Math.max(0, ...s.filter(e => e.year != null).map(e => e.year!))
-            const thereafterIdx = s.findIndex(e => e.thereafter)
-            const newEntry: RateScheduleEntry = { year: maxYear + 1, type: 'fixed' }
-            if (thereafterIdx >= 0) {
-                const next = [...s]
-                next.splice(thereafterIdx, 0, newEntry)
-                return next
-            }
-            return [...s, newEntry]
+    function addPackage(clone: boolean) {
+        if (packages.length >= MAX_PACKAGES) return
+        const src = packages[activeIdx]
+        const id = nextPkgId()
+        setPackages(ps => [...ps, {
+            id,
+            name: clone ? `${src.name} (copy)` : `Package ${letterFor(ps.length)}`,
+            tenure: src.tenure,
+            lockIn: src.lockIn,
+            schedule: clone ? src.schedule.map(e => ({ ...e })) : newSchedule(),
+        }])
+        setActiveId(id)
+    }
+
+    function removePackage(id: string) {
+        if (packages.length <= 1) return
+        const next = packages.filter(p => p.id !== id)
+        setPackages(next)
+        if (id === active.id) setActiveId(next[next.length - 1].id)
+    }
+
+    // ── Rate schedule mutations (always on the active package) ──
+    function updateRow(idx: number, patch: Partial<RateScheduleEntry>) {
+        patchPackage(active.id, {
+            schedule: active.schedule.map((e, i) => i === idx ? { ...e, ...patch } : e),
         })
     }
 
+    function addYear() {
+        const s = active.schedule
+        const maxYear = Math.max(0, ...s.filter(e => e.year != null).map(e => e.year!))
+        const thereafterIdx = s.findIndex(e => e.thereafter)
+        const newEntry: RateScheduleEntry = { year: maxYear + 1, type: 'fixed' }
+        const next = [...s]
+        if (thereafterIdx >= 0) next.splice(thereafterIdx, 0, newEntry)
+        else next.push(newEntry)
+        patchPackage(active.id, { schedule: next })
+    }
+
     function addThereafter() {
-        if (schedule.some(e => e.thereafter)) return
-        setSchedule(s => [...s, { thereafter: true, type: 'floating' }])
+        if (active.schedule.some(e => e.thereafter)) return
+        patchPackage(active.id, {
+            schedule: [...active.schedule, { thereafter: true, type: 'floating' }],
+        })
     }
 
     function removeRow(idx: number) {
-        setSchedule(s => s.length > 1 ? s.filter((_, i) => i !== idx) : s)
+        if (active.schedule.length <= 1) return
+        patchPackage(active.id, { schedule: active.schedule.filter((_, i) => i !== idx) })
     }
 
-    const hasThereafter = schedule.some(e => e.thereafter)
+    const hasThereafter = active.schedule.some(e => e.thereafter)
     const comp3m = sora?.comp_sora_3m
     const comp1m = sora?.comp_sora_1m
 
@@ -218,7 +327,110 @@ export default function AmortizationPage() {
                     </span>
                     Amortization Calculator
                 </h1>
-                <p className="page-subtitle mt-1">Year-by-year breakdown with variable rates per period.</p>
+                <p className="page-subtitle mt-1">
+                    Year-by-year breakdown with variable rates per period. Compare up to {MAX_PACKAGES} packages on the same loan.
+                </p>
+            </div>
+
+            {/* ── Shared loan amount + live SORA ── */}
+            <div className="card px-6 py-4 flex items-end justify-between gap-4 flex-wrap">
+                <div className="w-full sm:w-72">
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                        Loan Amount
+                    </label>
+                    <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
+                        <input
+                            type="text"
+                            value={loanAmount}
+                            onChange={e => setLoanAmount(formatMoneyInput(e.target.value))}
+                            className={`${inp} pl-7 w-full`}
+                            placeholder="300,000"
+                        />
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1.5">Shared across all packages.</p>
+                </div>
+                {(comp3m != null || comp1m != null) && (
+                    <div className="flex items-center gap-3">
+                        {comp3m != null && (
+                            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+                                <div>
+                                    <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">3M SORA</p>
+                                    <p className="text-base font-black text-emerald-700 leading-none">{comp3m.toFixed(4)}%</p>
+                                </div>
+                            </div>
+                        )}
+                        {comp1m != null && (
+                            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                                <div>
+                                    <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">1M SORA</p>
+                                    <p className="text-base font-black text-emerald-700 leading-none">{comp1m.toFixed(4)}%</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* ── Package tabs ── */}
+            <div className="flex items-center gap-2 flex-wrap">
+                {packages.map((p, i) => {
+                    const a = ACCENTS[i % ACCENTS.length]
+                    const isActive = p.id === active.id
+                    const r = results[i]
+                    return (
+                        <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setActiveId(p.id)}
+                            className={`flex items-center gap-2 pl-3 pr-2.5 py-2 rounded-xl border text-sm font-semibold transition-colors ${
+                                isActive ? a.tabOn : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                            }`}
+                        >
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-white/70' : a.dot}`} />
+                            <span>{p.name || `Package ${letterFor(i)}`}</span>
+                            <span className={`text-[11px] font-medium ${isActive ? 'text-white/60' : 'text-slate-400'}`}>
+                                {r.ten}y{r.lockIn > 0 ? ` · ${r.lockIn}y lock` : ''}
+                            </span>
+                            {packages.length > 1 && (
+                                <span
+                                    role="button"
+                                    tabIndex={-1}
+                                    onClick={e => { e.stopPropagation(); removePackage(p.id) }}
+                                    className={`ml-0.5 p-0.5 rounded-md transition-colors ${
+                                        isActive
+                                            ? 'text-white/50 hover:text-white hover:bg-white/15'
+                                            : 'text-slate-300 hover:text-red-400 hover:bg-red-50'
+                                    }`}
+                                >
+                                    <X size={12} />
+                                </span>
+                            )}
+                        </button>
+                    )
+                })}
+
+                {packages.length < MAX_PACKAGES && (
+                    <>
+                        <button
+                            type="button"
+                            onClick={() => addPackage(false)}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-sm font-semibold text-slate-500 hover:text-[#03a9e7] hover:border-[#03a9e7] hover:bg-sky-50/50 transition-colors"
+                        >
+                            <Plus size={14} /> Add Package
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => addPackage(true)}
+                            title="Duplicate this package — handy for comparing tenures on the same rates"
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-sm font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors"
+                        >
+                            <Copy size={13} /> Duplicate
+                        </button>
+                    </>
+                )}
             </div>
 
             {/* ── Top section: 3-col grid ── */}
@@ -227,112 +439,58 @@ export default function AmortizationPage() {
                 {/* ── Inputs (span 2) ── */}
                 <div className="lg:col-span-2 card overflow-hidden">
 
-                    {/* Card header */}
-                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-4 flex-wrap">
-                        <h3 className="section-label mb-0">Loan Details</h3>
-                        {(comp3m != null || comp1m != null) && (
-                            <div className="flex items-center gap-3">
-                                {comp3m != null && (
-                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
-                                        <div>
-                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">3M SORA</p>
-                                            <p className="text-base font-black text-emerald-700 leading-none">{comp3m.toFixed(4)}%</p>
-                                        </div>
-                                    </div>
-                                )}
-                                {comp1m != null && (
-                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3.5 py-2 rounded-xl">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                                        <div>
-                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider leading-none mb-0.5">1M SORA</p>
-                                            <p className="text-base font-black text-emerald-700 leading-none">{comp1m.toFixed(4)}%</p>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                    {/* Card header — package name */}
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${accent.dot}`} />
+                        <input
+                            type="text"
+                            value={active.name}
+                            onChange={e => patchPackage(active.id, { name: e.target.value })}
+                            placeholder={`Package ${letterFor(activeIdx)}`}
+                            className="flex-1 min-w-0 text-sm font-bold text-[#052d4a] bg-transparent border border-transparent hover:border-slate-200 focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/10 rounded-lg px-2 py-1 outline-none transition-colors"
+                        />
+                        <span className="hidden sm:block text-[11px] text-slate-400 shrink-0">e.g. bank + package name</span>
                     </div>
 
                     <div className="p-6 space-y-6">
-                        {/* Row 1: Loan amount + Tenure + Compare */}
-                        <div className="grid grid-cols-2 gap-4">
+                        {/* Row 1: Tenure + Lock-in */}
+                        <div className="grid grid-cols-2 gap-4 max-w-md">
                             <div>
                                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                    Loan Amount
+                                    Tenure (Yrs)
                                 </label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
-                                    <input
-                                        type="text"
-                                        value={loanAmount}
-                                        onChange={e => setLoanAmount(formatMoneyInput(e.target.value))}
-                                        className={`${inp} pl-7 w-full`}
-                                        placeholder="300,000"
-                                    />
-                                </div>
+                                <input
+                                    type="number"
+                                    value={active.tenure}
+                                    onChange={e => patchPackage(active.id, { tenure: e.target.value })}
+                                    onBlur={e => {
+                                        const v = parseInt(e.target.value)
+                                        if (isNaN(v) || v < 5) patchPackage(active.id, { tenure: '5' })
+                                        else if (v > 35) patchPackage(active.id, { tenure: '35' })
+                                    }}
+                                    className={`${inp} w-full`}
+                                    placeholder="25"
+                                    min={5}
+                                    max={35}
+                                />
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                        Tenure (Yrs)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        value={tenure}
-                                        onChange={e => setTenure(e.target.value)}
-                                        onBlur={e => {
-                                            const v = parseInt(e.target.value)
-                                            if (isNaN(v) || v < 5) setTenure('5')
-                                            else if (v > 35) setTenure('35')
-                                        }}
-                                        className={`${inp} w-full`}
-                                        placeholder="25"
-                                        min={5}
-                                        max={35}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                                        Compare (Yrs)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        value={compareTenure}
-                                        onChange={e => setCompareTenure(e.target.value)}
-                                        onBlur={e => {
-                                            const v = parseInt(e.target.value)
-                                            if (!isNaN(v)) {
-                                                if (v < 5) setCompareTenure('5')
-                                                else if (v > 35) setCompareTenure('35')
-                                            }
-                                        }}
-                                        className={`${inp} w-full border-dashed`}
-                                        placeholder="15"
-                                        min={5}
-                                        max={35}
-                                    />
-                                </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                    Lock-in Period (Yrs)
+                                </label>
+                                <input
+                                    type="number"
+                                    value={active.lockIn}
+                                    onChange={e => patchPackage(active.id, { lockIn: e.target.value })}
+                                    onBlur={e => {
+                                        const v = parseInt(e.target.value)
+                                        if (!isNaN(v) && v < 0) patchPackage(active.id, { lockIn: '0' })
+                                    }}
+                                    className={`${inp} w-full`}
+                                    placeholder="e.g. 3"
+                                    min={0}
+                                />
                             </div>
-                        </div>
-
-                        {/* Row 2: Lock-in */}
-                        <div className="max-w-xs">
-                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                                Lock-in Period (Yrs)
-                            </label>
-                            <input
-                                type="number"
-                                value={lockInInput}
-                                onChange={e => setLockInInput(e.target.value)}
-                                onBlur={e => {
-                                    const v = parseInt(e.target.value)
-                                    if (!isNaN(v) && v < 0) setLockInInput('0')
-                                }}
-                                className={`${inp} w-full`}
-                                placeholder="e.g. 3"
-                                min={0}
-                            />
                         </div>
 
                         {/* Rate schedule */}
@@ -342,7 +500,7 @@ export default function AmortizationPage() {
                                     Interest Rates (p.a.)
                                 </span>
                                 {lockInYears > 0 && (
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#03a9e7] bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full">
+                                    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${accent.chip}`}>
                                         <Lock size={9} /> {lockInYears}-yr lock-in
                                     </span>
                                 )}
@@ -350,17 +508,17 @@ export default function AmortizationPage() {
 
                             <div className="rounded-xl border border-slate-100 overflow-hidden">
                                 {/* Lock-in rows */}
-                                {schedule.filter(e => !e.thereafter).map((entry, idx) => (
+                                {active.schedule.filter(e => !e.thereafter).map((entry, idx) => (
                                     <RateRow
                                         key={idx}
                                         entry={entry}
                                         label={`Year ${entry.year}`}
                                         isLockin
-                                        onChange={patch => updateRow(schedule.indexOf(entry), patch)}
-                                        onRemove={() => removeRow(schedule.indexOf(entry))}
-                                        canRemove={schedule.length > 1}
+                                        accentBar={accent.dot}
+                                        onChange={patch => updateRow(active.schedule.indexOf(entry), patch)}
+                                        onRemove={() => removeRow(active.schedule.indexOf(entry))}
+                                        canRemove={active.schedule.length > 1}
                                         soraRefs={AMORT_RATE_REFS}
-                                        refId={`refs-${idx}`}
                                         inp={inp}
                                     />
                                 ))}
@@ -375,17 +533,17 @@ export default function AmortizationPage() {
                                 )}
 
                                 {/* Thereafter row */}
-                                {schedule.filter(e => e.thereafter).map((entry, idx) => (
+                                {active.schedule.filter(e => e.thereafter).map((entry, idx) => (
                                     <RateRow
                                         key={`thereafter-${idx}`}
                                         entry={entry}
                                         label="Thereafter"
                                         isLockin={false}
-                                        onChange={patch => updateRow(schedule.indexOf(entry), patch)}
-                                        onRemove={() => removeRow(schedule.indexOf(entry))}
-                                        canRemove={schedule.length > 1}
+                                        accentBar={accent.dot}
+                                        onChange={patch => updateRow(active.schedule.indexOf(entry), patch)}
+                                        onRemove={() => removeRow(active.schedule.indexOf(entry))}
+                                        canRemove={active.schedule.length > 1}
                                         soraRefs={AMORT_RATE_REFS}
-                                        refId={`refs-thereafter-${idx}`}
                                         inp={inp}
                                     />
                                 ))}
@@ -413,11 +571,11 @@ export default function AmortizationPage() {
                     </div>
                 </div>
 
-                {/* ── Summary cards (span 1) ── */}
+                {/* ── Summary cards (span 1) — active package ── */}
                 <div className="flex flex-col gap-3">
                     {lockInCards.length === 0 && (
                         <div className="card p-5 text-center">
-                            <p className="text-xs text-slate-400">Enter rates to see interest summary.</p>
+                            <p className="text-xs text-slate-400">Enter a lock-in period to see the interest summary.</p>
                         </div>
                     )}
 
@@ -428,15 +586,12 @@ export default function AmortizationPage() {
                                 <div
                                     key={year}
                                     className="card overflow-hidden"
-                                    style={{
-                                        background: 'linear-gradient(135deg, #052d4a 0%, #0a4a7a 100%)',
-                                        border: 'none',
-                                    }}
+                                    style={{ background: accent.gradient, border: 'none' }}
                                 >
                                     <div className="p-5">
                                         <div className="flex items-start justify-between">
                                             <div>
-                                                <p className="text-[11px] font-semibold text-sky-300 uppercase tracking-wider">
+                                                <p className={`text-[11px] font-semibold uppercase tracking-wider ${accent.gradLabel}`}>
                                                     Total Interest · Year {year}
                                                 </p>
                                                 <p className="text-3xl font-black text-white mt-1.5 tracking-tight">
@@ -447,8 +602,8 @@ export default function AmortizationPage() {
                                                 Lock-in end
                                             </span>
                                         </div>
-                                        <p className="text-xs text-sky-200/70 mt-3">
-                                            Cumulative interest paid over {year} year{year > 1 ? 's' : ''}
+                                        <p className={`text-xs mt-3 ${accent.gradSub}`}>
+                                            {active.name} · cumulative interest over {year} year{year > 1 ? 's' : ''}
                                         </p>
                                     </div>
                                 </div>
@@ -464,8 +619,8 @@ export default function AmortizationPage() {
                                         {value != null ? `$${fmt(value)}` : '—'}
                                     </p>
                                 </div>
-                                <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center shrink-0">
-                                    <span className="text-xs font-bold text-[#03a9e7]">Y{year}</span>
+                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${accent.pill}`}>
+                                    <span className="text-xs font-bold">Y{year}</span>
                                 </div>
                             </div>
                         )
@@ -477,157 +632,130 @@ export default function AmortizationPage() {
                                 Total Interest · Full Tenure
                             </p>
                             <p className="text-xl font-bold text-slate-600 mt-0.5">${fmt(totalInterest)}</p>
-                            <p className="text-[11px] text-slate-400 mt-1">Over {ten} years</p>
-                        </div>
-                    )}
-                    {showComparison && compareTotalInterest != null && (
-                        <div className="card p-4 border-dashed border-slate-300">
-                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                                Total Interest · Full Tenure
-                            </p>
-                            <p className="text-xl font-bold text-slate-600 mt-0.5">${fmt(compareTotalInterest)}</p>
-                            <p className="text-[11px] text-slate-400 mt-1">Over {compareTen} years</p>
+                            <p className="text-[11px] text-slate-400 mt-1">{active.name} · over {ten} years</p>
                         </div>
                     )}
                 </div>
             </div>
 
-            {/* ── Tenure comparison ── */}
+            {/* ── Package comparison ── */}
             {showComparison && (() => {
+                const base = results[0]
                 const dc = (diff: number) => diff > 0 ? 'text-red-500' : diff < 0 ? 'text-emerald-600' : 'text-slate-400'
                 const ds = (diff: number) => diff > 0 ? '+' : '−'
+                const delta = (mine: number | null, theirs: number | null, suffix = '') => {
+                    if (mine == null || theirs == null) return null
+                    const diff = mine - theirs
+                    if (Math.abs(diff) < 0.005) {
+                        return <span className="block text-[11px] font-semibold text-slate-300 mt-0.5">same</span>
+                    }
+                    return (
+                        <span className={`block text-[11px] font-bold mt-0.5 ${dc(diff)}`}>
+                            {ds(diff)}${fmt(Math.abs(diff))}{suffix}
+                        </span>
+                    )
+                }
                 return (
                     <div className="card overflow-hidden">
                         <div className="px-6 py-4 border-b border-slate-100">
-                            <h3 className="section-label mb-0">Tenure Comparison</h3>
-                            {lockInYears === 0 && (
-                                <p className="text-xs text-slate-400 mt-1">Add lock-in years to compare interest over the lock-in period.</p>
-                            )}
+                            <h3 className="section-label mb-0">Package Comparison</h3>
+                            <p className="text-xs text-slate-400 mt-1">
+                                Same ${fmt(loan)} loan · differences shown against {base.cfg.name}.
+                                {!anyLockIn && ' Add a lock-in period to compare cost over the lock-in.'}
+                                {mixedLockIn && ' Lock-in periods differ — each row is measured over its own lock-in.'}
+                            </p>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="bg-slate-50 border-b border-slate-200">
-                                        <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Tenure (Years)</th>
-                                        <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Monthly Instalment</th>
-                                        {lockInYears > 0 && (<>
+                                        <th className="px-6 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Package</th>
+                                        <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                            Monthly Instalment<br />
+                                            <span className="text-slate-400 font-normal normal-case tracking-normal">Year 1</span>
+                                        </th>
+                                        {anyLockIn && (<>
                                             <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                                                 Total Instalment<br />
-                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Paid over {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
+                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Paid over lock-in</span>
                                             </th>
                                             <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                                                 Outstanding Loan<br />
-                                                <span className="text-slate-400 font-normal normal-case tracking-normal">After {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
+                                                <span className="text-slate-400 font-normal normal-case tracking-normal">After lock-in</span>
                                             </th>
                                             <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                                                 Total Interest<br />
-                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Paid over {lockInYears} yr{lockInYears > 1 ? 's' : ''}</span>
+                                                <span className="text-slate-400 font-normal normal-case tracking-normal">Over lock-in</span>
                                             </th>
                                         </>)}
+                                        <th className="px-6 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                            Total Interest<br />
+                                            <span className="text-slate-400 font-normal normal-case tracking-normal">Full tenure</span>
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {/* Primary tenure row */}
-                                    <tr className="border-b border-slate-100 bg-sky-50/30">
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className="w-1.5 h-5 rounded-full bg-[#03a9e7] shrink-0" />
-                                                <span className="font-bold text-[#052d4a]">{ten}</span>
-                                                <span className="text-xs text-slate-400 font-medium">yrs</span>
-                                                <span className="text-[10px] font-bold text-[#03a9e7] bg-sky-100 px-1.5 py-0.5 rounded-full">Primary</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
-                                            {primaryInstalment != null ? `$${fmt(primaryInstalment)}` : '—'}
-                                        </td>
-                                        {lockInYears > 0 && (<>
-                                            <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
-                                                {primaryTotalInstalment != null ? `$${fmt(primaryTotalInstalment)}` : '—'}
-                                            </td>
-                                            <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
-                                                {primaryOutstanding != null ? `$${fmt(primaryOutstanding)}` : '—'}
-                                            </td>
-                                            <td className="px-6 py-4 text-right font-bold text-[#052d4a] text-base">
-                                                {primaryLockInInterest != null ? `$${fmt(primaryLockInInterest)}` : '—'}
-                                            </td>
-                                        </>)}
-                                    </tr>
-
-                                    {/* Comparison tenure row */}
-                                    <tr className="border-b border-slate-100">
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-2">
-                                                <span className="w-1.5 h-5 rounded-full bg-slate-300 shrink-0" />
-                                                <span className="font-bold text-slate-700">{compareTen}</span>
-                                                <span className="text-xs text-slate-400 font-medium">yrs</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
-                                            {compareInstalment != null ? `$${fmt(compareInstalment)}` : '—'}
-                                        </td>
-                                        {lockInYears > 0 && (<>
-                                            <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
-                                                {compareTotalInstalment != null ? `$${fmt(compareTotalInstalment)}` : '—'}
-                                            </td>
-                                            <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
-                                                {compareOutstanding != null ? `$${fmt(compareOutstanding)}` : '—'}
-                                            </td>
-                                            <td className="px-6 py-4 text-right font-semibold text-slate-700 text-base">
-                                                {compareLockInInterest != null ? `$${fmt(compareLockInInterest)}` : '—'}
-                                            </td>
-                                        </>)}
-                                    </tr>
-
-                                    {/* Difference row */}
-                                    {primaryInstalment != null && compareInstalment != null && (
-                                        <tr className="bg-slate-50/60 border-t-2 border-slate-200">
-                                            <td className="px-6 py-3">
-                                                <span className="text-xs font-black text-slate-500 uppercase tracking-wider">Difference</span>
-                                            </td>
-                                            <td className="px-6 py-3 text-right">
-                                                {(() => {
-                                                    const diff = compareInstalment - primaryInstalment
-                                                    return (
-                                                        <span className={`font-bold ${dc(diff)}`}>
-                                                            {ds(diff)}${fmt(Math.abs(diff))}<span className="text-[11px] font-medium ml-1">/mth</span>
+                                    {results.map((r, i) => {
+                                        const a = ACCENTS[i % ACCENTS.length]
+                                        const isBase = i === 0
+                                        const isActive = r.cfg.id === active.id
+                                        return (
+                                            <tr
+                                                key={r.cfg.id}
+                                                onClick={() => setActiveId(r.cfg.id)}
+                                                className={`border-b border-slate-100 cursor-pointer transition-colors ${
+                                                    isActive ? a.rowBg : 'hover:bg-slate-50/60'
+                                                }`}
+                                            >
+                                                <td className="px-6 py-4 align-top">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className={`w-1.5 h-5 rounded-full shrink-0 ${a.dot}`} />
+                                                        <span className="font-bold text-[#052d4a]">
+                                                            {r.cfg.name || `Package ${letterFor(i)}`}
                                                         </span>
-                                                    )
-                                                })()}
-                                            </td>
-                                            {lockInYears > 0 && (<>
-                                                <td className="px-6 py-3 text-right">
-                                                    {primaryTotalInstalment != null && compareTotalInstalment != null && (() => {
-                                                        const diff = compareTotalInstalment - primaryTotalInstalment
-                                                        return (
-                                                            <span className={`font-bold ${dc(diff)}`}>
-                                                                {ds(diff)}${fmt(Math.abs(diff))}
-                                                            </span>
-                                                        )
-                                                    })()}
+                                                        {isBase && (
+                                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${a.chip}`}>Base</span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[11px] text-slate-400 mt-1 ml-3.5">
+                                                        {r.ten} yrs{r.lockIn > 0 ? ` · ${r.lockIn}-yr lock-in` : ' · no lock-in'}
+                                                    </p>
                                                 </td>
-                                                <td className="px-6 py-3 text-right">
-                                                    {primaryOutstanding != null && compareOutstanding != null && (() => {
-                                                        const diff = compareOutstanding - primaryOutstanding
-                                                        return (
-                                                            <span className={`font-bold ${dc(diff)}`}>
-                                                                {ds(diff)}${fmt(Math.abs(diff))}
-                                                            </span>
-                                                        )
-                                                    })()}
+                                                <td className="px-6 py-4 text-right align-top">
+                                                    <span className="font-bold text-[#052d4a] text-base">
+                                                        {r.instalment != null ? `$${fmt(r.instalment)}` : '—'}
+                                                    </span>
+                                                    {!isBase && delta(r.instalment, base.instalment, '/mth')}
                                                 </td>
-                                                <td className="px-6 py-3 text-right">
-                                                    {primaryLockInInterest != null && compareLockInInterest != null && (() => {
-                                                        const diff = compareLockInInterest - primaryLockInInterest
-                                                        return (
-                                                            <span className={`font-bold ${dc(diff)}`}>
-                                                                {ds(diff)}${fmt(Math.abs(diff))}
-                                                            </span>
-                                                        )
-                                                    })()}
+                                                {anyLockIn && (<>
+                                                    <td className="px-6 py-4 text-right align-top">
+                                                        <span className="font-bold text-[#052d4a] text-base">
+                                                            {r.totalInstalment != null ? `$${fmt(r.totalInstalment)}` : '—'}
+                                                        </span>
+                                                        {!isBase && delta(r.totalInstalment, base.totalInstalment)}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right align-top">
+                                                        <span className="font-bold text-[#052d4a] text-base">
+                                                            {r.outstanding != null ? `$${fmt(r.outstanding)}` : '—'}
+                                                        </span>
+                                                        {!isBase && delta(r.outstanding, base.outstanding)}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right align-top">
+                                                        <span className="font-bold text-[#052d4a] text-base">
+                                                            {r.lockInInterest != null ? `$${fmt(r.lockInInterest)}` : '—'}
+                                                        </span>
+                                                        {!isBase && delta(r.lockInInterest, base.lockInInterest)}
+                                                    </td>
+                                                </>)}
+                                                <td className="px-6 py-4 text-right align-top">
+                                                    <span className="font-semibold text-slate-700 text-base">
+                                                        {r.totalInterest != null ? `$${fmt(r.totalInterest)}` : '—'}
+                                                    </span>
+                                                    {!isBase && delta(r.totalInterest, base.totalInterest)}
                                                 </td>
-                                            </>)}
-                                        </tr>
-                                    )}
+                                            </tr>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         </div>
@@ -635,11 +763,15 @@ export default function AmortizationPage() {
                 )
             })()}
 
-            {/* ── Amortization table ── */}
+            {/* ── Amortization table (active package) ── */}
             {rows.length > 0 && (
                 <div className="card overflow-hidden">
-                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                        <h3 className="section-label mb-0">Year-by-Year Breakdown</h3>
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                        <h3 className="section-label mb-0 flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${accent.dot}`} />
+                            Year-by-Year Breakdown
+                            <span className="text-slate-400 font-normal normal-case tracking-normal">· {active.name}</span>
+                        </h3>
                         <span className="text-[11px] text-slate-400">
                             Figures show last month of each year
                         </span>
@@ -683,16 +815,16 @@ export default function AmortizationPage() {
                                             key={row.year}
                                             className={`border-b transition-colors ${
                                                 isLockinRow
-                                                    ? 'border-sky-50 bg-sky-50/30 hover:bg-sky-50/60'
+                                                    ? accent.rowBg
                                                     : i % 2 === 0
                                                         ? 'border-slate-50 hover:bg-slate-50/60'
                                                         : 'border-slate-50 bg-slate-50/40 hover:bg-slate-50/80'
                                             }`}
                                         >
                                             <td className="py-3 pl-0 pr-4">
-                                                <div className={`flex items-center gap-0 h-full`}>
-                                                    <div className={`w-1 self-stretch rounded-r mr-3 ${isLockinRow ? 'bg-[#03a9e7]' : 'bg-transparent'}`} />
-                                                    <span className={`font-bold ${isLockinRow ? 'text-[#03a9e7]' : 'text-slate-400'}`}>
+                                                <div className="flex items-center gap-0 h-full">
+                                                    <div className={`w-1 self-stretch rounded-r mr-3 ${isLockinRow ? accent.dot : 'bg-transparent'}`} />
+                                                    <span className={`font-bold ${isLockinRow ? accent.text : 'text-slate-400'}`}>
                                                         {row.year}
                                                     </span>
                                                 </div>
@@ -700,9 +832,7 @@ export default function AmortizationPage() {
                                             <td className="px-4 py-3">
                                                 {hasData ? (
                                                     <span className={`inline-block text-xs font-bold px-2 py-0.5 rounded-full ${
-                                                        isLockinRow
-                                                            ? 'bg-sky-100 text-[#03a9e7]'
-                                                            : 'bg-slate-100 text-slate-500'
+                                                        isLockinRow ? accent.pill : 'bg-slate-100 text-slate-500'
                                                     }`}>
                                                         {row.rate!.toFixed(2)}%
                                                     </span>
@@ -728,7 +858,7 @@ export default function AmortizationPage() {
                                             <td className="px-4 py-3 text-right">
                                                 {hasData ? (
                                                     isLastLockin ? (
-                                                        <span className="inline-block font-black text-[#052d4a] bg-sky-100 border border-sky-200 px-2.5 py-0.5 rounded-full text-sm">
+                                                        <span className={`inline-block font-black border px-2.5 py-0.5 rounded-full text-sm ${accent.balancePill}`}>
                                                             ${fmt(row.balance)}
                                                         </span>
                                                     ) : (
@@ -768,7 +898,7 @@ export default function AmortizationPage() {
 // ── Rate row sub-component ────────────────────────────────────────────────────
 
 function RateRow({
-    entry, label, isLockin, onChange, onRemove, canRemove, soraRefs, refId, inp,
+    entry, label, isLockin, onChange, onRemove, canRemove, soraRefs, inp, accentBar,
 }: {
     entry: RateScheduleEntry
     label: string
@@ -777,15 +907,15 @@ function RateRow({
     onRemove: () => void
     canRemove: boolean
     soraRefs: readonly string[]
-    refId: string
     inp: string
+    accentBar: string
 }) {
     return (
         <div className={`flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-b-0 ${
             isLockin ? 'bg-white' : 'bg-slate-50/60'
         }`}>
             {/* Left border indicator */}
-            <div className={`w-1 h-8 rounded-full shrink-0 ${isLockin ? 'bg-[#03a9e7]' : 'bg-slate-200'}`} />
+            <div className={`w-1 h-8 rounded-full shrink-0 ${isLockin ? accentBar : 'bg-slate-200'}`} />
 
             {/* Year label */}
             <span className={`w-20 shrink-0 text-xs font-bold ${isLockin ? 'text-[#052d4a]' : 'text-slate-400'}`}>

@@ -67,6 +67,30 @@ function tooMany(reset: number): NextResponse {
     )
 }
 
+/**
+ * Runs the limiter, failing OPEN if Upstash is configured but unreachable.
+ *
+ * getRedis() already no-ops when the env vars are absent, but a configured-yet-
+ * dead Redis (deleted database, DNS failure, Upstash outage) throws straight out
+ * of `limit()` instead: its implementation is try/finally with no catch, and the
+ * library's own 5s fail-open timeout only rescues a SLOW Redis — a fetch that
+ * rejects immediately (ENOTFOUND) wins the Promise.race and rejects with it.
+ *
+ * Unguarded, that turned every signup and forgot-password call into a 500. Rate
+ * limiting is a guardrail around the product, not the product, so degrading to
+ * unprotected is the right failure direction — same reasoning as the missing-
+ * env-var branch above. Logged loudly so it can't rot unnoticed.
+ */
+async function checkLimit(rl: Ratelimit, key: string): Promise<NextResponse | null> {
+    try {
+        const { success, reset } = await rl.limit(key)
+        return success ? null : tooMany(reset)
+    } catch (err) {
+        console.error('[rateLimit] limiter unreachable — allowing request unthrottled', err)
+        return null
+    }
+}
+
 function clientIp(request: Request): string {
     const forwarded = request.headers.get('x-forwarded-for')
     return forwarded?.split(',')[0]?.trim() ?? 'unknown'
@@ -85,8 +109,7 @@ export async function rateLimitOrResponse(request: Request, routeKey: string): P
     const rl = getRatelimit('auth')
     if (!rl) return null
 
-    const { success, reset } = await rl.limit(`${routeKey}:${clientIp(request)}`)
-    return success ? null : tooMany(reset)
+    return checkLimit(rl, `${routeKey}:${clientIp(request)}`)
 }
 
 /**
@@ -112,6 +135,5 @@ export async function rateLimitUser(
     const rl = getRatelimit(tier)
     if (!rl) return null
 
-    const { success, reset } = await rl.limit(`${routeKey}:${userId}`)
-    return success ? null : tooMany(reset)
+    return checkLimit(rl, `${routeKey}:${userId}`)
 }
