@@ -18,7 +18,7 @@ export async function PATCH(
     // Verify the agent owns this case; also fetch fields needed for calendar sync
     const { data: existing } = await admin
         .from('property_cases')
-        .select('agent_id, followup_preference, follow_up_date, client_name')
+        .select('agent_id, followup_preference, follow_up_date, client_name, client_mobile')
         .eq('id', id)
         .single()
 
@@ -70,7 +70,8 @@ export async function PATCH(
         action,
         newDate,
         existing.client_name,
-        `${APP_URL}/property/cases/${id}`
+        `${APP_URL}/property/cases/${id}`,
+        existing.client_mobile
     ).catch(err => console.error('[Calendar sync] followup patch:', err))
 
     return NextResponse.json({ success: true })

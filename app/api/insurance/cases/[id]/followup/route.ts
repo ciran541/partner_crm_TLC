@@ -30,7 +30,7 @@ export async function PATCH(
 
     const { data: existing } = await admin
         .from('cases')
-        .select('created_by, follow_up_date, client_name')
+        .select('created_by, follow_up_date, client_name, client_mobile')
         .eq('id', id)
         .single()
 
@@ -75,6 +75,7 @@ export async function PATCH(
         newDate,
         existing.client_name,
         `${APP_URL}/insurance/dashboard/cases/${id}`,
+        existing.client_mobile,
     ).catch(err => console.error('[Calendar sync] insurance followup:', err))
 
     return NextResponse.json({ success: true })

@@ -195,7 +195,8 @@ export async function POST(request: Request) {
             'upsert',
             follow_up_date,
             client_name,
-            `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${newCase.id}`
+            `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${newCase.id}`,
+            client_mobile
         ).catch(err => console.error('[Calendar sync] case creation:', err))
     }
 

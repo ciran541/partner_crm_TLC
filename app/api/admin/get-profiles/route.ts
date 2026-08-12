@@ -43,6 +43,7 @@ export async function GET() {
                 role: p.role,
                 app_type: p.app_type ?? 'insurance',
                 status: p.status ?? 'active',
+                subscription_tier: p.subscription_tier ?? 'standard',
                 created_at: p.created_at,
                 email: authUser?.email || 'Unknown',
             }

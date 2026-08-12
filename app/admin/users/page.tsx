@@ -359,13 +359,20 @@ export default function AdminUsersPage() {
                                         </span>
                                     </td>
                                     <td className="p-4">
-                                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
-                                            p.app_type === 'property'
-                                                ? 'bg-emerald-50 text-emerald-700'
-                                                : 'bg-sky-50 text-sky-700'
-                                        }`}>
-                                            {p.app_type ?? 'insurance'}
-                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                                p.app_type === 'property'
+                                                    ? 'bg-emerald-50 text-emerald-700'
+                                                    : 'bg-sky-50 text-sky-700'
+                                            }`}>
+                                                {p.app_type ?? 'insurance'}
+                                            </span>
+                                            {p.app_type === 'property' && p.subscription_tier === 'premium' && (
+                                                <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-100">
+                                                    Premium
+                                                </span>
+                                            )}
+                                        </div>
                                     </td>
                                     <td className="p-4">
                                         <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
@@ -397,7 +404,7 @@ export default function AdminUsersPage() {
                                             </button>
                                             <button
                                                 onClick={() => {
-                                                    setEditForm({ id: p.id, name: p.name || '', role: p.role, status: p.status ?? 'active' })
+                                                    setEditForm({ id: p.id, name: p.name || '', role: p.role, status: p.status ?? 'active', subscription_tier: p.subscription_tier ?? 'standard' })
                                                     setIsEditOpen(true)
                                                 }}
                                                 className="p-2 text-slate-400 hover:text-[#8b5cf6] hover:bg-purple-50 rounded-lg transition-all"
@@ -605,6 +612,17 @@ export default function AdminUsersPage() {
                                 <option value="disabled">Disabled</option>
                             </select>
                         </div>
+                        {profiles.find(p => p.id === editForm.id)?.app_type === 'property' && (
+                            <div>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subscription Tier</label>
+                                <select className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm bg-white"
+                                    value={editForm.subscription_tier ?? 'standard'}
+                                    onChange={(e) => setEditForm({ ...editForm, subscription_tier: e.target.value as any })}>
+                                    <option value="standard">Standard</option>
+                                    <option value="premium">Premium</option>
+                                </select>
+                            </div>
+                        )}
                         <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                             <button type="button" onClick={() => setIsEditOpen(false)} className="btn-ghost px-6 py-2">Cancel</button>
                             <button type="submit" disabled={isSubmitting} className="btn-primary px-6 py-2 flex items-center gap-2">

@@ -1,4 +1,4 @@
-import type { UserRole, AppType } from '@/lib/types/shared'
+import type { UserRole, AppType, SubscriptionTier } from '@/lib/types/shared'
 
 /**
  * Permission helpers — centralised role and domain checks.
@@ -38,6 +38,16 @@ export function canAccessInsurance(role: UserRole, appType: AppType): boolean {
 /** Returns true if the user can access the property app */
 export function canAccessProperty(role: UserRole, appType: AppType): boolean {
     return isAdmin(role) || (isAgent(role) && isPropertyUser(appType))
+}
+
+/**
+ * Returns true if the user can access premium-tier Property CRM features.
+ * Tier is only meaningful for property agents — admins always pass (support/
+ * testing), matching the isAdmin() short-circuit used by every other
+ * canAccess* check in this file.
+ */
+export function hasPropertyPremium(role: UserRole, appType: AppType, tier: SubscriptionTier | null | undefined): boolean {
+    return isAdmin(role) || (canAccessProperty(role, appType) && tier === 'premium')
 }
 
 /** Returns the correct safe fallback route based on the user's role and domain */

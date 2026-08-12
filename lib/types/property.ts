@@ -178,3 +178,19 @@ export interface PropertySignupInput {
     terms_version: string
     privacy_version: string
 }
+
+/**
+ * One row of the admin Property Earnings master table, as returned by the
+ * property_commission_by_agent() SQL function. Buckets are the three real
+ * commission_status values, unlike insurance's open/closed_unpaid/closed_paid —
+ * property tracks payout state on the case itself.
+ */
+export interface PropertyAgentCommissionRow {
+    agentId: string
+    agentName: string
+    pending: number
+    confirmed: number
+    paid: number
+    caseCount: number
+    total: number
+}

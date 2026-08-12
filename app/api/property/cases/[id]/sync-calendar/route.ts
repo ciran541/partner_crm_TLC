@@ -15,7 +15,7 @@ export async function POST(
 
     const { data: caseData, error } = await admin
         .from('property_cases')
-        .select('agent_id, follow_up_date, followup_preference, client_name, followup_completed_at')
+        .select('agent_id, follow_up_date, followup_preference, client_name, client_mobile, followup_completed_at')
         .eq('id', id)
         .single()
 
@@ -46,7 +46,8 @@ export async function POST(
         'upsert',
         caseData.follow_up_date,
         caseData.client_name,
-        `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${id}`
+        `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${id}`,
+        caseData.client_mobile
     )
 
     return NextResponse.json({ success: true })

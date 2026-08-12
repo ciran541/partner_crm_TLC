@@ -4,6 +4,23 @@ import type { calendar_v3 } from 'googleapis'
 const EVENT_COLOR_ID = '2' // Sage (green)
 
 /**
+ * Builds the event title: "Follow-up: Jane Tan 91234567".
+ *
+ * The mobile is in the title rather than only the description because that is
+ * the one line Google shows in a month grid, a notification and a phone's lock
+ * screen — an agent seeing the reminder can dial straight from it without
+ * opening the event or the CRM.
+ *
+ * Degrades to the bare name when no mobile is on the case: insurance's
+ * client_mobile is nullable (property's is NOT NULL), so this must not render
+ * a dangling separator or the string "null".
+ */
+export function followUpTitle(clientName: string, clientPhone?: string | null): string {
+    const phone = clientPhone?.trim()
+    return phone ? `Follow-up: ${clientName} ${phone}` : `Follow-up: ${clientName}`
+}
+
+/**
  * Creates an all-day follow-up calendar event.
  * @returns The Google Calendar event ID (needed for future updates/deletes)
  */
@@ -12,12 +29,13 @@ export async function createFollowUpEvent(
     clientName: string,
     followUpDate: string, // 'YYYY-MM-DD'
     caseUrl: string,
-    calendarId = 'primary'
+    calendarId = 'primary',
+    clientPhone?: string | null
 ): Promise<string> {
     const response = await calendarClient.events.insert({
         calendarId,
         requestBody: {
-            summary: `Follow-up: ${clientName}`,
+            summary: followUpTitle(clientName, clientPhone),
             description: `View case in TLC Property CRM:\n${caseUrl}`,
             colorId: EVENT_COLOR_ID,
             start: { date: followUpDate },
@@ -39,13 +57,22 @@ export async function createFollowUpEvent(
 }
 
 /**
- * Updates the date of an existing follow-up calendar event.
+ * Updates the date of an existing follow-up calendar event, and re-titles it
+ * when a client name is supplied.
+ *
+ * The retitle keeps already-synced events correct: without it, every event
+ * created before the mobile was added to the title would keep its name-only
+ * title forever, and a corrected mobile in the CRM would never reach the
+ * calendar. patch() leaves omitted fields untouched, so passing no name keeps
+ * this a date-only update exactly as before.
  */
 export async function updateFollowUpEvent(
     calendarClient: calendar_v3.Calendar,
     eventId: string,
     followUpDate: string, // 'YYYY-MM-DD'
-    calendarId = 'primary'
+    calendarId = 'primary',
+    clientName?: string | null,
+    clientPhone?: string | null
 ): Promise<void> {
     await calendarClient.events.patch({
         calendarId,
@@ -53,6 +80,7 @@ export async function updateFollowUpEvent(
         requestBody: {
             start: { date: followUpDate },
             end: { date: followUpDate },
+            ...(clientName ? { summary: followUpTitle(clientName, clientPhone) } : {}),
         },
     })
 }

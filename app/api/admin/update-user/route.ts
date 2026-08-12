@@ -12,7 +12,7 @@ export async function POST(request: Request) {
 
     try {
         const body: UpdateUserInput = await request.json()
-        const { id, name, role, status } = body
+        const { id, name, role, status, subscription_tier } = body
 
         if (!id) {
             return NextResponse.json({ error: 'Missing User ID' }, { status: 400 })
@@ -25,6 +25,7 @@ export async function POST(request: Request) {
         if (name) updates.name = name
         if (role) updates.role = role
         if (status) updates.status = status
+        if (subscription_tier) updates.subscription_tier = subscription_tier
 
         const { error: profileError } = await supabaseAdmin
             .from('profiles')
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
 
         const [{ data: profile }, { data: authUser }] = await Promise.all([
             supabaseAdmin.from('profiles')
-                .select('id, name, role, full_name, mobile, cea_registration_no, agency_name, app_type, status, joined_at, created_at')
+                .select('id, name, role, full_name, mobile, cea_registration_no, agency_name, app_type, status, subscription_tier, joined_at, created_at')
                 .eq('id', id)
                 .single(),
             supabaseAdmin.auth.admin.getUserById(id),
@@ -62,6 +63,7 @@ export async function POST(request: Request) {
                 agency_name: profile.agency_name ?? null,
                 app_type: profile.app_type,
                 status: profile.status,
+                subscription_tier: profile.subscription_tier,
                 joined_at: profile.joined_at ?? null,
                 created_at: profile.created_at ?? null,
             })

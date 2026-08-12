@@ -8,7 +8,7 @@ import {
     LayoutDashboard,
     Users,
     BarChart3,
-    BarChart2,
+    DollarSign,
     LogOut,
     Menu,
     X,
@@ -28,6 +28,20 @@ import {
 import Spinner from '@/components/shared/Spinner'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
+
+interface NavItem {
+    name: string
+    href: string
+    icon: React.ComponentType<{ size?: number }>
+    /** Match this href exactly. Only '/admin' needs it — every other route is a
+     *  prefix of nothing, but '/admin' is a prefix of all of them. */
+    exact?: boolean
+}
+
+interface NavSection {
+    label: string
+    items: NavItem[]
+}
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
     const router = useRouter()
@@ -101,29 +115,49 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         )
     }
 
-    const coreNavItems = [
-        { name: 'Admin Home', href: '/admin', icon: LayoutDashboard },
-        { name: 'Users', href: '/admin/users', icon: Users },
-        { name: 'Audit Log', href: '/admin/audit-log', icon: History },
-    ]
-
-    const insuranceNavItems = [
-        { name: 'Insurance Cases', href: '/admin/insurance/cases', icon: ClipboardList },
-        { name: 'Insurance Earnings', href: '/admin/insurance/earnings', icon: BarChart2 },
-        { name: 'Insurance Analytics', href: '/admin/insurance/analytics', icon: BarChart3 },
-        { name: 'Insurance Follow-ups', href: '/admin/insurance/follow-ups', icon: Clock },
-        { name: 'Insurance Rates', href: '/admin/insurance/rates', icon: Percent },
-        { name: 'Bank Promotions', href: '/admin/insurance/promotions', icon: Gift },
-        { name: 'Insurance Knowledge', href: '/admin/insurance/knowledge', icon: BookOpen },
-        { name: 'Mortgage News', href: '/admin/insurance/news', icon: Newspaper },
-        { name: 'Economic Calendar', href: '/admin/insurance/calendar', icon: CalendarClock },
-        { name: "Banks' Insights", href: '/admin/insurance/bank-intelligence', icon: Landmark },
-    ]
-
-    const propertyNavItems = [
-        { name: 'Property Cases', href: '/admin/property/cases', icon: Building2 },
-        { name: 'Property Analytics', href: '/admin/property/analytics', icon: BarChart2 },
-        { name: 'Property Reminders', href: '/admin/property/reminders', icon: Bell },
+    // Grouped by what the screen is FOR, not by which table it reads. The
+    // insurance section split in two because the money screens (whose numbers go
+    // to agents and get paid out) and the reference/content screens (rates,
+    // promos, news) are different jobs done at different times — one long
+    // undifferentiated list made them look interchangeable.
+    const navSections: NavSection[] = [
+        {
+            label: 'Core',
+            items: [
+                { name: 'Admin Home', href: '/admin', icon: LayoutDashboard, exact: true },
+                { name: 'Users', href: '/admin/users', icon: Users },
+                { name: 'Audit Log', href: '/admin/audit-log', icon: History },
+            ],
+        },
+        {
+            label: 'Insurance — Finance',
+            items: [
+                { name: 'Insurance Cases', href: '/admin/insurance/cases', icon: ClipboardList },
+                { name: 'Insurance Earnings', href: '/admin/insurance/earnings', icon: DollarSign },
+                { name: 'Insurance Analytics', href: '/admin/insurance/analytics', icon: BarChart3 },
+            ],
+        },
+        {
+            label: 'Insurance — Operations',
+            items: [
+                { name: 'Insurance Follow-ups', href: '/admin/insurance/follow-ups', icon: Clock },
+                { name: 'Insurance Rates', href: '/admin/insurance/rates', icon: Percent },
+                { name: 'Bank Promotions', href: '/admin/insurance/promotions', icon: Gift },
+                { name: 'Insurance Knowledge', href: '/admin/insurance/knowledge', icon: BookOpen },
+                { name: 'Mortgage News', href: '/admin/insurance/news', icon: Newspaper },
+                { name: 'Economic Calendar', href: '/admin/insurance/calendar', icon: CalendarClock },
+                { name: "Banks' Insights", href: '/admin/insurance/bank-intelligence', icon: Landmark },
+            ],
+        },
+        {
+            label: 'Property Platform',
+            items: [
+                { name: 'Property Cases', href: '/admin/property/cases', icon: Building2 },
+                { name: 'Property Earnings', href: '/admin/property/earnings', icon: DollarSign },
+                { name: 'Property Analytics', href: '/admin/property/analytics', icon: BarChart3 },
+                { name: 'Property Reminders', href: '/admin/property/reminders', icon: Bell },
+            ],
+        },
     ]
 
     return (
@@ -173,94 +207,40 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
                 {/* Navigation */}
                 <nav className="flex-1 min-h-0 px-3 py-6 overflow-y-auto">
-                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                        Core
-                    </p>
-                    <ul className="space-y-1">
-                        {coreNavItems.map((item) => {
-                            const isActive =
-                                pathname === item.href ||
-                                (item.href !== '/admin' && pathname?.startsWith(item.href))
-                            return (
-                                <li key={item.name}>
-                                    <a
-                                        href={item.href}
-                                        className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                                            isActive
-                                                ? 'bg-purple-500/20 text-white border-l-[3px] border-purple-400 pr-4'
-                                                : 'text-slate-300 hover:text-white hover:bg-white/10 px-4'
-                                        }`}
-                                        style={isActive ? { paddingLeft: 13 } : undefined}
-                                        onClick={() => {
-                                            if (window.innerWidth < 768) setSidebarOpen(false)
-                                        }}
-                                    >
-                                        <item.icon size={18} />
-                                        <span>{item.name}</span>
-                                    </a>
-                                </li>
-                            )
-                        })}
-                    </ul>
-
-                    <hr className="border-white/10 my-4" />
-
-                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                        Insurance Platform
-                    </p>
-                    <ul className="space-y-1">
-                        {insuranceNavItems.map((item) => {
-                            const isActive = pathname?.startsWith(item.href)
-                            return (
-                                <li key={item.name}>
-                                    <a
-                                        href={item.href}
-                                        className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                                            isActive
-                                                ? 'bg-purple-500/20 text-white border-l-[3px] border-purple-400 pr-4'
-                                                : 'text-slate-300 hover:text-white hover:bg-white/10 px-4'
-                                        }`}
-                                        style={isActive ? { paddingLeft: 13 } : undefined}
-                                        onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false) }}
-                                    >
-                                        <item.icon size={18} />
-                                        <span>{item.name}</span>
-                                    </a>
-                                </li>
-                            )
-                        })}
-                    </ul>
-
-                    <hr className="border-white/10 my-4" />
-
-                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                        Property Platform
-                    </p>
-                    <ul className="space-y-1">
-                        {propertyNavItems.map((item) => {
-                            const isActive = pathname?.startsWith(item.href)
-                            return (
-                                <li key={item.name}>
-                                    <a
-                                        href={item.href}
-                                        className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                                            isActive
-                                                ? 'bg-purple-500/20 text-white border-l-[3px] border-purple-400 pr-4'
-                                                : 'text-slate-300 hover:text-white hover:bg-white/10 px-4'
-                                        }`}
-                                        style={isActive ? { paddingLeft: 13 } : undefined}
-                                        onClick={() => {
-                                            if (window.innerWidth < 768) setSidebarOpen(false)
-                                        }}
-                                    >
-                                        <item.icon size={18} />
-                                        <span>{item.name}</span>
-                                    </a>
-                                </li>
-                            )
-                        })}
-                    </ul>
-
+                    {navSections.map((section, sectionIndex) => (
+                        <div key={section.label}>
+                            {sectionIndex > 0 && <hr className="border-white/10 my-4" />}
+                            <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
+                                {section.label}
+                            </p>
+                            <ul className="space-y-1">
+                                {section.items.map(item => {
+                                    const isActive = item.exact
+                                        ? pathname === item.href
+                                        : pathname === item.href || !!pathname?.startsWith(item.href)
+                                    return (
+                                        <li key={item.name}>
+                                            <a
+                                                href={item.href}
+                                                className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                                                    isActive
+                                                        ? 'bg-purple-500/20 text-white border-l-[3px] border-purple-400 pr-4'
+                                                        : 'text-slate-300 hover:text-white hover:bg-white/10 px-4'
+                                                }`}
+                                                style={isActive ? { paddingLeft: 13 } : undefined}
+                                                onClick={() => {
+                                                    if (window.innerWidth < 768) setSidebarOpen(false)
+                                                }}
+                                            >
+                                                <item.icon size={18} />
+                                                <span>{item.name}</span>
+                                            </a>
+                                        </li>
+                                    )
+                                })}
+                            </ul>
+                        </div>
+                    ))}
                 </nav>
 
                 {/* User Footer */}

@@ -23,7 +23,8 @@ export async function syncFollowUpToCalendar(
     action: 'upsert' | 'delete',
     followUpDate?: string | null,
     clientName?: string | null,
-    caseUrl?: string
+    caseUrl?: string,
+    clientPhone?: string | null
 ): Promise<void> {
     try {
         // Nothing to do if no preference
@@ -86,7 +87,14 @@ export async function syncFollowUpToCalendar(
 
         if (existingEvent?.google_event_id) {
             // Update existing event
-            await updateFollowUpEvent(calendarClient, existingEvent.google_event_id, followUpDate, calendarId)
+            await updateFollowUpEvent(
+                calendarClient,
+                existingEvent.google_event_id,
+                followUpDate,
+                calendarId,
+                clientName,
+                clientPhone,
+            )
             await admin
                 .from('property_calendar_events')
                 .upsert(
@@ -107,7 +115,8 @@ export async function syncFollowUpToCalendar(
                 clientName ?? 'Client',
                 followUpDate,
                 caseUrl ?? '',
-                calendarId
+                calendarId,
+                clientPhone
             )
 
             // upsert, not insert — a concurrent duplicate save now converges on

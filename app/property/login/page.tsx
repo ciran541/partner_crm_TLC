@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { Lock, Mail, ArrowRight } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import { saveLinkedAccount } from '@/lib/auth/accountSwitcher'
+import { hasPropertyPremium } from '@/lib/permissions'
 
 const REASON_MESSAGES: Record<string, string> = {
     suspended: 'Your account is pending activation. Please contact your admin.',
@@ -39,7 +40,7 @@ function PropertyLoginInner() {
 
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('app_type, status, role, name')
+                .select('app_type, status, role, name, subscription_tier')
                 .eq('id', data.user.id)
                 .single()
 
@@ -67,7 +68,9 @@ function PropertyLoginInner() {
                 })
             }
 
-            router.push('/property/dashboard')
+            // Premium agents land straight on Rates rather than the case dashboard.
+            const isPremium = hasPropertyPremium(profile.role, profile.app_type, profile.subscription_tier)
+            router.push(isPremium ? '/property/rates' : '/property/dashboard')
         } catch (err: any) {
             setError(err.message)
             setLoading(false)

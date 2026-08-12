@@ -13,6 +13,10 @@ export type AppType = 'insurance' | 'property'
 // Account status
 export type UserStatus = 'active' | 'disabled'
 
+// Paid feature tier — currently only meaningful for property agents
+// (Property CRM "premium" onboarding tier). Ignored for insurance users.
+export type SubscriptionTier = 'standard' | 'premium'
+
 // Profile — matches the profiles table (extended with app_type + status)
 export interface Profile {
     id: string
@@ -29,6 +33,7 @@ export interface Profile {
     cea_registration_no?: string
     agency_name?: string
     joined_at?: string
+    subscription_tier?: SubscriptionTier
 
     // First-login onboarding progress (insurance agents)
     onboarding?: OnboardingProgress
@@ -74,6 +79,7 @@ export interface UpdateUserInput {
     name?: string
     role?: UserRole
     status?: UserStatus
+    subscription_tier?: SubscriptionTier
 }
 
 // Consent record — matches user_consents table

@@ -100,7 +100,8 @@ export async function POST(request: Request) {
                 'upsert',
                 newDate,
                 u2.client_name as string,
-                `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${id}`
+                `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${id}`,
+                u2.client_mobile as string | null
             ).catch(err => console.error('[Calendar sync] admin date change:', err))
         }
     }

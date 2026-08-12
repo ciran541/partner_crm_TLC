@@ -16,6 +16,7 @@ export async function syncInsuranceFollowUp(
     followUpDate?: string | null,
     clientName?: string | null,
     caseUrl?: string,
+    clientPhone?: string | null,
 ): Promise<void> {
     try {
         const admin = createAdminClient()
@@ -56,7 +57,14 @@ export async function syncInsuranceFollowUp(
         if (!followUpDate) return
 
         if (existingEvent?.google_event_id) {
-            await updateFollowUpEvent(calendarClient, existingEvent.google_event_id, followUpDate, calendarId)
+            await updateFollowUpEvent(
+                calendarClient,
+                existingEvent.google_event_id,
+                followUpDate,
+                calendarId,
+                clientName,
+                clientPhone,
+            )
             await admin
                 .from('insurance_calendar_events')
                 .upsert(
@@ -77,6 +85,7 @@ export async function syncInsuranceFollowUp(
                 followUpDate,
                 caseUrl ?? '',
                 calendarId,
+                clientPhone,
             )
             // upsert, not insert — the case_id unique index (migration 20260807000000)
             // means a race with another concurrent sync now safely converges on one

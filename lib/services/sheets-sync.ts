@@ -48,6 +48,7 @@ export interface SheetsProfilePayload {
     agency_name: string | null
     app_type: string
     status: string
+    subscription_tier?: string
     joined_at: string | null
     created_at: string | null
 }
