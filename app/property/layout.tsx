@@ -40,7 +40,7 @@ const internalNavItems = [
 const toolsNavItems = [
     { name: 'Rates', href: '/property/rates', icon: Percent },
     { name: 'Calculators', href: '/property/calculators', icon: Calculator },
-    { name: 'Resources', href: '/property/resources/news', icon: BarChart2 },
+    { name: 'Resources', href: '/property/resources/rates', icon: BarChart2 },
     { name: "Bank Insights", href: '/property/bank-insights', icon: Landmark },
 ]
 
@@ -82,11 +82,18 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                 if (user) {
                     const { data: profile } = await supabase
                         .from('profiles')
-                        .select('role, app_type')
+                        .select('role, app_type, subscription_tier')
                         .eq('id', user.id)
                         .single()
                     if (active && profile && canAccessProperty(profile.role, profile.app_type)) {
-                        router.replace(getSafeRoute(profile.role, profile.app_type))
+                        // Same destination logic as the login form's own submit handler
+                        // (app/property/login/page.tsx) — this branch covers the case
+                        // where a session is already active and the agent lands back on
+                        // /property/login anyway, bypassing that handler entirely.
+                        const dest = hasPropertyPremium(profile.role, profile.app_type, profile.subscription_tier)
+                            ? '/property/rates'
+                            : getSafeRoute(profile.role, profile.app_type)
+                        router.replace(dest)
                     }
                 }
                 return

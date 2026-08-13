@@ -6,11 +6,11 @@ import { usePathname } from 'next/navigation'
 import { BarChart2 } from 'lucide-react'
 import PropertyPremiumGate from '@/components/property/PropertyPremiumGate'
 
-// Premium-tier feature — property-branded subset of
-// app/insurance/dashboard/resources/layout.tsx (News + Calendar only, per the
-// agreed premium scope — "SORA/FFR Trend" and "Domestic Rates" sub-tabs are
-// not part of this pass).
+// Premium-tier feature — property-branded port of
+// app/insurance/dashboard/resources/layout.tsx, all four tabs.
 const TABS = [
+    { label: 'SORA / FFR Trend',   href: '/property/resources/rates' },
+    { label: 'Domestic Rates',     href: '/property/resources/domestic' },
     { label: 'Mortgage News',      href: '/property/resources/news' },
     { label: 'Economic Calendar',  href: '/property/resources/calendar' },
 ]
