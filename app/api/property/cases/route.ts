@@ -131,12 +131,21 @@ export async function POST(request: Request) {
         projectionData.projected_tlc_income = p.projectedTlcIncome
     }
 
-    // Compute follow-up date: LOO + lock_in_years − 2 months
+    // Compute follow-up date: LOO + lock_in_years − 2 months.
+    // Day is set to 1 before the month arithmetic, then restored clamped to
+    // the resulting month's last valid day — without this, e.g. an LOO of
+    // Jan 31 silently overflows to Dec 1 instead of Nov 30, since November
+    // only has 30 days and JS's Date.setMonth rolls overflow into the next
+    // month rather than clamping.
     let follow_up_date: string | null = null
     if (letter_of_offer_date && lock_in_period) {
         const d = new Date(letter_of_offer_date as string)
+        const targetDay = d.getDate()
+        d.setDate(1)
         d.setFullYear(d.getFullYear() + Number(lock_in_period))
         d.setMonth(d.getMonth() - 2)
+        const lastDayOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+        d.setDate(Math.min(targetDay, lastDayOfMonth))
         follow_up_date = d.toISOString().split('T')[0]
     }
 

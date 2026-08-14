@@ -10,10 +10,9 @@ import { computeAmortization, type AmortRow } from '@/lib/insurance/amortCalc'
 import PropertyPremiumGate from '@/components/property/PropertyPremiumGate'
 
 // Premium-tier feature — property-branded port of
-// app/insurance/dashboard/calculators/amortization/page.tsx. Unlike the
-// insurance page (which reimplements the amortization math locally), this
-// one imports the real shared module (lib/insurance/amortCalc.ts) rather
-// than duplicating it a third time.
+// app/insurance/dashboard/calculators/amortization/page.tsx. The two pages are
+// kept identical apart from branding, the back link and this gate; the shared
+// amortization math lives in lib/insurance/amortCalc.ts, which both import.
 
 // FD Rate replaced with Custom: agent enters the bank's own base rate + spread
 const AMORT_RATE_REFS = ['3M SORA', '1M SORA', 'Custom'] as const
@@ -39,6 +38,15 @@ interface PackageConfig {
     tenure: string
     lockIn: string
     schedule: RateScheduleEntry[]
+    /**
+     * Optional second tenure for the SAME rates and lock-in - the same offer
+     * quoted over, say, 12 and 25 years. It belongs to the package rather than
+     * being a package of its own: agents compare tenures far more often than
+     * they have three genuinely different bank offers open, and spending a
+     * package slot on "Package A (copy)" made the comparison table read as
+     * four banks when it was really two.
+     */
+    altTenure?: string
 }
 
 const MAX_PACKAGES = 3
@@ -81,12 +89,19 @@ const newSchedule = (): RateScheduleEntry[] => ([
 
 const letterFor = (i: number) => String.fromCharCode(65 + i) // A, B, C
 
+/** A blank alt tenure means "not comparing tenures", not "a 0-year loan". */
+const hasAlt = (p: PackageConfig) => (p.altTenure ?? '').trim() !== ''
+const variantKey = (id: string, isAlt: boolean) => `${id}:${isAlt ? 'alt' : 'main'}`
+
 let pkgSeq = 1
 const nextPkgId = () => `pkg-${++pkgSeq}`
 
-/** Everything derived from one package config. */
+/** Everything derived from one package config at one of its tenures. */
 interface PackageResult {
+    key: string                     // unique per row: package + which tenure
     cfg: PackageConfig
+    pkgIdx: number                  // colour and letter follow the package, not the row
+    isAlt: boolean                  // this is the package's second tenure
     ten: number
     lockIn: number
     rows: AmortRow[]
@@ -98,8 +113,14 @@ interface PackageResult {
     totalPrincipal: number
 }
 
-function buildResult(cfg: PackageConfig, loan: number, sora: SoraRates | null): PackageResult {
-    const tRaw = parseInt(cfg.tenure)
+function buildResult(
+    cfg: PackageConfig,
+    pkgIdx: number,
+    isAlt: boolean,
+    loan: number,
+    sora: SoraRates | null,
+): PackageResult {
+    const tRaw = parseInt(isAlt ? (cfg.altTenure ?? '') : cfg.tenure)
     const ten = isNaN(tRaw) ? 0 : Math.min(Math.max(tRaw, 5), 35)
     const lRaw = parseInt(cfg.lockIn)
     const lockIn = isNaN(lRaw) || lRaw < 0 ? 0 : Math.min(lRaw, ten)
@@ -116,7 +137,8 @@ function buildResult(cfg: PackageConfig, loan: number, sora: SoraRates | null): 
         : null
 
     return {
-        cfg, ten, lockIn, rows,
+        key: variantKey(cfg.id, isAlt),
+        cfg, pkgIdx, isAlt, ten, lockIn, rows,
         instalment: rows[0]?.instalment ?? null,
         lockInInterest: lockRow?.cumulativeInterest ?? null,
         outstanding: lockRow?.balance ?? null,
@@ -134,6 +156,10 @@ function AmortizationCalculator() {
         { id: 'pkg-1', name: 'Package A', tenure: '25', lockIn: '', schedule: newSchedule() },
     ])
     const [activeId, setActiveId] = useState('pkg-1')
+    // Which of the active package's two tenures the summary cards and the
+    // year-by-year table are showing. Held per package id, so switching tabs
+    // never silently moves another package to its alt tenure.
+    const [altView, setAltView] = useState<Record<string, boolean>>({})
     const [sora, setSora] = useState<SoraRates | null>(null)
 
     useEffect(() => {
@@ -146,14 +172,25 @@ function AmortizationCalculator() {
     const loan = parseFloat(loanAmount.replace(/,/g, '')) || 0
 
     const results = useMemo(
-        () => packages.map(p => buildResult(p, loan, sora)),
+        () => packages.flatMap((p, i) => hasAlt(p)
+            ? [buildResult(p, i, false, loan, sora), buildResult(p, i, true, loan, sora)]
+            : [buildResult(p, i, false, loan, sora)]
+        ),
         [packages, loan, sora]
     )
 
     const activeIdx = Math.max(0, packages.findIndex(p => p.id === activeId))
     const active = packages[activeIdx]
-    const result = results[activeIdx]
+    const activeVariants = results.filter(r => r.cfg.id === active.id)
+    const showAlt = !!altView[active.id] && hasAlt(active)
+    const result = activeVariants.find(r => r.isAlt === showAlt) ?? activeVariants[0]
     const accent = ACCENTS[activeIdx % ACCENTS.length]
+
+    /** Jump to a specific package AND tenure (comparison table row click). */
+    function selectVariant(r: PackageResult) {
+        setActiveId(r.cfg.id)
+        setAltView(v => ({ ...v, [r.cfg.id]: r.isAlt }))
+    }
 
     const { ten, lockIn: lockInYears, rows, totalInterest, totalPrincipal } = result
 
@@ -180,6 +217,7 @@ function AmortizationCalculator() {
             name: clone ? `${src.name} (copy)` : `Package ${letterFor(ps.length)}`,
             tenure: src.tenure,
             lockIn: src.lockIn,
+            altTenure: clone ? src.altTenure : undefined,
             schedule: clone ? src.schedule.map(e => ({ ...e })) : newSchedule(),
         }])
         setActiveId(id)
@@ -244,7 +282,8 @@ function AmortizationCalculator() {
                     Amortization Calculator
                 </h1>
                 <p className="page-subtitle mt-1">
-                    Year-by-year breakdown with variable rates per period. Compare up to {MAX_PACKAGES} packages on the same loan.
+                    Year-by-year breakdown with variable rates per period. Compare up to {MAX_PACKAGES} packages
+                    on the same loan, each over two tenures.
                 </p>
             </div>
 
@@ -295,7 +334,8 @@ function AmortizationCalculator() {
                 {packages.map((p, i) => {
                     const a = ACCENTS[i % ACCENTS.length]
                     const isActive = p.id === active.id
-                    const r = results[i]
+                    const mine = results.filter(x => x.cfg.id === p.id)
+                    const r = mine[0]
                     return (
                         <button
                             key={p.id}
@@ -308,7 +348,8 @@ function AmortizationCalculator() {
                             <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-white/70' : a.dot}`} />
                             <span>{p.name || `Package ${letterFor(i)}`}</span>
                             <span className={`text-[11px] font-medium ${isActive ? 'text-white/60' : 'text-slate-400'}`}>
-                                {r.ten}y{r.lockIn > 0 ? ` · ${r.lockIn}y lock` : ''}
+                                {mine.map(v => `${v.ten}y`).join(' / ')}
+                                {r.lockIn > 0 ? ` · ${r.lockIn}y lock` : ''}
                             </span>
                             {packages.length > 1 && (
                                 <span
@@ -340,7 +381,7 @@ function AmortizationCalculator() {
                         <button
                             type="button"
                             onClick={() => addPackage(true)}
-                            title="Duplicate this package — handy for comparing tenures on the same rates"
+                            title="Duplicate this package — a starting point for a similar offer"
                             className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-sm font-semibold text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors"
                         >
                             <Copy size={13} /> Duplicate
@@ -365,12 +406,32 @@ function AmortizationCalculator() {
                             placeholder={`Package ${letterFor(activeIdx)}`}
                             className="flex-1 min-w-0 text-sm font-bold text-[#052d4a] bg-transparent border border-transparent hover:border-slate-200 focus:border-[#059669] focus:ring-2 focus:ring-[#059669]/10 rounded-lg px-2 py-1 outline-none transition-colors"
                         />
-                        <span className="hidden sm:block text-[11px] text-slate-400 shrink-0">e.g. bank + package name</span>
+                        {hasAlt(active) ? (
+                            <div className="flex items-center gap-1 shrink-0 bg-slate-100 p-0.5 rounded-lg">
+                                {activeVariants.map(v => (
+                                    <button
+                                        key={v.key}
+                                        type="button"
+                                        onClick={() => setAltView(s => ({ ...s, [active.id]: v.isAlt }))}
+                                        title="Which tenure the summary and year-by-year table below show"
+                                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                                            v.isAlt === showAlt
+                                                ? 'bg-white text-[#059669] shadow-sm'
+                                                : 'text-slate-400 hover:text-slate-600'
+                                        }`}
+                                    >
+                                        {v.ten} yrs
+                                    </button>
+                                ))}
+                            </div>
+                        ) : (
+                            <span className="hidden sm:block text-[11px] text-slate-400 shrink-0">e.g. bank + package name</span>
+                        )}
                     </div>
 
                     <div className="p-6 space-y-6">
-                        {/* Row 1: Tenure + Lock-in */}
-                        <div className="grid grid-cols-2 gap-4 max-w-md">
+                        {/* Row 1: Tenure + Lock-in + optional second tenure */}
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-2xl">
                             <div>
                                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                                     Tenure (Yrs)
@@ -407,6 +468,59 @@ function AmortizationCalculator() {
                                     min={0}
                                 />
                             </div>
+
+                            {/* Second tenure - same rates, same lock-in, different term */}
+                            {hasAlt(active) ? (
+                                <div>
+                                    <div className="flex items-center justify-between gap-2 mb-2">
+                                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                            Compare Tenure
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                patchPackage(active.id, { altTenure: undefined })
+                                                setAltView(s => ({ ...s, [active.id]: false }))
+                                            }}
+                                            title="Stop comparing tenures"
+                                            className="p-0.5 rounded-md text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </div>
+                                    <input
+                                        type="number"
+                                        value={active.altTenure ?? ''}
+                                        onChange={e => patchPackage(active.id, { altTenure: e.target.value })}
+                                        onBlur={e => {
+                                            const v = parseInt(e.target.value)
+                                            if (isNaN(v)) patchPackage(active.id, { altTenure: undefined })
+                                            else if (v < 5) patchPackage(active.id, { altTenure: '5' })
+                                            else if (v > 35) patchPackage(active.id, { altTenure: '35' })
+                                        }}
+                                        className={`${inp} w-full`}
+                                        placeholder="e.g. 30"
+                                        min={5}
+                                        max={35}
+                                    />
+                                </div>
+                            ) : (
+                                <div className="flex items-end">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const t = parseInt(active.tenure)
+                                            const suggested = isNaN(t) ? 30 : (t <= 30 ? t + 5 : t - 5)
+                                            patchPackage(active.id, { altTenure: String(suggested) })
+                                            setAltView(s => ({ ...s, [active.id]: true }))
+                                        }}
+                                        title="Run this package's rates over a second tenure"
+                                        className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg border border-dashed border-slate-300 text-xs font-semibold text-slate-500 hover:text-[#059669] hover:border-[#059669] hover:bg-emerald-50/50 transition-colors"
+                                    >
+                                        <Plus size={13} /> Compare Tenure
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
                         {/* Rate schedule */}
@@ -519,7 +633,7 @@ function AmortizationCalculator() {
                                             </span>
                                         </div>
                                         <p className={`text-xs mt-3 ${accent.gradSub}`}>
-                                            {active.name} · cumulative interest over {year} year{year > 1 ? 's' : ''}
+                                            {active.name}{hasAlt(active) ? ` · ${ten}-yr tenure` : ''} · cumulative interest over {year} year{year > 1 ? 's' : ''}
                                         </p>
                                     </div>
                                 </div>
@@ -574,9 +688,11 @@ function AmortizationCalculator() {
                 return (
                     <div className="card overflow-hidden">
                         <div className="px-6 py-4 border-b border-slate-100">
-                            <h3 className="section-label mb-0">Package Comparison</h3>
+                            <h3 className="section-label mb-0">
+                                {packages.length > 1 ? 'Package Comparison' : 'Tenure Comparison'}
+                            </h3>
                             <p className="text-xs text-slate-400 mt-1">
-                                Same ${fmt(loan)} loan · differences shown against {base.cfg.name}.
+                                Same ${fmt(loan)} loan · differences shown against {base.cfg.name} over {base.ten} yrs.
                                 {!anyLockIn && ' Add a lock-in period to compare cost over the lock-in.'}
                                 {mixedLockIn && ' Lock-in periods differ — each row is measured over its own lock-in.'}
                             </p>
@@ -612,23 +728,28 @@ function AmortizationCalculator() {
                                 </thead>
                                 <tbody>
                                     {results.map((r, i) => {
-                                        const a = ACCENTS[i % ACCENTS.length]
+                                        const a = ACCENTS[r.pkgIdx % ACCENTS.length]
                                         const isBase = i === 0
-                                        const isActive = r.cfg.id === active.id
+                                        const isActive = r.key === result.key
                                         return (
                                             <tr
-                                                key={r.cfg.id}
-                                                onClick={() => setActiveId(r.cfg.id)}
+                                                key={r.key}
+                                                onClick={() => selectVariant(r)}
                                                 className={`border-b border-slate-100 cursor-pointer transition-colors ${
                                                     isActive ? a.rowBg : 'hover:bg-slate-50/60'
                                                 }`}
                                             >
                                                 <td className="px-6 py-4 align-top">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className={`w-1.5 h-5 rounded-full shrink-0 ${a.dot}`} />
+                                                        <span className={`w-1.5 h-5 rounded-full shrink-0 ${a.dot} ${r.isAlt ? 'opacity-40' : ''}`} />
                                                         <span className="font-bold text-[#052d4a]">
-                                                            {r.cfg.name || `Package ${letterFor(i)}`}
+                                                            {r.cfg.name || `Package ${letterFor(r.pkgIdx)}`}
                                                         </span>
+                                                        {hasAlt(r.cfg) && (
+                                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${a.chip}`}>
+                                                                {r.ten} yrs
+                                                            </span>
+                                                        )}
                                                         {isBase && (
                                                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${a.chip}`}>Base</span>
                                                         )}
@@ -686,7 +807,9 @@ function AmortizationCalculator() {
                         <h3 className="section-label mb-0 flex items-center gap-2">
                             <span className={`w-2 h-2 rounded-full shrink-0 ${accent.dot}`} />
                             Year-by-Year Breakdown
-                            <span className="text-slate-400 font-normal normal-case tracking-normal">· {active.name}</span>
+                            <span className="text-slate-400 font-normal normal-case tracking-normal">
+                                · {active.name}{hasAlt(active) ? ` · ${ten} yrs` : ''}
+                            </span>
                         </h3>
                         <span className="text-[11px] text-slate-400">
                             Figures show last month of each year
