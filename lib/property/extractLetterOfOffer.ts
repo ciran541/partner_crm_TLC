@@ -280,6 +280,12 @@ async function callGeminiVision(file: LoFile, deadline: number): Promise<string 
         },
     }
 
+    // Auditable outbound log, matching deepseek.ts's and bankIntelligence.ts's
+    // — the only part sent here is the page image the agent uploaded to this
+    // case, plus this function's own fixed instruction text; never anything
+    // from lib/google/*. Image bytes are summarized by type, not dumped.
+    console.log(`[Gemini OUTBOUND extractLetterOfOffer] mimeType=${file.mime} instruction="${USER_PREFIX.slice(0, 200)}"`)
+
     for (const { id: model, genExtra } of GEMINI_MODELS) {
         const body = JSON.stringify(genExtra
             ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }

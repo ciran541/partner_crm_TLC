@@ -340,6 +340,12 @@ async function callGeminiVision(files: LoFile[], system: string, deadline: numbe
         },
     }
 
+    // Auditable outbound log, matching deepseek.ts's and bankIntelligence.ts's
+    // — every part sent here is a page image the agent uploaded to this case,
+    // or this function's own instruction text; never anything from
+    // lib/google/*. Image bytes are summarized by count/type, not dumped.
+    console.log(`[Gemini OUTBOUND extractLoanOffer] pages=${files.length} mimeTypes=${JSON.stringify(files.map(f => f.mime))} instruction="${label.slice(0, 200)}"`)
+
     for (const { id: model, genExtra } of GEMINI_MODELS) {
         const body = JSON.stringify(genExtra
             ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }

@@ -320,6 +320,12 @@ async function callDeepSeek(
         ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
     })
 
+    // Auditable outbound log, matching the shared deepseek.ts's — this file
+    // has its own local callDeepSeek (not the shared one), so it needs its
+    // own log. Every input here is a news article's title/snippet fetched
+    // from a public RSS/news feed; never anything from lib/google/*.
+    console.log(`[DeepSeek OUTBOUND label=news] system="${systemInstruction.slice(0, 300)}" user="${userMessage.slice(0, 800)}"`)
+
     for (const model of DEEPSEEK_MODELS) {
         const modelBody = model === DEEPSEEK_MODELS[0] ? body : body.replace(`"model":"${DEEPSEEK_MODELS[0]}"`, `"model":"${model}"`)
         try {
