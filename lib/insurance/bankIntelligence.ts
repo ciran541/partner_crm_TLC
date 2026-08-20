@@ -506,6 +506,14 @@ async function callGemini(parts: GeminiPart[]): Promise<string | null> {
         generationConfig: { temperature: 0, maxOutputTokens: 4096 },
     }
 
+    // Auditable outbound log, matching deepseek.ts's — every part sent to
+    // Gemini here is either a bank's own public PDF/article text or the
+    // extracted text of it; never anything from lib/google/*. Binary PDF
+    // bytes are summarized by size, not dumped, so the log stays readable.
+    console.log(`[Gemini OUTBOUND bankIntelligence] parts=${JSON.stringify(parts.map(p =>
+        'text' in p ? { text: p.text.slice(0, 300) } : { inlineData: `[pdf bytes, ${p.inlineData.data.length} base64 chars]` }
+    ))}`)
+
     for (const { id: model, genExtra } of GEMINI_MODELS) {
         const body = JSON.stringify(genExtra
             ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }

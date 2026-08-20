@@ -67,6 +67,18 @@ export async function callDeepSeek(opts: DeepSeekOptions): Promise<string | null
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
     })
 
+    // Auditable outbound log — this is the ONLY place request content leaves
+    // this process for a third-party AI provider. Logging it in full (not just
+    // on error) lets the Google API data-segregation claim in
+    // app/legal/privacy be verified by inspection: every caller of
+    // callDeepSeek (news.ts, bankIntelligence.ts, askGemini.ts,
+    // normalizeQuery.ts, extractPackages.ts, extractPromotion.ts,
+    // extractLoanOffer.ts) passes only admin-authored content, an agent's
+    // typed query, or extracted document/article text — never anything from
+    // lib/google/* (the Calendar integration is a separate code path with no
+    // import of this file, see calendar.ts's matching outbound log).
+    console.log(`[DeepSeek OUTBOUND label=${opts.label}] system="${system.slice(0, 300)}" user="${opts.user.slice(0, 800)}"`)
+
     for (const model of MODELS) {
         const modelBody = model === MODELS[0]
             ? body

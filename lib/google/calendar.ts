@@ -32,6 +32,12 @@ export async function createFollowUpEvent(
     calendarId = 'primary',
     clientPhone?: string | null
 ): Promise<string> {
+    // Auditable outbound log, matching deepseek.ts's and bankIntelligence.ts's —
+    // this whole file has no import of any AI/ML module (deepseek.ts,
+    // askGemini.ts, bankIntelligence.ts, etc.) and calls only Google's own
+    // Calendar API. Nothing built here ever reaches a third-party AI provider.
+    console.log(`[Google Calendar OUTBOUND create] calendarId=${calendarId} summary="${followUpTitle(clientName, clientPhone)}" date=${followUpDate}`)
+
     const response = await calendarClient.events.insert({
         calendarId,
         requestBody: {
@@ -74,6 +80,8 @@ export async function updateFollowUpEvent(
     clientName?: string | null,
     clientPhone?: string | null
 ): Promise<void> {
+    console.log(`[Google Calendar OUTBOUND update] calendarId=${calendarId} eventId=${eventId} date=${followUpDate}`)
+
     await calendarClient.events.patch({
         calendarId,
         eventId,
@@ -94,6 +102,7 @@ export async function deleteFollowUpEvent(
     eventId: string,
     calendarId = 'primary'
 ): Promise<void> {
+    console.log(`[Google Calendar OUTBOUND delete] calendarId=${calendarId} eventId=${eventId}`)
     try {
         await calendarClient.events.delete({ calendarId, eventId })
     } catch (err: unknown) {
