@@ -15,11 +15,8 @@ import type { PropertyCaseStatus, PropertyCaseType } from '@/lib/types/property'
 const STATUS_CONFIG: Record<PropertyCaseStatus, { label: string; color: string; bg: string }> = {
     draft: { label: 'Draft', color: '#64748b', bg: '#f1f5f9' },
     submitted: { label: 'Submitted', color: '#3b82f6', bg: '#eff6ff' },
-    under_review: { label: 'Under Review', color: '#d97706', bg: '#fffbeb' },
-    verified: { label: 'Verified', color: '#059669', bg: '#ecfdf5' },
     paid: { label: 'Paid', color: '#16a34a', bg: '#f0fdf4' },
     rejected: { label: 'Rejected', color: '#dc2626', bg: '#fef2f2' },
-    on_hold: { label: 'On Hold', color: '#7c3aed', bg: '#f5f3ff' },
     opportunity_due: { label: 'Opportunity Due', color: '#ea580c', bg: '#fff7ed' },
 }
 
@@ -34,11 +31,8 @@ const STATUS_PILL_OPTIONS = [
     { value: '', label: 'All' },
     { value: 'draft', label: 'Draft' },
     { value: 'submitted', label: 'Submitted' },
-    { value: 'under_review', label: 'Under Review' },
-    { value: 'verified', label: 'Verified' },
     { value: 'paid', label: 'Paid' },
     { value: 'rejected', label: 'Rejected' },
-    { value: 'on_hold', label: 'On Hold' },
     { value: 'opportunity_due', label: 'Opportunity Due' },
 ]
 
@@ -212,7 +206,7 @@ function PropertyCasesContent() {
                                 <tbody>
                                     {cases.map(c => {
                                         const isOpDue = c.status === 'opportunity_due'
-                                        const isVerified = c.status === 'verified' || c.status === 'paid'
+                                        const isVerified = c.status === 'paid'
                                         return (
                                             <tr
                                                 key={c.id}

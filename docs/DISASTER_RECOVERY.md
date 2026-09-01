@@ -2,7 +2,9 @@
 
 > Use this guide if the Supabase project is lost, corrupted, or needs to be migrated to a new project.
 > The **primary backup** is a full daily database dump stored in Cloudflare R2
-> (see `docs/BACKUP_SETUP.md`). Documents are mirrored to Google Drive.
+> (see `docs/BACKUP_SETUP.md`), which also mirrors the documents bucket. There is
+> a separate daily Drive mirror of documents (`/api/cron/drive-sync`) for ops to
+> browse — that is a convenience copy, not the disaster-recovery source.
 
 ---
 
@@ -16,6 +18,7 @@
 | Uploaded documents (PDFs) | Cloudflare R2 → `documents/` (daily copy of the Storage bucket) | Restore via `rclone`/`aws s3` (Part A) |
 | Database schema | also in `supabase/migrations/` | `supabase db push` |
 | Property cases + agent profiles (ops view) | Google Sheets | **Legacy fallback** — Part B below |
+| Documents (browsable copy) | Google Drive → `Property CRM` / `Insurance CRM` folders (daily, `/api/cron/drive-sync`) | Convenience only — not a restore path, see note below |
 
 > The Google Sheet + Apps Script path (Part B) still works and is kept as a
 > fallback, but the R2 dump is the source of truth: it captures **everything**
@@ -228,7 +231,7 @@ Run through this checklist to confirm everything is working:
 - [ ] Each case is assigned to the correct agent (check Agent Name)
 - [ ] Log in as an agent — can see only their own cases
 - [ ] Create a new case — it appears in Google Sheets within seconds
-- [ ] Upload a document — it is stored in Supabase Storage (and copied to R2 on the next daily backup)
+- [ ] Upload a document — it is stored in Supabase Storage (and copied to R2, and to Drive, on the next daily backup runs)
 - [ ] Agent profile data (full name, mobile, CEA number) is correct
 
 ---
@@ -278,7 +281,7 @@ This keeps the `supabase/migrations/` folder and the live DB permanently in sync
 | Resource | Location |
 |----------|----------|
 | Backup Google Sheet | Check `GOOGLE_APPS_SCRIPT_URL` env var for the script, then open the parent spreadsheet |
-| Google Drive backup | Google Drive → `Property CRM Backup/` |
+| Drive document mirror (ops browsing, not DR) | Folder ID in `GOOGLE_DRIVE_BACKUP_ROOT_FOLDER_ID` → `Property CRM` / `Insurance CRM` subfolders |
 | Apps Script | Google Sheet → Extensions → Apps Script |
 | Migration files | `supabase/migrations/` |
 | Restore endpoints | `app/api/admin/property/restore-from-sheets/route.ts`, `app/api/admin/property/restore-agents/route.ts` |

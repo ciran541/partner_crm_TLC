@@ -43,16 +43,18 @@ CREATE POLICY "banks_admin_all"
   );
 
 INSERT INTO banks (name, sort_order) VALUES
-  ('DBS',                1),
-  ('OCBC',               2),
-  ('UOB',                3),
-  ('Standard Chartered', 4),
-  ('Maybank',            5),
-  ('HSBC',               6),
-  ('Citibank',           7),
-  ('Bank of China',      8),
-  ('CIMB',               9),
-  ('Hong Leong Finance', 10)
+  ('DBS',                 1),
+  ('OCBC',                2),
+  ('UOB',                 3),
+  ('Standard Chartered',  4),
+  ('Maybank',             5),
+  ('HSBC',                6),
+  ('Citibank',            7),
+  ('Bank of China',       8),
+  ('CIMB',                9),
+  ('Hong Leong Finance', 10),
+  ('RHB',                11),
+  ('State Bank of India', 12)
 ON CONFLICT (name) DO NOTHING;
 
 

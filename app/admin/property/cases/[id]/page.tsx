@@ -18,11 +18,8 @@ import type {
 const STATUS_CONFIG: Record<PropertyCaseStatus, { label: string; color: string; bg: string }> = {
     draft: { label: 'Draft', color: '#64748b', bg: '#f1f5f9' },
     submitted: { label: 'Submitted', color: '#3b82f6', bg: '#eff6ff' },
-    under_review: { label: 'Under Review', color: '#d97706', bg: '#fffbeb' },
-    verified: { label: 'Verified', color: '#059669', bg: '#ecfdf5' },
     paid: { label: 'Paid', color: '#16a34a', bg: '#f0fdf4' },
     rejected: { label: 'Rejected', color: '#dc2626', bg: '#fef2f2' },
-    on_hold: { label: 'On Hold', color: '#7c3aed', bg: '#f5f3ff' },
     opportunity_due: { label: 'Opportunity Due', color: '#ea580c', bg: '#fff7ed' },
 }
 

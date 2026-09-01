@@ -9,14 +9,12 @@ import StatsCard from '@/components/shared/StatsCard'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 
 const STATUS_LABELS: Record<string, string> = {
-    draft: 'Draft', submitted: 'Submitted', under_review: 'Under Review',
-    verified: 'Verified', paid: 'Paid', rejected: 'Rejected',
-    on_hold: 'On Hold', opportunity_due: 'Opportunity Due',
+    draft: 'Draft', submitted: 'Submitted', paid: 'Paid',
+    rejected: 'Rejected', opportunity_due: 'Opportunity Due',
 }
 const STATUS_COLORS: Record<string, string> = {
-    draft: '#64748b', submitted: '#3b82f6', under_review: '#d97706',
-    verified: '#059669', paid: '#16a34a', rejected: '#dc2626',
-    on_hold: '#7c3aed', opportunity_due: '#ea580c',
+    draft: '#64748b', submitted: '#3b82f6', paid: '#16a34a',
+    rejected: '#dc2626', opportunity_due: '#ea580c',
 }
 const TYPE_LABELS: Record<string, string> = {
     new_purchase: 'New Purchase', refinance: 'Refinance',

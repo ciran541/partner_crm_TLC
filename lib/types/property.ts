@@ -14,11 +14,8 @@ export type PropertyCaseType =
 export type PropertyCaseStatus =
     | 'draft'
     | 'submitted'
-    | 'under_review'
-    | 'verified'
     | 'paid'
     | 'rejected'
-    | 'on_hold'
     | 'opportunity_due'
 
 export type PropertyCommissionStatus = 'pending' | 'confirmed' | 'paid'

@@ -9,7 +9,7 @@ export interface ProcessResult {
 }
 
 // Statuses where a lock-in reminder should trigger an opportunity_due transition
-const ELIGIBLE_STATUSES = ['submitted', 'under_review', 'verified', 'on_hold', 'paid']
+const ELIGIBLE_STATUSES = ['submitted', 'paid']
 
 export async function processReminders(): Promise<ProcessResult> {
     const admin = createAdminClient()

@@ -147,6 +147,8 @@ Resend is used for transactional email (`lib/email/sendFollowUpReminder.ts`). Co
 
 OAuth flow + calendar sync lives in `lib/google/`. Property agents connect their Google account from `/property/profile`. Follow-up dates sync to Google Calendar via `lib/google/syncFollowUp.ts`. Insurance app does not yet use calendar integration.
 
+**Drive document backup** (`lib/google/driveSync.ts` + `driveSyncRun.ts`, daily cron `/api/cron/drive-sync`): mirrors both apps' Storage document buckets (`property-documents`, `insurance-documents`) into a shared Drive folder for ops to browse without touching Supabase/S3 tooling — `GOOGLE_DRIVE_BACKUP_ROOT_FOLDER_ID`, split into `Property CRM` / `Insurance CRM` subfolders, then one subfolder per case (`<client name> - <case id prefix>`). Reuses the same service account as the TLC calendar sync (needs the Drive API enabled on it, and the root folder shared with its email as Editor) — full `drive` scope, not `drive.file`, since the root folder is owned by a human and merely shared with the service account. `drive_sync_log` tracks which `(bucket, storage_path)` pairs are already synced so re-runs only upload what's new; a run that hits its time budget mid-backlog just picks up the rest tomorrow (same pattern as `news.ts`'s `ingestAll()`). This is a convenience mirror for ops, not the backup of record — the daily R2 workflow (`.github/workflows/db-backup.yml`) remains the actual disaster-recovery path until Supabase Pro's own backups replace it.
+
 ### Styling
 
 Tailwind CSS v4 with a global stylesheet at `app/globals.css`. Reusable CSS classes (`.card`, `.btn-primary`, `.sidebar-link`, `.sidebar-container`, etc.) are defined there. Components in `components/shared/` cover common UI patterns (Spinner, Modal, InlineAlert, Skeleton, EmptyState, etc.).
@@ -165,8 +167,11 @@ GOOGLE_CLIENT_SECRET
 GEMINI_API_KEY          # Google AI Studio (free tier) — knowledge assistant answer synthesis, rate ingestion
 DEEPSEEK_API_KEY        # platform.deepseek.com — mortgage news relevance classification + summaries
 MAS_API_KEY             # MAS Data API (keyid header) — daily SORA fetch for Step 4 rate computation
-FRED_API_KEY            # St. Louis Fed — US Fed funds rate chart
-CRON_SECRET             # Vercel cron auth (Bearer) for /api/cron/* — REQUIRED in production (fail-closed via lib/auth/requireCron.ts); optional locally
+FRED_API_KEY             # St. Louis Fed — US Fed funds rate chart
+CRON_SECRET              # Vercel cron auth (Bearer) for /api/cron/* — REQUIRED in production (fail-closed via lib/auth/requireCron.ts); optional locally
+GOOGLE_SERVICE_ACCOUNT_EMAIL         # Shared with TLC calendar sync — also used for the Drive document backup
+GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY   # Shared with TLC calendar sync — also used for the Drive document backup
+GOOGLE_DRIVE_BACKUP_ROOT_FOLDER_ID   # Drive folder shared (Editor) with the service account — /api/cron/drive-sync mirrors both apps' documents under it
 ```
 
 ### Insurance CRM — Knowledge Engine (Layer 4)
