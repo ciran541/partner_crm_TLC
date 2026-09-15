@@ -470,7 +470,7 @@ function AmortizationCalculator() {
                             </div>
 
                             {/* Second tenure - same rates, same lock-in, different term */}
-                            {hasAlt(active) ? (
+                            {!!altView[active.id] ? (
                                 <div>
                                     <div className="flex items-center justify-between gap-2 mb-2">
                                         <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
@@ -494,9 +494,11 @@ function AmortizationCalculator() {
                                         onChange={e => patchPackage(active.id, { altTenure: e.target.value })}
                                         onBlur={e => {
                                             const v = parseInt(e.target.value)
-                                            if (isNaN(v)) patchPackage(active.id, { altTenure: undefined })
-                                            else if (v < 5) patchPackage(active.id, { altTenure: '5' })
-                                            else if (v > 35) patchPackage(active.id, { altTenure: '35' })
+                                            if (!isNaN(v)) {
+                                                if (v < 5) patchPackage(active.id, { altTenure: '5' })
+                                                else if (v > 35) patchPackage(active.id, { altTenure: '35' })
+                                            }
+                                            // Empty/invalid: leave as-is so field stays visible
                                         }}
                                         className={`${inp} w-full`}
                                         placeholder="e.g. 30"
