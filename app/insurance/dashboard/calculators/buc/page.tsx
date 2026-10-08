@@ -110,6 +110,7 @@ export default function BUCPage() {
     const [tenure,        setTenure]        = useState('30')
     const [rateRef,       setRateRef]       = useState<'3M SORA' | '1M SORA' | 'Custom'>('3M SORA')
     const [spread,        setSpread]        = useState('0.20')
+    const [spreadSign,    setSpreadSign]    = useState<'+' | '-'>('+')
     const [customRate,    setCustomRate]    = useState('')
     const [sora,          setSora]          = useState<SoraRates | null>(null)
 
@@ -129,9 +130,11 @@ export default function BUCPage() {
     const comp3m = sora?.comp_sora_3m ?? null
     const comp1m = sora?.comp_sora_1m ?? null
     const soraValue = rateRef === '3M SORA' ? comp3m : rateRef === '1M SORA' ? comp1m : null
+    const spreadVal = parseFloat(spread) || 0
+    const spreadMult = spreadSign === '-' ? -1 : 1
     const rate = rateRef === 'Custom'
         ? (parseFloat(customRate) || 0)
-        : soraValue != null ? +(soraValue + (parseFloat(spread) || 0)).toFixed(4) : 0
+        : soraValue != null ? +(soraValue + spreadMult * spreadVal).toFixed(4) : 0
 
     // Validation
     const priceErr = price > 0 && price < 100000
@@ -329,7 +332,14 @@ export default function BUCPage() {
                                     </>
                                 ) : (
                                     <>
-                                        <span className="text-xs font-medium text-slate-400">+</span>
+                                        <button
+                                            type="button"
+                                            title="Toggle add / subtract spread"
+                                            onClick={() => setSpreadSign(s => s === '-' ? '+' : '-')}
+                                            className="px-2 py-1 rounded-md text-xs font-bold border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-[#03a9e7] hover:text-[#03a9e7] transition-colors shrink-0 select-none"
+                                        >
+                                            {spreadSign === '-' ? '−' : '+'}
+                                        </button>
                                         <input
                                             type="number"
                                             step="0.01"

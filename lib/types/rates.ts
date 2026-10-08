@@ -26,6 +26,7 @@ export interface RateScheduleEntry {
     rate?: number                 // fixed rate %, e.g. 2.00
     reference?: string            // floating benchmark, e.g. "3M SORA"
     spread?: number               // floating margin %, e.g. 0.35
+    spreadSign?: '+' | '-'        // whether spread is added (+) or subtracted (-); default '+'
 }
 
 export interface MortgagePackage {

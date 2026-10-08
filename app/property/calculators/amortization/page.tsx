@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
@@ -166,7 +167,7 @@ function AmortizationCalculator() {
         fetch('/api/insurance/rates')
             .then(r => r.json())
             .then(d => { if (d.sora) setSora(d.sora) })
-            .catch(() => {})
+            .catch(() => { })
     }, [])
 
     const loan = parseFloat(loanAmount.replace(/,/g, '')) || 0
@@ -341,9 +342,8 @@ function AmortizationCalculator() {
                             key={p.id}
                             type="button"
                             onClick={() => setActiveId(p.id)}
-                            className={`flex items-center gap-2 pl-3 pr-2.5 py-2 rounded-xl border text-sm font-semibold transition-colors ${
-                                isActive ? a.tabOn : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
-                            }`}
+                            className={`flex items-center gap-2 pl-3 pr-2.5 py-2 rounded-xl border text-sm font-semibold transition-colors ${isActive ? a.tabOn : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                                }`}
                         >
                             <span className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-white/70' : a.dot}`} />
                             <span>{p.name || `Package ${letterFor(i)}`}</span>
@@ -356,11 +356,10 @@ function AmortizationCalculator() {
                                     role="button"
                                     tabIndex={-1}
                                     onClick={e => { e.stopPropagation(); removePackage(p.id) }}
-                                    className={`ml-0.5 p-0.5 rounded-md transition-colors ${
-                                        isActive
+                                    className={`ml-0.5 p-0.5 rounded-md transition-colors ${isActive
                                             ? 'text-white/50 hover:text-white hover:bg-white/15'
                                             : 'text-slate-300 hover:text-red-400 hover:bg-red-50'
-                                    }`}
+                                        }`}
                                 >
                                     <X size={12} />
                                 </span>
@@ -414,11 +413,10 @@ function AmortizationCalculator() {
                                         type="button"
                                         onClick={() => setAltView(s => ({ ...s, [active.id]: v.isAlt }))}
                                         title="Which tenure the summary and year-by-year table below show"
-                                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
-                                            v.isAlt === showAlt
+                                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${v.isAlt === showAlt
                                                 ? 'bg-white text-[#059669] shadow-sm'
                                                 : 'text-slate-400 hover:text-slate-600'
-                                        }`}
+                                            }`}
                                     >
                                         {v.ten} yrs
                                     </button>
@@ -737,9 +735,8 @@ function AmortizationCalculator() {
                                             <tr
                                                 key={r.key}
                                                 onClick={() => selectVariant(r)}
-                                                className={`border-b border-slate-100 cursor-pointer transition-colors ${
-                                                    isActive ? a.rowBg : 'hover:bg-slate-50/60'
-                                                }`}
+                                                className={`border-b border-slate-100 cursor-pointer transition-colors ${isActive ? a.rowBg : 'hover:bg-slate-50/60'
+                                                    }`}
                                             >
                                                 <td className="px-6 py-4 align-top">
                                                     <div className="flex items-center gap-2 flex-wrap">
@@ -854,13 +851,12 @@ function AmortizationCalculator() {
                                         ),
                                         <tr
                                             key={row.year}
-                                            className={`border-b transition-colors ${
-                                                isLockinRow
+                                            className={`border-b transition-colors ${isLockinRow
                                                     ? accent.rowBg
                                                     : i % 2 === 0
                                                         ? 'border-slate-50 hover:bg-slate-50/60'
                                                         : 'border-slate-50 bg-slate-50/40 hover:bg-slate-50/80'
-                                            }`}
+                                                }`}
                                         >
                                             <td className="py-3 pl-0 pr-4">
                                                 <div className="flex items-center gap-0 h-full">
@@ -872,9 +868,8 @@ function AmortizationCalculator() {
                                             </td>
                                             <td className="px-4 py-3">
                                                 {hasData ? (
-                                                    <span className={`inline-block text-xs font-bold px-2 py-0.5 rounded-full ${
-                                                        isLockinRow ? accent.pill : 'bg-slate-100 text-slate-500'
-                                                    }`}>
+                                                    <span className={`inline-block text-xs font-bold px-2 py-0.5 rounded-full ${isLockinRow ? accent.pill : 'bg-slate-100 text-slate-500'
+                                                        }`}>
                                                         {row.rate!.toFixed(2)}%
                                                     </span>
                                                 ) : (
@@ -952,9 +947,8 @@ function RateRow({
     accentBar: string
 }) {
     return (
-        <div className={`flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-b-0 ${
-            isLockin ? 'bg-white' : 'bg-slate-50/60'
-        }`}>
+        <div className={`flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-b-0 ${isLockin ? 'bg-white' : 'bg-slate-50/60'
+            }`}>
             {/* Left border indicator */}
             <div className={`w-1 h-8 rounded-full shrink-0 ${isLockin ? accentBar : 'bg-slate-200'}`} />
 
@@ -975,11 +969,10 @@ function RateRow({
                                     ? { type: 'floating', reference: '3M SORA', spread: entry.spread ?? 1.00 }
                                     : { type: 'fixed' }
                             )}
-                            className={`px-3 py-1.5 font-semibold capitalize transition-colors ${
-                                entry.type === t
+                            className={`px-3 py-1.5 font-semibold capitalize transition-colors ${entry.type === t
                                     ? 'bg-[#052d4a] text-white'
                                     : 'bg-white text-slate-500 hover:bg-slate-50'
-                            }`}
+                                }`}
                         >
                             {t}
                         </button>

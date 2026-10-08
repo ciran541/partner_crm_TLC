@@ -18,7 +18,8 @@ export interface AmortRow {
 function resolveEntry(entry: RateScheduleEntry, sora: SoraRates | null): number | null {
     if (entry.type === 'floating' && (entry.reference ?? '').toLowerCase() === 'custom') {
         if (entry.rate == null) return null
-        return entry.rate + (entry.spread ?? 0)
+        const sign = entry.spreadSign === '-' ? -1 : 1
+        return entry.rate + sign * (entry.spread ?? 0)
     }
     return effectiveRate(entry, sora).rate ?? null
 }

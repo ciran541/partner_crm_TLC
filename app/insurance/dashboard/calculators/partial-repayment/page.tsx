@@ -636,7 +636,14 @@ function RateRow({
                             <span className="text-xs font-medium text-slate-400">%</span>
                         </>
                     )}
-                    <span className="text-xs font-medium text-slate-400">+</span>
+                    <button
+                        type="button"
+                        title="Toggle add / subtract spread"
+                        onClick={() => onChange({ spreadSign: entry.spreadSign === '-' ? '+' : '-' })}
+                        className="px-2 py-1 rounded-md text-xs font-bold border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:border-[#03a9e7] hover:text-[#03a9e7] transition-colors shrink-0 select-none"
+                    >
+                        {entry.spreadSign === '-' ? '−' : '+'}
+                    </button>
                     <input
                         type="number"
                         step="0.01"

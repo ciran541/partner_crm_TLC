@@ -14,6 +14,7 @@ export function effectiveRate(entry: RateScheduleEntry, sora: SoraRates | null):
 
     if (entry.spread == null) return { rate: null }
     const ref = (entry.reference || '').toLowerCase()
+    const sign = entry.spreadSign === '-' ? -1 : 1
 
     // Bank-set benchmarks (FHR / FDR / FD / board rates) are NOT published by MAS —
     // each bank sets them. Resolve from admin-maintained bank_benchmarks table if available.
@@ -22,7 +23,7 @@ export function effectiveRate(entry: RateScheduleEntry, sora: SoraRates | null):
             const match = Object.keys(sora.benchmarks).find(k => ref.includes(k.toLowerCase()))
             if (match != null) {
                 const base = sora.benchmarks[match]
-                return { rate: base + entry.spread, note: `${match} ${base.toFixed(4)}%` }
+                return { rate: base + sign * entry.spread, note: `${match} ${base.toFixed(4)}%` }
             }
         }
         return { rate: null, note: `${entry.reference} — rate not set (update in Rates page)` }
@@ -46,7 +47,7 @@ export function effectiveRate(entry: RateScheduleEntry, sora: SoraRates | null):
     else return { rate: null, note: `${entry.reference || 'reference'} — not a SORA benchmark, not auto-priced` }
 
     if (base == null) return { rate: null }
-    return { rate: base + entry.spread, note }
+    return { rate: base + sign * entry.spread, note }
 }
 
 export interface YearProjection {

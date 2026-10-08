@@ -88,7 +88,8 @@ export function formatRateEntry(e: RateScheduleEntry): string {
         rate = e.rate != null ? `${e.rate.toFixed(2)}% Fixed` : 'Fixed'
     } else {
         const ref = e.reference || 'SORA'
-        rate = e.spread != null ? `${ref} + ${e.spread.toFixed(2)}%` : ref
+        const sign = e.spreadSign === '-' ? '−' : '+'
+        rate = e.spread != null ? `${ref} ${sign} ${e.spread.toFixed(2)}%` : ref
     }
     return `${label}: ${rate}`
 }
