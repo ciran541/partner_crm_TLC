@@ -256,6 +256,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                             addAccountLinks={[
                                 { label: 'Add admin login', href: '/login' },
                                 { label: 'Add insurance agent login', href: '/insurance/login' },
+                                { label: 'Add property agent login', href: '/property/login?add=1' },
                             ]}
                         />
                     </div>

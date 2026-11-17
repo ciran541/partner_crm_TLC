@@ -8,6 +8,8 @@ import { canAccessProperty, getSafeRoute, hasPropertyPremium } from '@/lib/permi
 import { clearCasesCache } from '@/lib/property/useCases'
 import { needsReconsent } from '@/lib/legal/checkConsent'
 import { PropertyProfileContext, type PropertyProfileState } from '@/lib/property/propertyProfileContext'
+import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
+import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import {
     LayoutDashboard,
     Briefcase,
@@ -48,6 +50,7 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
     const router = useRouter()
     const pathname = usePathname()
     const [email, setEmail] = useState<string | null>(null)
+    const [displayName, setDisplayName] = useState<string | null>(null)
     const [profileState, setProfileState] = useState<PropertyProfileState>({
         loading: true, role: null, appType: null, tier: null, isPremium: false,
     })
@@ -79,7 +82,11 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
             if (!active) return
 
             if (isAuthPage) {
-                if (user) {
+                // `?add=1` comes from the account switcher's "Add property agent
+                // login" — the person is deliberately signing in a SECOND account,
+                // so don't bounce them back into the one that's already active.
+                const addingAccount = new URLSearchParams(window.location.search).get('add') === '1'
+                if (user && !addingAccount) {
                     const { data: profile } = await supabase
                         .from('profiles')
                         .select('role, app_type, subscription_tier')
@@ -103,7 +110,7 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
 
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('role, app_type, status, subscription_tier')
+                .select('role, app_type, status, subscription_tier, name')
                 .eq('id', user.id)
                 .single()
             if (!active) return
@@ -112,6 +119,23 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                 router.replace(profile ? getSafeRoute(profile.role, profile.app_type) : '/property/login')
                 return
             }
+
+            // Seed/refresh the account switcher cache on every load, same as the
+            // insurance layout — so a property session that was already active
+            // before switching shipped still shows up in the switcher.
+            const { data: { session } } = await supabase.auth.getSession()
+            if (active && session) {
+                saveLinkedAccount({
+                    userId: user.id,
+                    email: user.email ?? '',
+                    name: profile.name ?? null,
+                    role: profile.role,
+                    appType: profile.app_type,
+                    accessToken: session.access_token,
+                    refreshToken: session.refresh_token,
+                })
+            }
+            setDisplayName(profile.name ?? null)
 
             if (profile.status === 'disabled') {
                 await supabase.auth.signOut()
@@ -138,6 +162,8 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
 
     const handleSignOut = async () => {
         clearCasesCache()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) removeLinkedAccount(user.id)
         await supabase.auth.signOut()
         router.push('/property/login')
     }
@@ -145,8 +171,6 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
     if (isAuthPage) {
         return <>{children}</>
     }
-
-    const initials = email ? email[0].toUpperCase() : 'P'
 
     return (
         <PropertyProfileContext.Provider value={profileState}>
@@ -255,18 +279,19 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
 
                 {/* User Footer */}
                 <div style={{ padding: '16px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                        <div style={{
-                            width: 32, height: 32, borderRadius: '50%',
-                            background: '#059669',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            color: 'white', fontSize: 13, fontWeight: 700, flexShrink: 0,
-                        }}>
-                            {initials}
-                        </div>
-                        <p style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {email?.split('@')[0]}
-                        </p>
+                    <div style={{ marginBottom: 12 }}>
+                        <AccountSwitcher
+                            email={email}
+                            displayName={displayName}
+                            roleLabel={profileState.isPremium ? 'Premium Agent' : 'Property Agent'}
+                            avatarColor="#059669"
+                            onSignOut={handleSignOut}
+                            addAccountLinks={[
+                                { label: 'Add property agent login', href: '/property/login?add=1' },
+                                { label: 'Add insurance agent login', href: '/insurance/login' },
+                                { label: 'Add admin login', href: '/login' },
+                            ]}
+                        />
                     </div>
                     <button
                         onClick={handleSignOut}

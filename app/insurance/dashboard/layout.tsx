@@ -368,6 +368,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                             onSignOut={handleSignOut}
                             addAccountLinks={[
                                 { label: 'Add insurance agent login', href: '/insurance/login' },
+                                { label: 'Add property agent login', href: '/property/login?add=1' },
                                 { label: 'Add admin login', href: '/login' },
                             ]}
                         />
