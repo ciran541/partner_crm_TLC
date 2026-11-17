@@ -21,6 +21,8 @@ export async function GET(request: Request) {
         ok: true,
         processed: result.processed,
         caseStatusUpdated: result.caseStatusUpdated,
+        emailsSent: result.emailsSent,
+        privyrSent: result.privyrSent,
         errors: result.errors,
         ranAt: new Date().toISOString(),
     })

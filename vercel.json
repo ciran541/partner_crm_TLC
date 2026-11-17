@@ -5,6 +5,10 @@
       "schedule": "0 1 * * *"
     },
     {
+      "path": "/api/cron/insurance-followups",
+      "schedule": "30 1 * * *"
+    },
+    {
       "path": "/api/cron/sora",
       "schedule": "0 2 * * *"
     },

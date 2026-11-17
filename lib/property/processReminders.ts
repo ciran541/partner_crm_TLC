@@ -1,10 +1,12 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendFollowUpReminder } from '@/lib/email/sendFollowUpReminder'
+import { sendToPrivyr } from '@/lib/privyr/sendToPrivyr'
 
 export interface ProcessResult {
     processed: number
     caseStatusUpdated: number
     emailsSent: number
+    privyrSent: number
     errors: string[]
 }
 
@@ -22,13 +24,14 @@ export async function processReminders(): Promise<ProcessResult> {
         .lte('trigger_date', today)
 
     if (fetchError) {
-        return { processed: 0, caseStatusUpdated: 0, emailsSent: 0, errors: [fetchError.message] }
+        return { processed: 0, caseStatusUpdated: 0, emailsSent: 0, privyrSent: 0, errors: [fetchError.message] }
     }
 
     const result: ProcessResult = {
         processed: dueReminders?.length ?? 0,
         caseStatusUpdated: 0,
         emailsSent: 0,
+        privyrSent: 0,
         errors: [],
     }
 
@@ -78,8 +81,9 @@ export async function processReminders(): Promise<ProcessResult> {
     const { data: selfFollowUps, error: followUpError } = await admin
         .from('property_cases')
         .select(`
-            id, client_name, client_mobile, agent_id,
+            id, client_name, client_mobile, client_email, agent_id,
             projected_agent_income, lock_in_period,
+            outstanding_loan_amount, follow_up_date,
             banks(name)
         `)
         .eq('followup_preference', 'self')
@@ -116,6 +120,26 @@ export async function processReminders(): Promise<ProcessResult> {
             })
             result.emailsSent++
             result.processed++
+
+            // Send lead to Privyr so the automated WhatsApp template fires
+            const privyrResult = await sendToPrivyr({
+                name: c.client_name,
+                phone: c.client_mobile,
+                email: c.client_email,
+                otherFields: {
+                    'Source': 'TLC Property CRM',
+                    'Bank': bankName ?? undefined,
+                    'Lock-In Period (Years)': c.lock_in_period ?? undefined,
+                    'Outstanding Loan (SGD)': c.outstanding_loan_amount ?? undefined,
+                    'Follow-Up Date': c.follow_up_date ?? undefined,
+                    'Case URL': `${process.env.NEXT_PUBLIC_APP_URL}/property/cases/${c.id}`,
+                },
+            })
+            if (privyrResult.ok) {
+                result.privyrSent++
+            } else {
+                result.errors.push(`Privyr (property case ${c.id}): ${privyrResult.error}`)
+            }
         } catch (e) {
             result.errors.push(`Follow-up email for case ${c.id}: ${String(e)}`)
         }
