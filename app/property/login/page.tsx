@@ -209,15 +209,6 @@ function PropertyLoginInner() {
                             }
                         </button>
                     </form>
-
-                    <div style={{ marginTop: 24, textAlign: 'center' }}>
-                        <p style={{ fontSize: 14, color: '#64748b' }}>
-                            Don&apos;t have an account?{' '}
-                            <Link href="/property/signup" style={{ color: '#059669', fontWeight: 700, textDecoration: 'none' }}>
-                                Sign up now
-                            </Link>
-                        </p>
-                    </div>
                 </div>
             </div>
         </div>

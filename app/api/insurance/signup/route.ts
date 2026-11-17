@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { rateLimitOrResponse } from '@/lib/rateLimit'
+import { loadValidInvite, burnInvite } from '@/lib/auth/invites'
 
 const signupSchema = z.object({
     token: z.string().min(1),
@@ -14,20 +15,6 @@ const signupSchema = z.object({
     privacy_version: z.string().optional(),
 })
 
-async function loadValidInvite(supabaseAdmin: ReturnType<typeof createAdminClient>, token: string) {
-    const { data: invite } = await supabaseAdmin
-        .from('agent_invites')
-        .select('*')
-        .eq('token', token)
-        .single()
-
-    if (!invite) return { invite: null, reason: 'not_found' as const }
-    if (invite.status !== 'pending') return { invite: null, reason: 'used_or_revoked' as const }
-    if (new Date(invite.expires_at).getTime() < Date.now()) return { invite: null, reason: 'expired' as const }
-
-    return { invite, reason: null }
-}
-
 // Public — lets the signup page check a token before rendering the form.
 // Only ever returns whether it's usable plus the (non-sensitive) prefill
 // values the admin already entered when generating the invite.
@@ -38,7 +25,7 @@ export async function GET(request: Request) {
     }
 
     const supabaseAdmin = createAdminClient()
-    const { invite } = await loadValidInvite(supabaseAdmin, token)
+    const { invite } = await loadValidInvite(supabaseAdmin, token, 'insurance')
 
     if (!invite) {
         return NextResponse.json({ valid: false })
@@ -69,8 +56,9 @@ export async function POST(request: Request) {
         const supabaseAdmin = createAdminClient()
 
         // Re-validate server-side — never trust the client-side check the
-        // signup page already did before showing the form.
-        const { invite } = await loadValidInvite(supabaseAdmin, token)
+        // signup page already did before showing the form. Scoped to
+        // 'insurance' so a Basic/Starter invite can't create a Premium account.
+        const { invite } = await loadValidInvite(supabaseAdmin, token, 'insurance')
         if (!invite) {
             return NextResponse.json({ error: 'This invite link is invalid or has expired.' }, { status: 400 })
         }
@@ -129,15 +117,7 @@ export async function POST(request: Request) {
         }
 
         // 4. Burn the invite — single-use.
-        const { error: inviteError } = await supabaseAdmin
-            .from('agent_invites')
-            .update({ status: 'used', used_at: new Date().toISOString(), used_by: authUser.user.id })
-            .eq('id', invite.id)
-            .eq('status', 'pending')
-
-        if (inviteError) {
-            console.error('Failed to mark invite used:', inviteError)
-        }
+        await burnInvite(supabaseAdmin, invite.id, authUser.user.id)
 
         return NextResponse.json({ success: true, user: authUser.user })
     } catch (error: any) {

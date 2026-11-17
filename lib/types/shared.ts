@@ -54,6 +54,8 @@ export interface AgentInvite {
     id: string
     token: string
     app_type: AppType
+    /** Property invites only: 'premium' = Basic, 'standard' = Starter. null for Premium (insurance). */
+    subscription_tier?: SubscriptionTier | null
     role: UserRole
     invited_name: string | null
     invited_email: string | null

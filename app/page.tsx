@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, Lock, Briefcase } from 'lucide-react'
+import { Lock, Briefcase } from 'lucide-react'
 
 export default function LandingPage() {
   return (
@@ -120,27 +120,6 @@ export default function LandingPage() {
           >
             <Briefcase size={18} />
             Basic & Starter Login
-          </Link>
-
-          <Link
-            href="/property/signup"
-            style={{
-              textDecoration: 'none',
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.3)',
-              color: 'white',
-              padding: '16px 32px',
-              borderRadius: '8px',
-              fontWeight: '600',
-              fontSize: '16px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'background 0.2s'
-            }}
-          >
-            <ArrowRight size={18} />
-            Sign Up
           </Link>
         </div>
       </div>

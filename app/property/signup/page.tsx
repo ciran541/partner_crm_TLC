@@ -1,15 +1,26 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { UserPlus, Mail, Lock, User, ArrowRight, CheckCircle2, Circle } from 'lucide-react'
+import { Mail, Lock, User, ArrowRight, CheckCircle2, Circle } from 'lucide-react'
+import Spinner from '@/components/shared/Spinner'
 import LegalConsentModal from '@/components/shared/LegalConsentModal'
 import { propertyTerms as dummyTerms, propertyPrivacy as dummyPrivacy } from '@/lib/legal/propertyLegalContent'
 import { CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION } from '@/lib/legal/consentVersions'
 
-export default function PropertySignup() {
+type TokenState = 'checking' | 'invalid' | 'valid'
+
+// Invite-only (Basic / Starter) — mirrors /insurance/signup. No token, no form.
+function PropertySignupInner() {
     const router = useRouter()
+    const searchParams = useSearchParams()
+    const token = searchParams.get('token') ?? ''
+
+    const [tokenState, setTokenState] = useState<TokenState>('checking')
+    const [emailLocked, setEmailLocked] = useState(false)
+    const [planLabel, setPlanLabel] = useState<string | null>(null)
+
     const [form, setForm] = useState({
         name: '',
         email: '',
@@ -21,6 +32,33 @@ export default function PropertySignup() {
     const [error, setError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
     const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | null>(null)
+
+    useEffect(() => {
+        if (!token) {
+            setTokenState('invalid')
+            return
+        }
+        let active = true
+        fetch(`/api/property/signup?token=${encodeURIComponent(token)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (!active) return
+                if (!data.valid) {
+                    setTokenState('invalid')
+                    return
+                }
+                setForm(f => ({
+                    ...f,
+                    name: data.invited_name ?? '',
+                    email: data.invited_email ?? '',
+                }))
+                setEmailLocked(!!data.invited_email)
+                setPlanLabel(data.plan ?? null)
+                setTokenState('valid')
+            })
+            .catch(() => { if (active) setTokenState('invalid') })
+        return () => { active = false }
+    }, [token])
 
     const handleSignup = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -38,6 +76,7 @@ export default function PropertySignup() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    token,
                     email: form.email,
                     password: form.password,
                     name: form.name,
@@ -55,8 +94,8 @@ export default function PropertySignup() {
             }
 
             router.push('/property/login?registered=true')
-        } catch (err: any) {
-            setError(err.message)
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Failed to sign up')
             setLoading(false)
         }
     }
@@ -105,9 +144,35 @@ export default function PropertySignup() {
                     <h1 style={{ fontSize: 26, fontWeight: 800, color: '#052d4a', letterSpacing: '-0.02em', marginBottom: 6 }}>
                         Create your account
                     </h1>
-                    <p style={{ fontSize: 14, color: '#64748b' }}>Join TLC HUB.</p>
+                    <p style={{ fontSize: 14, color: '#64748b' }}>
+                        {planLabel ? <>Join TLC HUB — <strong style={{ color: '#065f46' }}>{planLabel}</strong> plan.</> : 'Join TLC HUB.'}
+                    </p>
                 </div>
 
+                {tokenState === 'checking' && (
+                    <div className="card-elevated" style={{ padding: '48px 32px', display: 'flex', justifyContent: 'center' }}>
+                        <Spinner size="md" color="#059669" label="Checking your invite link…" />
+                    </div>
+                )}
+
+                {tokenState === 'invalid' && (
+                    <div className="card-elevated" style={{ padding: '36px 32px', textAlign: 'center' }}>
+                        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#052d4a', marginBottom: 8 }}>
+                            {token ? 'This invite link is invalid or has expired' : 'Sign up is by invitation only'}
+                        </h2>
+                        <p style={{ fontSize: 14, color: '#64748b' }}>
+                            Please contact your TLC admin for an invite link.
+                        </p>
+                        <p style={{ fontSize: 14, color: '#64748b', marginTop: 16 }}>
+                            Already have an account?{' '}
+                            <Link href="/property/login" style={{ color: '#059669', fontWeight: 700, textDecoration: 'none' }}>
+                                Sign in
+                            </Link>
+                        </p>
+                    </div>
+                )}
+
+            {tokenState === 'valid' && (
             <div>
                 <div className="card-elevated" style={{ padding: '36px 32px' }}>
                     <form style={{ display: 'flex', flexDirection: 'column', gap: 18 }} onSubmit={handleSignup}>
@@ -134,8 +199,11 @@ export default function PropertySignup() {
                             <label className="form-label">Email Address</label>
                             <div style={{ position: 'relative' }}>
                                 <Mail size={16} color="#94a3b8" style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-                                <input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })}
-                                    placeholder="jane@example.com" style={inputStyle} onFocus={handleInputFocus} onBlur={handleInputBlur} />
+                                <input required type="email" value={form.email} disabled={emailLocked}
+                                    onChange={e => setForm({ ...form, email: e.target.value })}
+                                    placeholder="jane@example.com"
+                                    style={{ ...inputStyle, ...(emailLocked ? { background: '#f8fafc', color: '#64748b', cursor: 'not-allowed' } : {}) }}
+                                    onFocus={handleInputFocus} onBlur={handleInputBlur} />
                             </div>
                         </div>
 
@@ -221,6 +289,7 @@ export default function PropertySignup() {
                     </div>
                 </div>
             </div>
+            )}
             </div>
 
             {/* Legal Modals */}
@@ -248,4 +317,8 @@ export default function PropertySignup() {
             />
         </div>
     )
+}
+
+export default function PropertySignup() {
+    return <Suspense><PropertySignupInner /></Suspense>
 }

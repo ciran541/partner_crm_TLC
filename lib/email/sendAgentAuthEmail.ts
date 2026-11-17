@@ -11,8 +11,10 @@ function renderAuthEmail(params: {
     ctaLabel: string
     ctaUrl: string
     footerNote?: string
+    /** Small caps line above the heading — the plan the email is about. */
+    eyebrow?: string
 }): string {
-    const { heading, bodyHtml, ctaLabel, ctaUrl, footerNote } = params
+    const { heading, bodyHtml, ctaLabel, ctaUrl, footerNote, eyebrow = 'TLC HUB Premium' } = params
     return `
 <!DOCTYPE html>
 <html>
@@ -23,7 +25,7 @@ function renderAuthEmail(params: {
 
         <tr>
           <td style="background:linear-gradient(135deg,#03a9e7,#0398d1);padding:32px 40px;">
-            <p style="margin:0;color:rgba(255,255,255,0.8);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">TLC HUB Premium</p>
+            <p style="margin:0;color:rgba(255,255,255,0.8);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">${eyebrow}</p>
             <h1 style="margin:8px 0 0;color:white;font-size:22px;font-weight:700;">${heading}</h1>
           </td>
         </tr>
@@ -66,29 +68,32 @@ interface SendAgentInviteEmailParams {
     to: string
     name?: string | null
     inviteUrl: string
+    /** Premium / Basic / Starter — decided by the invite. Defaults to Premium. */
+    planName?: string
 }
 
-export async function sendAgentInviteEmail({ to, name, inviteUrl }: SendAgentInviteEmailParams): Promise<void> {
+export async function sendAgentInviteEmail({ to, name, inviteUrl, planName = 'Premium' }: SendAgentInviteEmailParams): Promise<void> {
     const greeting = name ? `Hi ${name},` : 'Hi,'
     const html = renderAuthEmail({
         heading: "You're invited to join TLC",
         bodyHtml: `
             <p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.6;">${greeting}</p>
             <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
-              You've been invited to join TLC HUB Premium. Click below to complete your sign up —
-              you'll choose your own email and password. This link is single-use and will expire, so complete
+              You've been invited to join TLC HUB on the ${planName} plan. Click below to complete your sign up —
+              you'll set your own password. This link is single-use and will expire, so complete
               your sign up soon.
             </p>
         `,
         ctaLabel: 'Complete Your Sign Up',
         ctaUrl: inviteUrl,
+        eyebrow: `TLC HUB ${planName}`,
         footerNote: "The TLC Team · If you weren't expecting this invite, you can safely ignore this email.",
     })
 
     await resend.emails.send({
         from: FROM,
         to,
-        subject: "You're invited to join TLC HUB Premium",
+        subject: `You're invited to join TLC HUB (${planName})`,
         html,
     })
 }

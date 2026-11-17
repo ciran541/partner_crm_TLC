@@ -4,6 +4,13 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { getSafeRoute, planName, PLAN_NAMES } from '@/lib/permissions'
+import { invitePlanName, inviteSignupPath, type InvitePlan } from '@/lib/auth/invites'
+
+const INVITE_PLANS: { value: InvitePlan; label: string }[] = [
+    { value: 'premium', label: PLAN_NAMES.insurance },
+    { value: 'basic', label: PLAN_NAMES.propertyPremium },
+    { value: 'starter', label: PLAN_NAMES.propertyStandard },
+]
 import { Profile, CreateUserInput, UpdateUserInput, AgentInvite } from '@/lib/types/shared'
 import Modal from '@/components/shared/Modal'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -37,7 +44,7 @@ export default function AdminUsersPage() {
 
     const [invites, setInvites] = useState<AgentInvite[]>([])
     const [isInviteOpen, setIsInviteOpen] = useState(false)
-    const [inviteForm, setInviteForm] = useState({ invited_name: '', invited_email: '' })
+    const [inviteForm, setInviteForm] = useState<{ invited_name: string; invited_email: string; plan: InvitePlan }>({ invited_name: '', invited_email: '', plan: 'premium' })
     const [generatedInviteUrl, setGeneratedInviteUrl] = useState<string | null>(null)
     const [generatedInviteEmailed, setGeneratedInviteEmailed] = useState(false)
     const [copied, setCopied] = useState(false)
@@ -158,7 +165,7 @@ export default function AdminUsersPage() {
 
     const closeInviteModal = () => {
         setIsInviteOpen(false)
-        setInviteForm({ invited_name: '', invited_email: '' })
+        setInviteForm({ invited_name: '', invited_email: '', plan: 'premium' })
         setGeneratedInviteUrl(null)
         setGeneratedInviteEmailed(false)
         setCopied(false)
@@ -248,7 +255,7 @@ export default function AdminUsersPage() {
                         className="btn-ghost flex items-center justify-center gap-2 flex-1 sm:flex-none"
                     >
                         <Link2 size={18} />
-                        <span>Invite Premium Agent</span>
+                        <span>Invite Agent</span>
                     </button>
                     <button
                         onClick={() => setIsCreateOpen(true)}
@@ -269,8 +276,13 @@ export default function AdminUsersPage() {
                         {invites.filter(i => i.status === 'pending').map(invite => (
                             <div key={invite.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
                                 <div className="min-w-0">
-                                    <p className="text-sm font-semibold text-slate-700 truncate">
-                                        {invite.invited_name || invite.invited_email || 'Unnamed invite'}
+                                    <p className="text-sm font-semibold text-slate-700 truncate flex items-center gap-2">
+                                        <span className="truncate">{invite.invited_name || invite.invited_email || 'Unnamed invite'}</span>
+                                        <span className={`shrink-0 inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                                            invite.app_type === 'property' ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'
+                                        }`}>
+                                            {invitePlanName(invite)}
+                                        </span>
                                     </p>
                                     <p className="text-xs text-slate-400">
                                         Expires {new Date(invite.expires_at).toLocaleDateString()}
@@ -278,7 +290,7 @@ export default function AdminUsersPage() {
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
                                     <button
-                                        onClick={() => copyInviteUrl(`${window.location.origin}/insurance/signup?token=${invite.token}`)}
+                                        onClick={() => copyInviteUrl(`${window.location.origin}${inviteSignupPath(invite.app_type)}?token=${invite.token}`)}
                                         className="p-2 text-slate-400 hover:text-[#03a9e7] hover:bg-sky-50 rounded-lg transition-all"
                                         title="Copy Link"
                                     >
@@ -418,7 +430,7 @@ export default function AdminUsersPage() {
 
             {/* Invite Modal */}
             {isInviteOpen && (
-                <Modal title="Invite Premium Agent" onClose={closeInviteModal}>
+                <Modal title="Invite Agent" onClose={closeInviteModal}>
                     {generatedInviteUrl ? (
                         <div className="space-y-4">
                             {generatedInviteEmailed ? (
@@ -428,7 +440,7 @@ export default function AdminUsersPage() {
                             ) : (
                                 <p className="text-sm text-slate-600">
                                     Send this link to the agent <span className="font-semibold">after payment is confirmed</span> —
-                                    it's single-use and lets them sign up with their own email and password. Their account will
+                                    it&apos;s single-use and lets them set their own password. Their account will
                                     be active as soon as they finish.
                                 </p>
                             )}
@@ -456,6 +468,26 @@ export default function AdminUsersPage() {
                             <p className="text-sm text-slate-600">
                                 Only generate this after the agent has paid — the link itself is what activates their account.
                             </p>
+                            <div>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plan</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {INVITE_PLANS.map(p => (
+                                        <button
+                                            key={p.value}
+                                            type="button"
+                                            onClick={() => setInviteForm({ ...inviteForm, plan: p.value })}
+                                            className={`min-h-[44px] rounded-lg border text-sm font-semibold transition-colors ${
+                                                inviteForm.plan === p.value
+                                                    ? 'border-[#03a9e7] bg-sky-50 text-[#052d4a]'
+                                                    : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                                            }`}
+                                        >
+                                            {p.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="mt-1 text-xs text-slate-400">The link decides the plan — the agent can&apos;t change it at sign up.</p>
+                            </div>
                             <div>
                                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Agent&apos;s Name (optional)</label>
                                 <input type="text"
