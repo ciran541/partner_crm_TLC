@@ -26,7 +26,7 @@ export default function PrivacyPolicyPage() {
                 <h1 style={{ fontSize: 28, fontWeight: 800, color: '#052d4a', marginBottom: 8 }}>Privacy Policy</h1>
                 <p style={{ color: '#64748b', fontSize: 14, marginBottom: 32 }}>
                     The Loan Connection (&ldquo;TLC&rdquo;) operates two agent-facing platforms covered by this
-                    policy: the Insurance Agent Platform and the Property Agent Platform. Each has its own policy
+                    policy, both part of TLC HUB: TLC HUB Premium and TLC HUB Basic & Starter. Each has its own policy
                     below — refer to the one for the platform you use.
                 </p>
 
@@ -35,7 +35,7 @@ export default function PrivacyPolicyPage() {
                         Google API Limited Use Disclosure
                     </h2>
                     <p style={{ color: '#334155', fontSize: 14, lineHeight: 1.6 }}>
-                        The Loan Connection CRM&rsquo;s use and transfer of information received from Google APIs
+                        TLC HUB&rsquo;s use and transfer of information received from Google APIs
                         (including Google Calendar, accessed via the <code>calendar.events</code> scope) to any
                         other app will adhere to the{' '}
                         <a href="https://developers.google.com/workspace/workspace-api-user-data-developer-policy" style={{ color: '#03a9e7' }}>

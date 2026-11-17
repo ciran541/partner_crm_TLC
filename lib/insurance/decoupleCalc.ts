@@ -22,6 +22,8 @@ import {
     DEFAULT_REFERENCE_RATE,
     MIN_TENURE,
     CANCELLATION_FEE_RATE,
+    checkBorrowerAges,
+    type BorrowerAgeCheck,
 } from '@/lib/insurance/loanCalc'
 import { calculateBSD, absdRate, type Residency } from '@/lib/insurance/stampDuty'
 import type { DecoupleWorkflow, DecoupleBorrower } from '@/lib/types/workflow'
@@ -140,6 +142,8 @@ export interface DecoupleInputs {
 export interface DecoupleComputation {
     ready:    boolean
     scenario: DecoupleScenario | null
+    /** Buyer age vs. year of purchase. A non-null `error` forces `ready` false. */
+    ageCheck: BorrowerAgeCheck
 
     // Shares & prices
     buyerShareFrac:       number
@@ -482,9 +486,17 @@ export function computeDecouple(inputs: DecoupleInputs): DecoupleComputation {
         ? computePledge(reqEquity, equityLoanEligibility, remainingTdsrAfterLoans, effectiveEquityTenure)
         : null
 
+    // The buyer (remaining owner) must have been ≥ 21 at the original purchase.
+    const ageCheck = checkBorrowerAges(
+        (inputs.borrowers ?? []).map(b => b?.age),
+        inputs.yearOfPurchase,
+        { labels: ['Buyer'] },
+    )
+
     return {
-        ready: valuation > 0 && (inputs.buyerSharePct ?? 0) > 0,
+        ready: valuation > 0 && (inputs.buyerSharePct ?? 0) > 0 && !ageCheck.error,
         scenario,
+        ageCheck,
         buyerShareFrac, sellerShareFrac,
         purchasePrice, sellingPrice,
         outstandingLoan, cancellationFee,

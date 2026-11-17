@@ -104,7 +104,7 @@ function Content() {
         <div className="space-y-5">
             <div>
                 <h1 className="text-2xl font-bold text-[#052d4a]">Property Earnings</h1>
-                <p className="text-sm text-slate-500 mt-1">Commission across all property agents. Click an agent to see their cases.</p>
+                <p className="text-sm text-slate-500 mt-1">Commission across all Basic and Starter agents. Click an agent to see their cases.</p>
             </div>
             <MasterTable rows={rows} onOpen={id => router.push(`/admin/property/earnings?agent=${id}`)} />
         </div>
@@ -121,7 +121,7 @@ function MasterTable({ rows, onOpen }: { rows: PropertyAgentCommissionRow[]; onO
     }), { caseCount: 0, pending: 0, confirmed: 0, paid: 0, total: 0 })
 
     if (rows.length === 0) {
-        return <EmptyState icon={DollarSign} iconColor="#8b5cf6" title="No agents yet" description="Property agents will appear here once added." />
+        return <EmptyState icon={DollarSign} iconColor="#8b5cf6" title="No agents yet" description="Basic and Starter agents will appear here once added." />
     }
 
     return (

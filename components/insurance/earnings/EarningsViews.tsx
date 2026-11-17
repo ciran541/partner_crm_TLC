@@ -24,7 +24,7 @@ export function MasterEarningsTable({ rows, onOpen }: { rows: AgentCommissionRow
     }), { activeCases: 0, open: 0, closedUnpaid: 0, closedPaid: 0, total: 0 })
 
     if (rows.length === 0) {
-        return <EmptyState icon={DollarSign} iconColor="#03a9e7" title="No agents yet" description="Insurance agents will appear here once added." />
+        return <EmptyState icon={DollarSign} iconColor="#03a9e7" title="No agents yet" description="Premium agents will appear here once added." />
     }
 
     return (

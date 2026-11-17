@@ -15,11 +15,11 @@
 
 export const insuranceTerms = (
     <div className="space-y-4">
-        <h2 className="text-xl font-bold text-slate-800">TLC Insurance Agent Platform – Terms & Conditions</h2>
+        <h2 className="text-xl font-bold text-slate-800">TLC HUB Premium – Terms & Conditions</h2>
         <p className="text-xs text-slate-500">Last Updated: 11 July 2026</p>
 
         <p className="text-slate-600">
-            These Terms & Conditions (&ldquo;Terms&rdquo;) govern access to and use of the TLC Insurance Agent
+            These Terms & Conditions (&ldquo;Terms&rdquo;) govern access to and use of the TLC HUB Premium
             Platform (&ldquo;Platform&rdquo;), operated by The Loan Connection (&ldquo;TLC&rdquo;, &ldquo;we&rdquo;,
             &ldquo;us&rdquo;), a mortgage advisory business registered in Singapore (UEN: [Company UEN]), with
             registered address at [Registered Business Address]. By creating an account or otherwise using the
@@ -111,12 +111,12 @@ export const insuranceTerms = (
 
 export const insurancePrivacy = (
     <div className="space-y-4">
-        <h2 className="text-xl font-bold text-slate-800">TLC Insurance Agent Platform – Privacy Policy</h2>
+        <h2 className="text-xl font-bold text-slate-800">TLC HUB Premium – Privacy Policy</h2>
         <p className="text-xs text-slate-500">Last Updated: 7 August 2026</p>
         <p className="text-slate-600">
             The Loan Connection (&ldquo;TLC&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) is committed to protecting
             personal data in accordance with Singapore&rsquo;s Personal Data Protection Act 2012 (&ldquo;PDPA&rdquo;).
-            This Policy explains what personal data we collect through the Insurance Agent Platform, how we use it,
+            This Policy explains what personal data we collect through TLC HUB Premium, how we use it,
             who we share it with, and your rights.
         </p>
 

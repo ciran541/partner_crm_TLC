@@ -23,7 +23,7 @@ function renderAuthEmail(params: {
 
         <tr>
           <td style="background:linear-gradient(135deg,#03a9e7,#0398d1);padding:32px 40px;">
-            <p style="margin:0;color:rgba(255,255,255,0.8);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">TLC Insurance Agent Platform</p>
+            <p style="margin:0;color:rgba(255,255,255,0.8);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">TLC HUB Premium</p>
             <h1 style="margin:8px 0 0;color:white;font-size:22px;font-weight:700;">${heading}</h1>
           </td>
         </tr>
@@ -75,7 +75,7 @@ export async function sendAgentInviteEmail({ to, name, inviteUrl }: SendAgentInv
         bodyHtml: `
             <p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.6;">${greeting}</p>
             <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
-              You've been invited to join TLC's Insurance Agent Platform. Click below to complete your sign up —
+              You've been invited to join TLC HUB Premium. Click below to complete your sign up —
               you'll choose your own email and password. This link is single-use and will expire, so complete
               your sign up soon.
             </p>
@@ -88,7 +88,7 @@ export async function sendAgentInviteEmail({ to, name, inviteUrl }: SendAgentInv
     await resend.emails.send({
         from: FROM,
         to,
-        subject: "You're invited to join TLC's Insurance Agent Platform",
+        subject: "You're invited to join TLC HUB Premium",
         html,
     })
 }
@@ -114,7 +114,7 @@ export async function sendAgentWelcomeEmail({ to, name, setPasswordUrl, pendingA
         bodyHtml: `
             <p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.6;">${greeting}</p>
             <p style="margin:0 0 24px;color:#475569;font-size:15px;line-height:1.6;">
-              An account has been created for you on TLC's Insurance Agent Platform. Click below to set your
+              An account has been created for you on TLC HUB Premium. Click below to set your
               own password and sign in.
             </p>
             ${activationNote}

@@ -39,7 +39,13 @@ function InsuranceLoginInner() {
 
         try {
             const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
-            if (signInError) throw signInError
+            if (signInError) {
+                // Disabled accounts are also banned in Supabase Auth (see
+                // /api/admin/update-user), so sign-in itself fails — show the
+                // same message as the status check below, not "User is banned".
+                if (signInError.code === 'user_banned') throw new Error(REASON_MESSAGES.suspended)
+                throw signInError
+            }
             if (!data.user) throw new Error('No user returned')
 
             const { data: profile } = await supabase
@@ -50,7 +56,7 @@ function InsuranceLoginInner() {
 
             if (!profile || profile.app_type !== 'insurance') {
                 await supabase.auth.signOut()
-                throw new Error('This login is for Insurance Agents only.')
+                throw new Error('This login is for TLC HUB Premium accounts. Basic and Starter accounts sign in from the Basic & Starter login.')
             }
 
             if (profile.status === 'disabled') {
@@ -94,14 +100,14 @@ function InsuranceLoginInner() {
                 {/* Logo & title */}
                 <div style={{ textAlign: 'center', marginBottom: 32 }}>
                     <img
-                        src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                        src="/brand/tlc-logo.png"
                         alt="TLC"
                         style={{ width: 56, height: 56, borderRadius: 14, margin: '0 auto 16px', display: 'block', boxShadow: '0 4px 12px rgba(5,45,74,0.15)' }}
                     />
                     <h1 style={{ fontSize: 26, fontWeight: 800, color: '#052d4a', letterSpacing: '-0.02em', marginBottom: 6 }}>
                         Welcome back
                     </h1>
-                    <p style={{ fontSize: 14, color: '#64748b' }}>Insurance Agent Portal — sign in to continue.</p>
+                    <p style={{ fontSize: 14, color: '#64748b' }}>TLC HUB Premium — sign in to continue.</p>
                 </div>
 
                 {/* Card */}

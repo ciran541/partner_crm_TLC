@@ -36,7 +36,7 @@ export default function InsuranceForgotPassword() {
             <div style={{ maxWidth: 440, width: '100%', margin: '0 auto' }}>
                 <div style={{ textAlign: 'center', marginBottom: 32 }}>
                     <img
-                        src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                        src="/brand/tlc-logo.png"
                         alt="TLC"
                         style={{ width: 56, height: 56, borderRadius: 14, margin: '0 auto 16px', display: 'block', boxShadow: '0 4px 12px rgba(5,45,74,0.15)' }}
                     />

@@ -42,7 +42,7 @@ export async function createFollowUpEvent(
         calendarId,
         requestBody: {
             summary: followUpTitle(clientName, clientPhone),
-            description: `View case in TLC Property CRM:\n${caseUrl}`,
+            description: `View case in TLC HUB:\n${caseUrl}`,
             colorId: EVENT_COLOR_ID,
             start: { date: followUpDate },
             end: { date: followUpDate },

@@ -22,6 +22,7 @@ import { buildEquityLoanPresentationHtml } from '@/lib/insurance/equityLoanRepor
 import { generatePdf } from '@/lib/email/generatePdf'
 import { sendWorkflowReport } from '@/lib/email/sendWorkflowReport'
 import { getCurrentSora } from '@/lib/insurance/sora'
+import { checkBorrowerAges } from '@/lib/insurance/loanCalc'
 
 // POST /api/insurance/cases/[id]/send-report
 // Generates a PDF from the case's workflow data and emails it to the client.
@@ -72,6 +73,23 @@ export async function POST(
 
     let html: string
     const caseType = row.case_type as string
+
+    // Never email a report built on an impossible borrower age (younger than 21
+    // at the year of purchase). The workflow UI already stops on this; this is the
+    // server-side backstop so a stale tab or direct call can't send it anyway.
+    if (caseType === 'Refinancing' || caseType === 'Decouple' || caseType === 'Equity Loan') {
+        const wf = caseType === 'Refinancing' ? getRefinancingWorkflow(row.workflow_data)
+            : caseType === 'Decouple' ? getDecoupleWorkflow(row.workflow_data)
+            : getEquityLoanWorkflow(row.workflow_data)
+        const check = checkBorrowerAges(
+            (wf.borrowers ?? []).map(b => b?.age),
+            wf.year_of_purchase,
+            caseType === 'Decouple' ? { labels: ['Buyer'] } : {},
+        )
+        if (check.error) {
+            return NextResponse.json({ error: check.error }, { status: 422 })
+        }
+    }
 
     if (caseType === 'Refinancing') {
         const wf = getRefinancingWorkflow(row.workflow_data)

@@ -45,13 +45,13 @@ export default function LoginPage() {
                 <div className="text-center mb-8">
                     <div className="flex justify-center mb-6">
                         <img
-                            src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                            src="/brand/tlc-logo.png"
                             alt="The Loan Connection Logo"
                             className="w-20 h-20 rounded-xl shadow-lg"
                         />
                     </div>
                     <h1 className="text-3xl font-bold text-white mb-2">Welcome Back</h1>
-                    <p className="text-[#94a3b8]">Sign in to your Partner CRM account</p>
+                    <p className="text-[#94a3b8]">Sign in to TLC HUB</p>
                 </div>
 
                 <form onSubmit={handleLogin} className="space-y-6">

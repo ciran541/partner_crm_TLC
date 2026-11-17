@@ -317,7 +317,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                 <div className="p-6 border-b border-white/10">
                     <div className="flex items-center gap-3">
                         <img
-                            src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                            src="/brand/tlc-logo.png"
                             alt="The Loan Connection Logo"
                             className="w-10 h-10 rounded"
                         />
@@ -325,7 +325,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                             <p className="text-base font-bold text-white leading-tight">The Loan Connection</p>
                             <div className="flex items-center gap-1.5 mt-1">
                                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#03a9e7]" />
-                                <p className="text-[10px] font-semibold text-[#7dd3fc] tracking-wider">Mortgage Portal</p>
+                                <p className="text-[10px] font-semibold text-[#7dd3fc] tracking-wider">TLC HUB</p>
                             </div>
                         </div>
                     </div>
@@ -363,12 +363,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                         <AccountSwitcher
                             email={email}
                             displayName={displayName}
-                            roleLabel={isAdmin ? 'Administrator' : 'Partner Agent'}
+                            roleLabel={isAdmin ? 'Administrator' : 'Premium'}
                             avatarColor="#03a9e7"
                             onSignOut={handleSignOut}
                             addAccountLinks={[
-                                { label: 'Add insurance agent login', href: '/insurance/login' },
-                                { label: 'Add property agent login', href: '/property/login?add=1' },
+                                { label: 'Add Premium login', href: '/insurance/login' },
+                                { label: 'Add Basic / Starter login', href: '/property/login?add=1' },
                                 { label: 'Add admin login', href: '/login' },
                             ]}
                         />
@@ -391,7 +391,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                 <div className="flex items-center justify-between h-14 px-4">
                     <div className="flex items-center gap-2 min-w-0">
                         <img
-                            src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                            src="/brand/tlc-logo.png"
                             alt="Logo"
                             className="w-8 h-8 rounded shrink-0"
                         />

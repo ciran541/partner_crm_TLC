@@ -95,7 +95,7 @@ export default function DashboardLayout({
                 </button>
                 <div className="ml-4 flex items-center gap-2">
                     <img
-                        src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                        src="/brand/tlc-logo.png"
                         alt="Logo"
                         className="w-8 h-8 rounded"
                     />
@@ -120,7 +120,7 @@ export default function DashboardLayout({
                 <div className="p-6 border-b border-white/10">
                     <div className="flex items-center gap-3">
                         <img
-                            src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                            src="/brand/tlc-logo.png"
                             alt="The Loan Connection Logo"
                             className="w-10 h-10 rounded"
                         />

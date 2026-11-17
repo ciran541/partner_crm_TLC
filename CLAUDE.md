@@ -10,7 +10,7 @@ npm run build        # Production build
 npm run lint         # ESLint
 npm test             # Vitest — unit tests for the financial calc core (lib/insurance/__tests__)
 npm run sync-schema  # Regenerate supabase/schema/full_current_schema.sql from live DB (tables + RLS policies)
-npx supabase db push # Apply pending migration files to remote Supabase
+npx supabase db push --remote   # Apply pending migration files to remote Supabase (add --dry-run first to preview)
 ```
 
 TypeScript checking: `npx tsc --noEmit`. Tests cover the pure financial engines (BSD/ABSD tiers, IWAA, annuity math, Step 4 effective rates) — run them after touching `lib/insurance/*Calc.ts`, `stampDuty.ts`, `loanCalc.ts` or `rateRecommend.ts`.
@@ -30,12 +30,23 @@ There is also a shared `/admin/*` area (user management, analytics) used by admi
 
 The `profiles` table is shared. The `app_type` column (`'insurance'` or `'property'`) and `role` column (`'agent'`, `'admin'`, `'super_admin'`) control what each user can access.
 
+**Product name & plan names (user-facing only).** The platform is branded **TLC HUB** (never "CRM") at `hub.theloanconnection.com.sg` (`crm.` 308-redirects there). Users are described by **plan**, not profession — freelance brokers use the insurance app without being insurance agents — so UI copy never says "Insurance Agent" / "Property Agent":
+
+| Stored | Shown as |
+|---|---|
+| `app_type='insurance'` | **Premium** |
+| `app_type='property'`, `subscription_tier='premium'` | **Basic** |
+| `app_type='property'`, `subscription_tier='standard'` | **Starter** |
+
+Use `planName()` / `accountLabel()` / `PLAN_NAMES` from `lib/permissions` for any label — note the trap that the property tier *stored* as `'premium'` is *shown* as **Basic**. DB values, route prefixes (`/insurance`, `/property`), Privyr `Source` strings and Drive backup folder names are deliberately unchanged.
+
 ### Auth model
 
-- **Login pages are per-app**: `/property/login`, `/insurance/login`
-- **Middleware** (`middleware.ts`) protects `/property/*` and `/insurance/*` — bounces unauthenticated users to the correct login page. Login and forgot-password pages are excluded from the gate.
-- **Authorization** (role + app_type checks) happens in layout components client-side and in API routes server-side. Middleware only handles authentication (session existence).
-- **Password reset flow**: Admin sets a temp password via `/admin/users` → agent changes it from their Profile page. There is no self-service email reset for agents.
+- **Login pages are per-app**: `/property/login`, `/insurance/login` (each rejects the other app's `app_type` — deliberate, agents must never cross apps). `/login` is the admin entry point (→ `/redirect` → `getSafeRoute()` → `/admin`) — not dead code.
+- **Middleware** (`middleware.ts`) protects `/property/*`, `/insurance/*` and `/admin/*` — bounces unauthenticated users to the correct login page (`/login` for admin), disabled accounts to login with `?reason=suspended`, and logged-in non-admins away from `/admin` to their `getSafeRoute()`. Login/signup/forgot-password pages are excluded from the gate.
+- **Authorization** (role + app_type checks) is enforced server-side in API routes; layouts re-check client-side for routing. The middleware `/admin` role redirect is UX only — it falls through if the profile lookup fails, so never rely on it for data protection.
+- **Disabled accounts** (`profiles.status = 'disabled'`): `getServerUser()` treats them as logged out, so every API guard returns 401. Disabling via `/api/admin/update-user` also **bans** the user in Supabase Auth (re-activating lifts it), which kills direct browser→Supabase access at the next token refresh (≤1h). Admin-created agents start disabled but are deliberately *not* banned — a banned user can't complete the set-password email link. Login pages map the `user_banned` sign-in error to the "pending activation" message.
+- **Password reset**: self-service via forgot-password pages → `/api/auth/forgot-password` (rate-limited, never reveals whether an email exists) → emailed link → `/auth/callback` → `/auth/reset-password`. `/auth/callback`'s `next` param is sanitised to same-origin paths (`safeNextPath()`) — keep it that way, it was an open redirect. Admins can also set a password directly (`/api/admin/reset-password`). Admin-created insurance agents get a set-password email instead of a temp password; property keeps the admin-typed password.
 
 ### Supabase client usage
 
@@ -63,11 +74,15 @@ Property-agent routes use `requirePropertyUser()` from `lib/auth/requireProperty
 
 Schema changes must go through migration files in `supabase/migrations/`. Filename must match `<timestamp>_name.sql` (e.g. `20260530000000_add_column.sql`). Never use the Supabase SQL Editor directly for schema changes — those won't be tracked.
 
-After writing a migration: `npx supabase db push`
+After writing a migration: `npx supabase db push --remote` (the CLI now defaults to a local Docker stack; without `--remote` it fails with `ECONNREFUSED 127.0.0.1:54322`). Then `npm run sync-schema`.
 
 After any SQL Editor change (emergency only): `npm run sync-schema` to update the reference schema file (it dumps tables, FKs **and RLS policies**, so policy drift is visible in the repo).
 
 **RLS notes** (see `20260705000000_rls_hardening.sql`): admin checks in policies use the `is_admin_user()` SECURITY DEFINER function (never subquery `profiles` directly inside a `profiles` policy — infinite recursion). The client's UPDATE grant on `profiles` is **column-restricted** to identity fields (`name`, `full_name`, `mobile`, `cea_registration_no`, `agency_name`) — `role` / `app_type` / `status` / Google-token / session columns are writable only via service-role API routes; do not widen that grant. Insurance content tables (knowledge, rates, news, calendar, SORA) have RLS on with **no client policies** by design — all access goes through guarded server routes.
+
+**Money fields are admin-only** (see `20261117000000_protect_case_admin_fields.sql`) — RLS restricts rows, not columns, so this is enforced separately:
+- `cases`: agents write their own rows directly from the browser, so the `cases_protect_admin_fields` trigger rejects non-admin changes to `commission_status`, and freezes `stage` / `case_type` / `closed_won_data` once a case is paid (the fields `lib/insurance/commission.ts` derives payout from). Service role, postgres and admins pass through. Adding a new admin-owned column to `cases`? Add it to that trigger.
+- `property_cases`: **no client INSERT/UPDATE at all** — every write goes through `/api/property/cases*` (which recomputes commission server-side from whitelisted inputs) or admin routes. Don't add a browser write path or re-grant those privileges; add an API route instead.
 
 ### Types
 

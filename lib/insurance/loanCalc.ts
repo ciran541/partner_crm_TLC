@@ -29,6 +29,65 @@ export const NOA_FACTOR = 0.7           // variable income haircut to 70%
 export const CANCELLATION_FEE_RATE = 0.0075   // 0.75% on the undisbursed amount
 export const MIN_TENURE = 5                    // years — standard across banks
 export const DEFAULT_REFERENCE_RATE = 2.5      // % p.a. — planning default before a package is chosen
+export const MIN_PURCHASE_AGE = 21             // minimum age to buy property in Singapore
+export const EARLIEST_PURCHASE_YEAR = 1960     // anything earlier is treated as a typo
+
+// ─── Borrower age vs. year of purchase ───────────────────────────────────────
+
+export interface BorrowerAgeCheck {
+    /** Year of purchase is in the future / implausibly old. */
+    yearError: string | null
+    /** Lowest valid age today, or null when the year is missing/invalid. */
+    minAge: number | null
+    /** Indexes (into the `ages` array) of borrowers below `minAge`. */
+    invalid: number[]
+    /** The blocking message to show — year error first, else the age error. null = all good. */
+    error: string | null
+}
+
+/**
+ * A borrower must have been at least 21 when the property was bought, so today
+ * they must be at least 21 + years-since-purchase. We only capture whole ages and
+ * a year (not dates), so the minimum is relaxed by ONE year: someone who bought in
+ * Dec 2018 the month they turned 21 is still 28 in Nov 2026. That keeps every
+ * real client valid while still catching the impossible ones (e.g. 25).
+ *
+ * Blank / 0 ages are skipped (not filled in yet). Pure — callers decide how to
+ * block; every workflow treats a non-null `error` as "stop the calculation".
+ */
+export function checkBorrowerAges(
+    ages: (number | null | undefined)[],
+    yearOfPurchase: number | null | undefined,
+    opts: { currentYear?: number; labels?: string[] } = {},
+): BorrowerAgeCheck {
+    const currentYear = opts.currentYear ?? new Date().getFullYear()
+    const label = (i: number) => opts.labels?.[i] ?? `Borrower ${i + 1}`
+
+    if (!yearOfPurchase) return { yearError: null, minAge: null, invalid: [], error: null }
+
+    if (yearOfPurchase > currentYear) {
+        const yearError = `Year of purchase (${yearOfPurchase}) can't be in the future.`
+        return { yearError, minAge: null, invalid: [], error: yearError }
+    }
+    if (yearOfPurchase < EARLIEST_PURCHASE_YEAR) {
+        const yearError = `Year of purchase (${yearOfPurchase}) looks wrong — please check it.`
+        return { yearError, minAge: null, invalid: [], error: yearError }
+    }
+
+    const yearsSince = currentYear - yearOfPurchase
+    const minAge = MIN_PURCHASE_AGE + Math.max(0, yearsSince - 1)
+    const invalid = ages
+        .map((a, i) => ({ a: a ?? 0, i }))
+        .filter(({ a }) => a > 0 && a < minAge)
+        .map(({ i }) => i)
+
+    if (!invalid.length) return { yearError: null, minAge, invalid, error: null }
+
+    const who = invalid.map(i => `${label(i)} (age ${ages[i]})`).join(', ')
+    const error = `${who}: must be at least ${minAge}. The property was bought in ${yearOfPurchase}, `
+        + `so they'd have been under ${MIN_PURCHASE_AGE} at purchase. Correct the age or the year of purchase to continue.`
+    return { yearError: null, minAge, invalid, error }
+}
 
 // Property types as stored in the workflow (RefinancingStep2_FactFind.property_type)
 export type WorkflowPropertyType = 'hdb' | 'private_condo' | 'landed' | 'ec'

@@ -125,7 +125,8 @@ export default function DecouplingWorkflowPanel({
     }
 
     const showIncome = scenario !== null && scenario !== 'S4'
-    const showTdsr = showIncome && computation.grossMonthlyIncome > 0
+    const ageCheck = computation.ageCheck
+    const showTdsr = showIncome && computation.grossMonthlyIncome > 0 && !ageCheck.error
 
     // Est. Loan Eligibility — local tenure exploration, top of TDSR Assessment card
     const [estEligTenure, setEstEligTenure] = useState<number | undefined>(undefined)
@@ -275,6 +276,11 @@ export default function DecouplingWorkflowPanel({
                 <Question label="Year of Purchase" required>
                     <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2022"
                         onChange={v => update({ year_of_purchase: num(v) })} />
+                    {ageCheck.yearError && (
+                        <p className="mt-1.5 text-[12px] text-red-600 flex items-start gap-1.5">
+                            <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {ageCheck.yearError}
+                        </p>
+                    )}
                     <p className="text-[11px] text-slate-400 flex items-start gap-1.5 mt-1">
                         <Info size={11} className="mt-0.5 shrink-0" />
                         For exact SSD, check{' '}
@@ -759,6 +765,12 @@ export default function DecouplingWorkflowPanel({
                                     <FieldInput type="number" value={b.age ?? ''}
                                         onChange={v => updateBorrower({ age: num(v) })}
                                         onBlur={() => { if (b.age != null && b.age > 0) { if (b.age < 21) updateBorrower({ age: 21 }); else if (b.age > 75) updateBorrower({ age: 75 }) } }} />
+                                    {ageCheck.invalid.includes(i) && (
+                                        <p className="mt-1.5 text-[12px] text-red-600 flex items-start gap-1.5">
+                                            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                                            Must be at least {ageCheck.minAge}: bought in {data.year_of_purchase}, so they&apos;d have been under 21.
+                                        </p>
+                                    )}
                                 </Question>
                                 <Question label="Monthly Commitments (excl. property)">
                                     <FieldInput commas prefix="$" value={b.commitments ?? ''} placeholder="car, credit cards…"
@@ -1638,7 +1650,14 @@ export default function DecouplingWorkflowPanel({
             })()}
 
             {/* Placeholder when not ready */}
-            {!computation.ready && (
+            {ageCheck.error ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-2.5">
+                    <AlertTriangle size={16} className="text-red-600 shrink-0 mt-0.5" />
+                    <p className="text-[13px] text-red-800 leading-relaxed">
+                        <span className="font-semibold">Calculation stopped.</span> {ageCheck.error}
+                    </p>
+                </div>
+            ) : !computation.ready && (
                 <div className="card p-8 text-center text-sm text-slate-400">
                     Enter property valuation and ownership split above to see the decoupling breakdown.
                 </div>
@@ -1671,12 +1690,12 @@ export default function DecouplingWorkflowPanel({
                     <button
                         type="button"
                         onClick={handleSendReport}
-                        disabled={!clientEmail || sendingReport}
-                        title={!clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
+                        disabled={!!ageCheck.error || !clientEmail || sendingReport}
+                        title={ageCheck.error ? 'Fix the buyer age / year of purchase first' : !clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
                         className={`text-sm px-4 py-2 rounded-lg border font-semibold flex items-center gap-2 transition-colors ${
                             reportSent
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                : !clientEmail
+                                : ageCheck.error || !clientEmail
                                     ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-white'
                                     : 'border-slate-200 text-slate-600 hover:bg-slate-50 bg-white'
                         }`}

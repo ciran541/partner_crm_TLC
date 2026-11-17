@@ -83,7 +83,7 @@ function ResetPasswordInner() {
             <div style={{ maxWidth: 440, width: '100%', margin: '0 auto' }}>
                 <div style={{ textAlign: 'center', marginBottom: 32 }}>
                     <img
-                        src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                        src="/brand/tlc-logo.png"
                         alt="TLC"
                         style={{ width: 56, height: 56, borderRadius: 14, margin: '0 auto 16px', display: 'block', boxShadow: '0 4px 12px rgba(5,45,74,0.15)' }}
                     />
@@ -124,7 +124,7 @@ function ResetPasswordInner() {
                                     className="btn-emerald btn-lg"
                                     style={{ width: '100%', justifyContent: 'center' }}
                                 >
-                                    Property Portal — Request New Link
+                                    Basic & Starter — Request New Link
                                 </button>
                                 <button
                                     onClick={() => router.push('/insurance/forgot-password')}
@@ -135,7 +135,7 @@ function ResetPasswordInner() {
                                         cursor: 'pointer',
                                     }}
                                 >
-                                    Insurance Portal — Request New Link
+                                    Premium — Request New Link
                                 </button>
                             </div>
                         </div>

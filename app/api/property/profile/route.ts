@@ -12,7 +12,7 @@ export async function GET() {
 
     const { data: profile, error } = await admin
         .from('profiles')
-        .select('id, name, role, app_type, status, created_at, full_name, mobile, cea_registration_no, agency_name, joined_at')
+        .select('id, name, role, app_type, status, created_at, full_name, mobile, cea_registration_no, agency_name, joined_at, subscription_tier')
         .eq('id', auth.userId)
         .single()
 
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
             agency_name: agency_name?.trim() ?? null,
         })
         .eq('id', auth.userId)
-        .select('id, name, role, app_type, status, created_at, full_name, mobile, cea_registration_no, agency_name, joined_at')
+        .select('id, name, role, app_type, status, created_at, full_name, mobile, cea_registration_no, agency_name, joined_at, subscription_tier')
         .single()
 
     if (error || !updated) {

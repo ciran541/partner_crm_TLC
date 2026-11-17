@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
-import { getSafeRoute } from '@/lib/permissions'
+import { getSafeRoute, planName, PLAN_NAMES } from '@/lib/permissions'
 import { Profile, CreateUserInput, UpdateUserInput, AgentInvite } from '@/lib/types/shared'
 import Modal from '@/components/shared/Modal'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -240,7 +240,7 @@ export default function AdminUsersPage() {
                         <User size={28} className="text-[#8b5cf6]" />
                         <span>User Management</span>
                     </h1>
-                    <p className="text-slate-500 text-sm mt-1">Manage all agents and administrators across all domains.</p>
+                    <p className="text-slate-500 text-sm mt-1">Manage all agents and administrators across all plans.</p>
                 </div>
                 <div className="flex gap-2 w-full sm:w-auto">
                     <button
@@ -248,7 +248,7 @@ export default function AdminUsersPage() {
                         className="btn-ghost flex items-center justify-center gap-2 flex-1 sm:flex-none"
                     >
                         <Link2 size={18} />
-                        <span>Invite Agent</span>
+                        <span>Invite Premium Agent</span>
                     </button>
                     <button
                         onClick={() => setIsCreateOpen(true)}
@@ -322,7 +322,7 @@ export default function AdminUsersPage() {
                                 <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Name</th>
                                 <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Email</th>
                                 <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Role</th>
-                                <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Domain</th>
+                                <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Plan</th>
                                 <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Status</th>
                                 <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest">Created</th>
                                 <th className="p-4 text-[11px] font-bold text-slate-500 uppercase tracking-widest text-right">Actions</th>
@@ -365,13 +365,8 @@ export default function AdminUsersPage() {
                                                     ? 'bg-emerald-50 text-emerald-700'
                                                     : 'bg-sky-50 text-sky-700'
                                             }`}>
-                                                {p.app_type ?? 'insurance'}
+                                                {planName(p.app_type ?? 'insurance', p.subscription_tier)}
                                             </span>
-                                            {p.app_type === 'property' && p.subscription_tier === 'premium' && (
-                                                <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-100">
-                                                    Premium
-                                                </span>
-                                            )}
                                         </div>
                                     </td>
                                     <td className="p-4">
@@ -423,7 +418,7 @@ export default function AdminUsersPage() {
 
             {/* Invite Modal */}
             {isInviteOpen && (
-                <Modal title="Invite Agent" onClose={closeInviteModal}>
+                <Modal title="Invite Premium Agent" onClose={closeInviteModal}>
                     {generatedInviteUrl ? (
                         <div className="space-y-4">
                             {generatedInviteEmailed ? (
@@ -506,12 +501,12 @@ export default function AdminUsersPage() {
                                 onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
                         </div>
                         <div>
-                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Domain</label>
+                            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plan</label>
                             <select className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm bg-white"
                                 value={createForm.app_type ?? 'insurance'}
                                 onChange={(e) => setCreateForm({ ...createForm, app_type: e.target.value as any })}>
-                                <option value="insurance">Insurance</option>
-                                <option value="property">Property</option>
+                                <option value="insurance">{PLAN_NAMES.insurance}</option>
+                                <option value="property">{PLAN_NAMES.propertyStandard} (change to {PLAN_NAMES.propertyPremium} via Edit)</option>
                             </select>
                         </div>
                         <div>
@@ -614,12 +609,12 @@ export default function AdminUsersPage() {
                         </div>
                         {profiles.find(p => p.id === editForm.id)?.app_type === 'property' && (
                             <div>
-                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Subscription Tier</label>
+                                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plan</label>
                                 <select className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm bg-white"
                                     value={editForm.subscription_tier ?? 'standard'}
                                     onChange={(e) => setEditForm({ ...editForm, subscription_tier: e.target.value as any })}>
-                                    <option value="standard">Standard</option>
-                                    <option value="premium">Premium</option>
+                                    <option value="standard">{PLAN_NAMES.propertyStandard}</option>
+                                    <option value="premium">{PLAN_NAMES.propertyPremium}</option>
                                 </select>
                             </div>
                         )}

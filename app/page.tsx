@@ -29,7 +29,7 @@ export default function LandingPage() {
 
       <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', maxWidth: '800px' }}>
         <img
-          src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+          src="/brand/tlc-logo.png"
           alt="The Loan Connection Logo"
           style={{
             width: 120,
@@ -50,7 +50,7 @@ export default function LandingPage() {
           color: '#03a9e7',
           marginBottom: '0.75rem'
         }}>
-          The Loan Connection CRM
+          TLC HUB
         </p>
 
         <h1 style={{
@@ -73,9 +73,9 @@ export default function LandingPage() {
           marginRight: 'auto',
           lineHeight: 1.6
         }}>
-          The Loan Connection CRM is the partner platform for our mortgage insurance and property agents.
-          Agents manage client cases end-to-end, track their pipeline and commissions, browse bank rate
-          packages, and — for agents who choose to connect Google Calendar — keep case follow-up reminders
+          TLC HUB is The Loan Connection&rsquo;s partner platform for the mortgage professionals we work with.
+          Partners manage client cases end-to-end, track their pipeline and commissions, browse bank rate
+          packages, and — for partners who choose to connect Google Calendar — keep case follow-up reminders
           synced automatically so nothing falls through the cracks.
         </p>
 
@@ -98,7 +98,7 @@ export default function LandingPage() {
             }}
           >
             <Lock size={18} />
-            Insurance CRM Login
+            Premium Login
           </Link>
 
           <Link
@@ -119,7 +119,7 @@ export default function LandingPage() {
             }}
           >
             <Briefcase size={18} />
-            Property Portal Login
+            Basic & Starter Login
           </Link>
 
           <Link
@@ -140,7 +140,7 @@ export default function LandingPage() {
             }}
           >
             <ArrowRight size={18} />
-            Property Agent Sign Up
+            Sign Up
           </Link>
         </div>
       </div>

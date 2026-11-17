@@ -98,14 +98,14 @@ export default function PropertySignup() {
                 {/* Logo & title */}
                 <div style={{ textAlign: 'center', marginBottom: 32 }}>
                     <img
-                        src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                        src="/brand/tlc-logo.png"
                         alt="TLC"
                         style={{ width: 56, height: 56, borderRadius: 14, margin: '0 auto 16px', display: 'block', boxShadow: '0 4px 12px rgba(5,45,74,0.15)' }}
                     />
                     <h1 style={{ fontSize: 26, fontWeight: 800, color: '#052d4a', letterSpacing: '-0.02em', marginBottom: 6 }}>
                         Create your account
                     </h1>
-                    <p style={{ fontSize: 14, color: '#64748b' }}>Join TLC&apos;s Property Agent network.</p>
+                    <p style={{ fontSize: 14, color: '#64748b' }}>Join TLC HUB.</p>
                 </div>
 
             <div>

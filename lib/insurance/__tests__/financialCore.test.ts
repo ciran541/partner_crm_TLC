@@ -25,6 +25,7 @@ import {
     CANCELLATION_FEE_RATE,
     MIN_TENURE,
     DEFAULT_REFERENCE_RATE,
+    checkBorrowerAges,
 } from '@/lib/insurance/loanCalc'
 import { iwaa, averageAge } from '@/lib/insurance/refiCalc'
 import { weightedAge } from '@/lib/insurance/purchaseCalc'
@@ -211,6 +212,41 @@ describe('shared constants exist once', () => {
         expect(CANCELLATION_FEE_RATE).toBe(0.0075)
         expect(MIN_TENURE).toBe(5)
         expect(DEFAULT_REFERENCE_RATE).toBe(2.5)
+    })
+})
+
+// ── Borrower age vs. year of purchase ─────────────────────────────────────────
+
+describe('checkBorrowerAges', () => {
+    const Y = 2026
+    it('bought 2018 → min age 28 (21 + 8 − 1 for whole-year rounding)', () => {
+        const r = checkBorrowerAges([25], 2018, { currentYear: Y })
+        expect(r.minAge).toBe(28)
+        expect(r.invalid).toEqual([0])
+        expect(r.error).toMatch(/at least 28/)
+    })
+    it('28 is accepted (Dec-birthday edge case), 27 is not', () => {
+        expect(checkBorrowerAges([28], 2018, { currentYear: Y }).error).toBeNull()
+        expect(checkBorrowerAges([27], 2018, { currentYear: Y }).error).not.toBeNull()
+    })
+    it('bought this year or last year → min 21', () => {
+        expect(checkBorrowerAges([21], 2026, { currentYear: Y }).minAge).toBe(21)
+        expect(checkBorrowerAges([21], 2025, { currentYear: Y }).minAge).toBe(21)
+    })
+    it('skips blank / 0 borrowers and flags only the bad ones', () => {
+        const r = checkBorrowerAges([40, 0, undefined, 22], 2018, { currentYear: Y })
+        expect(r.invalid).toEqual([3])
+        expect(r.error).toMatch(/Borrower 4 \(age 22\)/)
+    })
+    it('no year yet → nothing to check', () => {
+        expect(checkBorrowerAges([18], undefined, { currentYear: Y }).error).toBeNull()
+    })
+    it('rejects a future or implausibly old year', () => {
+        expect(checkBorrowerAges([40], 2027, { currentYear: Y }).yearError).toMatch(/future/)
+        expect(checkBorrowerAges([40], 1900, { currentYear: Y }).yearError).not.toBeNull()
+    })
+    it('uses custom labels', () => {
+        expect(checkBorrowerAges([20], 2018, { currentYear: Y, labels: ['Buyer'] }).error).toMatch(/^Buyer \(age 20\)/)
     })
 })
 

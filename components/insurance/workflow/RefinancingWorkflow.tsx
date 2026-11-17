@@ -125,6 +125,7 @@ export default function RefinancingWorkflowPanel({
 
     const meta = refiPropertyMeta(data.property_type)
     const computation = useMemo(() => computeRefi(inputsFromWorkflow(data)), [data])
+    const ageCheck = computation.ageCheck
     const remarks = useMemo<RefiRemarks>(() => buildRefiRemarks({
         propertyType: data.property_type,
         isPrivate: meta?.isPrivate,
@@ -342,6 +343,11 @@ export default function RefinancingWorkflowPanel({
                 <Question label="Year of purchase" required>
                     <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2018"
                         onChange={v => update({ year_of_purchase: num(v) })} />
+                    {ageCheck.yearError && (
+                        <p className="mt-1.5 text-[12px] text-red-600 flex items-start gap-1.5">
+                            <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {ageCheck.yearError}
+                        </p>
+                    )}
                 </Question>
             </Section>
 
@@ -669,13 +675,20 @@ export default function RefinancingWorkflowPanel({
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             {borrowers.map((b, i) => (
                                 <div key={i}>
-                                    <label className="text-[11px] text-slate-500">Borrower {i + 1}</label>
+                                    <label className={`text-[11px] ${ageCheck.invalid.includes(i) ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>
+                                        Borrower {i + 1}{ageCheck.invalid.includes(i) && ageCheck.minAge != null ? ` · min ${ageCheck.minAge}` : ''}
+                                    </label>
                                     <FieldInput type="number" value={b.age ?? ''} placeholder="0"
                                         onChange={v => updateBorrower(i, { age: num(v) })}
                                         onBlur={() => { if (b.age != null && b.age > 0) { if (b.age < 21) updateBorrower(i, { age: 21 }); else if (b.age > 75) updateBorrower(i, { age: 75 }) } }} />
                                 </div>
                             ))}
                         </div>
+                        {ageCheck.invalid.length > 0 && (
+                            <p className="mt-2 text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
+                                <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {ageCheck.error}
+                            </p>
+                        )}
                         {computation.averageAge != null && (
                             <div className="mt-2 space-y-0.5">
                                 <p className="text-[12px] text-slate-500">
@@ -740,7 +753,7 @@ export default function RefinancingWorkflowPanel({
             )}
 
             {/* ── TDSR Assessment ── */}
-            {data.property_type && grossForTdsr != null && grossForTdsr > 0 && (() => {
+            {data.property_type && !ageCheck.error && grossForTdsr != null && grossForTdsr > 0 && (() => {
                 const availableTdsr = Math.max(grossForTdsr * 0.55 - debtsForTdsr, 0)
                 const msrCap = meta?.useMsr ? grossForTdsr * 0.30 : null
                 const effectiveAvailForHomeLoan = msrCap != null ? Math.min(availableTdsr, msrCap) : availableTdsr
@@ -1094,7 +1107,7 @@ export default function RefinancingWorkflowPanel({
             })()}
 
             {/* ── Packages ── */}
-            {computation.totalOutstanding > 0 && data.property_type && (
+            {computation.totalOutstanding > 0 && data.property_type && !ageCheck.error && (
                 <RefiPackages
                     loan={computation.totalOutstanding}
                     tenureYears={t?.max ?? meta?.tenureCap ?? 30}
@@ -1113,7 +1126,14 @@ export default function RefinancingWorkflowPanel({
             )}
 
             {/* ── RESULTS ── */}
-            {t?.error ? (
+            {ageCheck.error ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-2.5">
+                    <AlertTriangle size={16} className="text-red-600 shrink-0 mt-0.5" />
+                    <p className="text-[13px] text-red-800 leading-relaxed">
+                        <span className="font-semibold">Calculation stopped.</span> {ageCheck.error}
+                    </p>
+                </div>
+            ) : t?.error ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-2.5">
                     <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
                     <p className="text-[13px] text-amber-800 leading-relaxed">{t.error}</p>

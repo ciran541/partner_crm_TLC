@@ -2,7 +2,7 @@
 
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import type { EquityLoanWorkflow, ELPropertyType, RefiBorrower } from '@/lib/types/workflow'
-import { effectiveMonthlyIncome, incomeWeightedAge, monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE } from '@/lib/insurance/loanCalc'
+import { effectiveMonthlyIncome, incomeWeightedAge, monthlyInstallment, maxLoanFromPayment, STRESS_TEST_RATE, checkBorrowerAges } from '@/lib/insurance/loanCalc'
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import { type RateScheduleEntry } from '@/lib/types/rates'
 import type { RecommendedPackage } from '@/lib/insurance/rateRecommend'
@@ -151,6 +151,11 @@ export default function EquityLoanWorkflowPanel({
     const tenureError = (ageForTenure != null && Math.ceil(ageForTenure) >= 71) || _rawTenureMax < 5
         ? 'Minimum tenure is 5 years and cannot exceed age 75.'
         : null
+
+    // Borrower ages vs. year of purchase (must have been ≥ 21 when bought).
+    // A non-null error stops TDSR, packages, amortisation and the client report.
+    const ageCheck = checkBorrowerAges(borrowers.map(b => b.age), data.year_of_purchase)
+    const blocked = ageCheck.error != null
 
     // ── Income for TDSR ──
     const grossForTdsr = useMemo(() => {
@@ -333,6 +338,11 @@ export default function EquityLoanWorkflowPanel({
                         <Question label="Year of purchase" required>
                             <FieldInput type="number" value={data.year_of_purchase ?? ''} placeholder="e.g. 2018"
                                 onChange={v => update({ year_of_purchase: num(v) })} />
+                            {ageCheck.yearError && (
+                                <p className="mt-1.5 text-[12px] text-red-600 flex items-start gap-1.5">
+                                    <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {ageCheck.yearError}
+                                </p>
+                            )}
                         </Question>
                     </>
                 )}
@@ -557,7 +567,9 @@ export default function EquityLoanWorkflowPanel({
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             {borrowers.map((b, i) => (
                                 <div key={i}>
-                                    <label className="text-[11px] text-slate-500">Borrower {i + 1}</label>
+                                    <label className={`text-[11px] ${ageCheck.invalid.includes(i) ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>
+                                        Borrower {i + 1}{ageCheck.invalid.includes(i) && ageCheck.minAge != null ? ` · min ${ageCheck.minAge}` : ''}
+                                    </label>
                                     <FieldInput type="number" value={b.age ?? ''} placeholder="0"
                                         onChange={v => updateBorrower(i, { age: num(v) })}
                                         onBlur={() => {
@@ -569,7 +581,12 @@ export default function EquityLoanWorkflowPanel({
                                 </div>
                             ))}
                         </div>
-                        {averageAge != null && (
+                        {ageCheck.invalid.length > 0 && (
+                            <p className="mt-2 text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-1.5">
+                                <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {ageCheck.error}
+                            </p>
+                        )}
+                        {averageAge != null && !blocked && (
                             <div className="mt-2 space-y-0.5">
                                 <p className="text-[12px] text-slate-500">
                                     Average age: <span className="font-semibold text-[#052d4a]">{Math.ceil(averageAge)}</span>
@@ -646,7 +663,17 @@ export default function EquityLoanWorkflowPanel({
             )}
 
             {/* ── TDSR Assessment ── */}
-            {data.property_type && grossForTdsr != null && grossForTdsr > 0 && (() => {
+            {/* ── Blocked: impossible age / year of purchase ── */}
+            {blocked && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-2.5">
+                    <AlertTriangle size={16} className="text-red-600 shrink-0 mt-0.5" />
+                    <p className="text-[13px] text-red-800 leading-relaxed">
+                        <span className="font-semibold">Calculation stopped.</span> {ageCheck.error}
+                    </p>
+                </div>
+            )}
+
+            {data.property_type && !blocked && grossForTdsr != null && grossForTdsr > 0 && (() => {
                 const availableTdsr = Math.max(grossForTdsr * 0.55 - debtsForTdsr, 0)
 
                 // Est. Loan Eligibility
@@ -972,7 +999,7 @@ export default function EquityLoanWorkflowPanel({
             })()}
 
             {/* ── Packages ── */}
-            {(data.equity_loan_amount ?? 0) > 0 && data.property_type && (
+            {(data.equity_loan_amount ?? 0) > 0 && data.property_type && !blocked && (
                 <RefiPackages
                     loan={data.equity_loan_amount!}
                     tenureYears={equityOnlyTenureMax}
@@ -990,7 +1017,7 @@ export default function EquityLoanWorkflowPanel({
             )}
 
             {/* ── Amortization ── */}
-            {(data.equity_loan_amount ?? 0) > 0 && (() => {
+            {(data.equity_loan_amount ?? 0) > 0 && !blocked && (() => {
                 const homeLoanAmt = notFullyPaid ? (data.outstanding_disbursed ?? 0) : 0
                 // Outstanding equity + new equity are refinanced together at the new bank
                 const equityLoanAmt = (notFullyPaid ? (data.outstanding_equity_loan ?? 0) : 0) + (data.equity_loan_amount ?? 0)
@@ -1466,10 +1493,10 @@ export default function EquityLoanWorkflowPanel({
                     <button
                         type="button"
                         onClick={() => setPresentationOpen(true)}
-                        disabled={!(data.market_price && data.market_price > 0)}
-                        title={!(data.market_price) ? 'Enter the property valuation first' : 'Show the client presentation'}
+                        disabled={blocked || !(data.market_price && data.market_price > 0)}
+                        title={blocked ? 'Fix the borrower age / year of purchase first' : !(data.market_price) ? 'Enter the property valuation first' : 'Show the client presentation'}
                         className={`text-sm px-4 py-2 rounded-lg font-semibold flex items-center gap-2 transition-colors ${
-                            data.market_price && data.market_price > 0
+                            !blocked && data.market_price && data.market_price > 0
                                 ? 'bg-[#052d4a] text-white hover:bg-[#063a5e]'
                                 : 'bg-slate-100 text-slate-300 cursor-not-allowed'
                         }`}
@@ -1479,12 +1506,12 @@ export default function EquityLoanWorkflowPanel({
                     <button
                         type="button"
                         onClick={handleSendReport}
-                        disabled={!clientEmail || sendingReport}
-                        title={!clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
+                        disabled={blocked || !clientEmail || sendingReport}
+                        title={blocked ? 'Fix the borrower age / year of purchase first' : !clientEmail ? 'Add client email in case details first' : `Send PDF report to ${clientEmail}`}
                         className={`text-sm px-4 py-2 rounded-lg border font-semibold flex items-center gap-2 transition-colors ${
                             reportSent
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                : !clientEmail
+                                : blocked || !clientEmail
                                     ? 'border-slate-200 text-slate-300 cursor-not-allowed bg-white'
                                     : 'border-slate-200 text-slate-600 hover:bg-slate-50 bg-white'
                         }`}

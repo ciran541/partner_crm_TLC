@@ -5,6 +5,9 @@ import { UpdateUserInput } from '@/lib/types/shared'
 import { syncProfileToSheets } from '@/lib/services/sheets-sync'
 import { logAdminAction } from '@/lib/auth/auditLog'
 
+// Supabase has no "ban forever" — ~100 years is the conventional stand-in.
+const BAN_INDEFINITELY = '876000h'
+
 export async function POST(request: Request) {
     // 🔒 Server-side admin guard — verifies caller is authenticated admin
     const auth = await requireAdminUser()
@@ -34,6 +37,28 @@ export async function POST(request: Request) {
 
         if (profileError) {
             return NextResponse.json({ error: profileError.message }, { status: 500 })
+        }
+
+        // Keep Supabase Auth in step with profiles.status. getServerUser()
+        // already rejects disabled users on our API routes, but the browser can
+        // also query Supabase directly with its own token — only a ban stops
+        // that, because a banned user's refresh token is refused, so their
+        // session dies at the next refresh (≤ the JWT expiry, 1h by default).
+        // Re-activating lifts the ban; 'none' is harmless on a never-banned user.
+        //
+        // Deliberately NOT done at account creation (create-user starts agents
+        // 'disabled' pending payment): a banned user can't complete the
+        // set-password email link, which would break that onboarding flow.
+        if (status) {
+            const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(id, {
+                ban_duration: status === 'disabled' ? BAN_INDEFINITELY : 'none',
+            })
+            if (banError) {
+                return NextResponse.json(
+                    { error: `Status saved, but updating the login ban failed: ${banError.message}. Please retry.` },
+                    { status: 500 }
+                )
+            }
         }
 
         // Also sync name/role to Auth metadata

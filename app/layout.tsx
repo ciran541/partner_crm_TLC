@@ -18,13 +18,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "The Loan Connection CRM",
-  description: "The Loan Connection CRM is the partner platform for our mortgage insurance and property agents — manage client cases, track pipeline and commissions, and sync follow-ups to Google Calendar.",
-  manifest: "/manifest.json?v=3",
+  title: "TLC HUB",
+  description: "TLC HUB by The Loan Connection is the partner platform for the mortgage professionals we work with — manage client cases, track pipeline and commissions, and sync follow-ups to Google Calendar.",
+  manifest: "/manifest.json?v=4",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "TLC CRM",
+    title: "TLC HUB",
   },
   formatDetection: {
     telephone: false,

@@ -12,7 +12,7 @@
  * Pure functions, no DOM / framework deps. Reuses neutral math from loanCalc.ts.
  */
 
-import { effectiveMonthlyIncome, incomeWeightedAge, CANCELLATION_FEE_RATE, MIN_TENURE } from '@/lib/insurance/loanCalc'
+import { effectiveMonthlyIncome, incomeWeightedAge, checkBorrowerAges, CANCELLATION_FEE_RATE, MIN_TENURE, type BorrowerAgeCheck } from '@/lib/insurance/loanCalc'
 import type { RefinancingWorkflow } from '@/lib/types/workflow'
 
 // ─── Property types ───────────────────────────────────────────────────────────
@@ -235,6 +235,8 @@ export interface RefiComputation {
     usingIwaa: boolean
     ageForTenure: number | null
     tenure: TenureRange | null
+    /** Borrower ages vs. year of purchase. A non-null `error` blocks the whole result. */
+    ageCheck: BorrowerAgeCheck
     subsidyClawback: number
     cost: RefiCost | undefined
     smallLoanNoSubsidy: boolean
@@ -258,9 +260,15 @@ export function computeRefi(inputs: RefiInputs): RefiComputation {
     const usingIwaa = weighted != null
     const ageForTenure = usingIwaa ? weighted : avg
 
+    const ageCheck = checkBorrowerAges(ages, inputs.yearOfPurchase)
+
     let tenure: TenureRange | null = null
     if (meta && ageForTenure != null && inputs.yearOfPurchase) {
         tenure = tenureRange({ ageForTenure, tenureCap: meta.tenureCap, yearOfPurchase: inputs.yearOfPurchase })
+        // An impossible age/year makes every tenure figure meaningless. Surface it as
+        // the tenure error so every downstream consumer (results, proposal,
+        // presentation, emailed report) stops on it.
+        if (ageCheck.error) tenure = { ...tenure, error: ageCheck.error }
     }
 
     const subsidyClawback = inputs.subsidyReturn ?? 0
@@ -276,7 +284,7 @@ export function computeRefi(inputs: RefiInputs): RefiComputation {
         meta.isPrivate ? totalOutstanding < PRIVATE_SMALL_LOAN : totalOutstanding < HDB_SMALL_LOAN
     )
 
-    const ready = !!meta && totalOutstanding > 0 && tenure != null && !tenure.error
+    const ready = !!meta && totalOutstanding > 0 && tenure != null && !tenure.error && !ageCheck.error
 
     return {
         ready,
@@ -288,6 +296,7 @@ export function computeRefi(inputs: RefiInputs): RefiComputation {
         usingIwaa,
         ageForTenure,
         tenure,
+        ageCheck,
         subsidyClawback,
         cost,
         smallLoanNoSubsidy,

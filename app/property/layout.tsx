@@ -4,7 +4,7 @@ import { ReactNode, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter, usePathname } from 'next/navigation'
-import { canAccessProperty, getSafeRoute, hasPropertyPremium } from '@/lib/permissions'
+import { canAccessProperty, getSafeRoute, hasPropertyPremium, accountLabel } from '@/lib/permissions'
 import { clearCasesCache } from '@/lib/property/useCases'
 import { needsReconsent } from '@/lib/legal/checkConsent'
 import { PropertyProfileContext, type PropertyProfileState } from '@/lib/property/propertyProfileContext'
@@ -183,7 +183,7 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                 <div style={{ padding: '20px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <img
-                            src="https://theloanconnection.com.sg/wp-content/uploads/2025/02/TLC-Square-1.png"
+                            src="/brand/tlc-logo.png"
                             alt="TLC Logo"
                             style={{ width: 36, height: 36, borderRadius: 9 }}
                         />
@@ -191,7 +191,7 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                             <p style={{ fontSize: 12, fontWeight: 700, color: 'white', lineHeight: 1.2 }}>The Loan Connection</p>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
                                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', display: 'inline-block' }} />
-                                <p style={{ fontSize: 10, fontWeight: 600, color: '#6ee7b7', letterSpacing: '0.03em' }}>Property Portal</p>
+                                <p style={{ fontSize: 10, fontWeight: 600, color: '#6ee7b7', letterSpacing: '0.03em' }}>TLC HUB</p>
                             </div>
                         </div>
                     </div>
@@ -283,12 +283,12 @@ export default function PropertyLayout({ children }: { children: ReactNode }) {
                         <AccountSwitcher
                             email={email}
                             displayName={displayName}
-                            roleLabel={profileState.isPremium ? 'Premium Agent' : 'Property Agent'}
+                            roleLabel={accountLabel(profileState.role, profileState.appType, profileState.tier)}
                             avatarColor="#059669"
                             onSignOut={handleSignOut}
                             addAccountLinks={[
-                                { label: 'Add property agent login', href: '/property/login?add=1' },
-                                { label: 'Add insurance agent login', href: '/insurance/login' },
+                                { label: 'Add Basic / Starter login', href: '/property/login?add=1' },
+                                { label: 'Add Premium login', href: '/insurance/login' },
                                 { label: 'Add admin login', href: '/login' },
                             ]}
                         />

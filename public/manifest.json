@@ -1,7 +1,7 @@
 {
-    "name": "The Loan Connection Partner CRM",
-    "short_name": "TLC CRM",
-    "description": "Professional Partner CRM for The Loan Connection",
+    "name": "TLC HUB",
+    "short_name": "TLC HUB",
+    "description": "TLC HUB — the partner platform for The Loan Connection",
     "start_url": "/dashboard",
     "display": "standalone",
     "background_color": "#052d4a",

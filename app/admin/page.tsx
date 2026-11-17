@@ -62,15 +62,15 @@ export default function AdminHomePage() {
                     <Shield size={28} color="#8b5cf6" />
                     <h1 className="text-2xl font-bold text-[#052d4a]">Admin Panel</h1>
                 </div>
-                <p className="text-slate-500">Platform overview across all domains.</p>
+                <p className="text-slate-500">Platform overview across all plans.</p>
             </div>
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 <StatsCard title="Total Users" value={stats.totalUsers} icon={Users} color="#8b5cf6" />
-                <StatsCard title="Insurance Agents" value={stats.insuranceAgents} icon={Briefcase} color="#03a9e7" />
-                <StatsCard title="Property Agents" value={stats.propertyAgents} icon={Users} color="#10b981" />
-                <StatsCard title="Insurance Cases" value={stats.totalCases} icon={BarChart3} color="#f59e0b" />
+                <StatsCard title="Premium Agents" value={stats.insuranceAgents} icon={Briefcase} color="#03a9e7" />
+                <StatsCard title="Basic & Starter Agents" value={stats.propertyAgents} icon={Users} color="#10b981" />
+                <StatsCard title="Premium Cases" value={stats.totalCases} icon={BarChart3} color="#f59e0b" />
             </div>
 
             {/* Quick Navigation */}
@@ -101,7 +101,7 @@ export default function AdminHomePage() {
                             <BarChart3 size={20} color="#03a9e7" />
                             <h2 className="text-lg font-bold text-[#052d4a]">Analytics</h2>
                         </div>
-                        <p className="text-sm text-slate-500 mb-1">Insurance pipeline performance and volume metrics.</p>
+                        <p className="text-sm text-slate-500 mb-1">Premium pipeline performance and volume metrics.</p>
                         <p className="text-xs font-semibold text-[#03a9e7]">{stats.totalCases} cases tracked</p>
                     </div>
                     <ArrowRight size={20} className="text-slate-300 group-hover:text-[#03a9e7] transition-colors shrink-0 ml-4" />
@@ -112,8 +112,8 @@ export default function AdminHomePage() {
             <div className="card p-6">
                 <h2 className="text-lg font-bold text-[#052d4a] mb-4">Domain Status</h2>
                 <div className="space-y-3">
-                    <DomainRow label="Insurance CRM" href="/insurance/dashboard" status="Live" statusColor="#10b981" />
-                    <DomainRow label="Property App" href="/property/dashboard" status="Live" statusColor="#10b981" />
+                    <DomainRow label="Premium App" href="/insurance/dashboard" status="Live" statusColor="#10b981" />
+                    <DomainRow label="Basic & Starter App" href="/property/dashboard" status="Live" statusColor="#10b981" />
                     <DomainRow label="Admin Panel" href="/admin" status="Live" statusColor="#10b981" />
                 </div>
             </div>

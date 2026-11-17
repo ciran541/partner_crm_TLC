@@ -130,7 +130,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             ],
         },
         {
-            label: 'Insurance — Finance',
+            label: 'Premium — Finance',
             items: [
                 { name: 'Insurance Cases', href: '/admin/insurance/cases', icon: ClipboardList },
                 { name: 'Insurance Earnings', href: '/admin/insurance/earnings', icon: DollarSign },
@@ -138,7 +138,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             ],
         },
         {
-            label: 'Insurance — Operations',
+            label: 'Premium — Operations',
             items: [
                 { name: 'Insurance Follow-ups', href: '/admin/insurance/follow-ups', icon: Clock },
                 { name: 'Insurance Rates', href: '/admin/insurance/rates', icon: Percent },
@@ -150,7 +150,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             ],
         },
         {
-            label: 'Property Platform',
+            label: 'Basic & Starter',
             items: [
                 { name: 'Property Cases', href: '/admin/property/cases', icon: Building2 },
                 { name: 'Property Earnings', href: '/admin/property/earnings', icon: DollarSign },
@@ -255,8 +255,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                             alwaysShowMenu
                             addAccountLinks={[
                                 { label: 'Add admin login', href: '/login' },
-                                { label: 'Add insurance agent login', href: '/insurance/login' },
-                                { label: 'Add property agent login', href: '/property/login?add=1' },
+                                { label: 'Add Premium login', href: '/insurance/login' },
+                                { label: 'Add Basic / Starter login', href: '/property/login?add=1' },
                             ]}
                         />
                     </div>

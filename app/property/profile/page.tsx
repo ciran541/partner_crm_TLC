@@ -7,6 +7,8 @@ import { formatDate } from '@/lib/utils/formatDate'
 import { supabase } from '@/lib/supabaseClient'
 import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
+import { accountLabel } from '@/lib/permissions'
+import type { AppType, SubscriptionTier, UserRole } from '@/lib/types/shared'
 
 interface ProfileData {
     id: string
@@ -17,9 +19,10 @@ interface ProfileData {
     agency_name: string | null
     joined_at: string | null
     email: string | null
-    role: string
+    role: UserRole
     status: string
-    app_type: string
+    app_type: AppType
+    subscription_tier?: SubscriptionTier | null
 }
 
 interface FormState {
@@ -390,7 +393,7 @@ function PropertyProfileContent() {
                 <h3 className="section-label">Account</h3>
                 <div className="grid gap-4">
                     <InfoRow icon={Mail} label="Email" value={profile?.email} />
-                    <InfoRow icon={Shield} label="Role" value={profile?.role === 'super_admin' ? 'Super Admin' : profile?.role === 'admin' ? 'Admin' : 'Property Agent'} />
+                    <InfoRow icon={Shield} label="Role" value={accountLabel(profile?.role, profile?.app_type, profile?.subscription_tier)} />
                     <InfoRow icon={Calendar} label="Joined" value={profile?.joined_at ? formatDate(profile.joined_at) : null} placeholder="—" />
                 </div>
             </div>

@@ -24,7 +24,7 @@ export default function TermsPage() {
                 <h1 style={{ fontSize: 28, fontWeight: 800, color: '#052d4a', marginBottom: 8 }}>Terms & Conditions</h1>
                 <p style={{ color: '#64748b', fontSize: 14, marginBottom: 32 }}>
                     The Loan Connection (&ldquo;TLC&rdquo;) operates two agent-facing platforms covered by these
-                    terms: the Insurance Agent Platform and the Property Agent Platform. Each has its own terms
+                    terms, both part of TLC HUB: TLC HUB Premium and TLC HUB Basic & Starter. Each has its own terms
                     below — refer to the one for the platform you use.
                 </p>
 
