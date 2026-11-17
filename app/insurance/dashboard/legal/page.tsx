@@ -1,246 +1,290 @@
 'use client'
 
 import { useState, type ReactNode } from 'react'
-import { Scale, Ban, Building2, Receipt, Info, Check, Minus, Phone, MapPin } from 'lucide-react'
+import { Scale, Phone, MapPin, Info } from 'lucide-react'
+// Ban list (BANNED_FIRMS) and per-firm notes are hidden for now — the data
+// stays in legalFees.ts so either can be switched back on.
 import {
-    BANNED_FIRMS, PANEL_BANKS, PANEL_NOTE, FEE_TYPES, PRICE_NOTE, LAW_FIRMS, LEGAL_VERIFY,
-    type PanelBank, type LawFirm,
+    PANEL_BANKS, PANEL_NOTE, FEE_TYPES, FEE_GROUPS, PRICE_NOTE, LAW_FIRMS, LEGAL_VERIFY,
+    type PanelBank, type FeeGroup, type LawFirm,
 } from '@/lib/insurance/legalFees'
 
-// Pinned first column: a solid background (set per-row) plus a soft right-edge
-// shadow so it reads as anchored while the rest of a wide table scrolls under it.
-const STICKY = 'sticky left-0 z-10 border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(15,23,42,0.08)]'
+type View = 'panel' | 'prices'
 
-// One row background rule, reused by the <tr> and its own sticky cell (which must
-// be opaque to cover cells sliding beneath it). Plain zebra — every firm rendered
-// the same, no per-firm highlighting.
-function rowBg(i: number): string {
-    return i % 2 ? 'bg-slate-50/40' : 'bg-white'
+// "93273185" → "9327 3185" — easier to read off an iPad to a client.
+function formatPhone(n: string): string {
+    return n.length === 8 ? `${n.slice(0, 4)} ${n.slice(4)}` : n
 }
 
 export default function LegalPage() {
-    // Filter the panel to firms on a chosen bank's panel — the real question an
-    // agent asks ("which firm can I use for this bank?").
-    const [bankFilter, setBankFilter] = useState<PanelBank | ''>('')
-    const panelFirms = bankFilter ? LAW_FIRMS.filter(f => f.panel[bankFilter]) : LAW_FIRMS
+    const [view, setView] = useState<View>('panel')
 
     return (
-        <div className="max-w-[1400px] mx-auto space-y-6">
+        <div className="max-w-[1100px] mx-auto">
             {/* Header */}
-            <div>
-                <h1 className="ios-page-title flex items-center gap-2.5">
-                    <span className="w-9 h-9 rounded-xl bg-sky-100 flex items-center justify-center shrink-0">
-                        <Scale size={18} className="text-[#03a9e7]" />
-                    </span>
-                    Legal
-                </h1>
-                <p className="page-subtitle mt-1">Conveyancing panel and fee references for your client.</p>
-            </div>
-
-            {/* ── Ban list ── */}
-            <section className="rounded-2xl border border-red-200 bg-gradient-to-br from-red-50 to-red-50/30 overflow-hidden">
-                <div className="flex items-center gap-2.5 px-5 pt-4">
-                    <span className="w-7 h-7 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-                        <Ban size={15} className="text-red-600" />
-                    </span>
-                    <div>
-                        <h2 className="text-sm font-bold text-red-700">Ban List</h2>
-                        <p className="text-[11px] text-red-500/90">Do not instruct these firms on any case.</p>
-                    </div>
-                </div>
-                <div className="px-5 py-4 flex flex-wrap gap-2">
-                    {BANNED_FIRMS.map(f => (
-                        <span key={f} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/80 border border-red-200 text-sm font-semibold text-red-700">
-                            {f}
+            <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between mb-8">
+                <div>
+                    <h1 className="ios-page-title flex items-center gap-2.5">
+                        <span className="w-9 h-9 rounded-xl bg-sky-100 flex items-center justify-center shrink-0">
+                            <Scale size={18} className="text-[#03a9e7]" />
                         </span>
-                    ))}
-                </div>
-            </section>
-
-            {/* ── Bank panel ── */}
-            <SectionCard
-                icon={<Building2 size={15} className="text-[#03a9e7]" />}
-                title="Bank Panel"
-                meta={`${panelFirms.length} of ${LAW_FIRMS.length} firms`}
-            >
-                {/* Filter row */}
-                <div className="flex flex-wrap items-center gap-1.5 px-5 py-3 border-b border-slate-100">
-                    <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mr-1">On panel for</span>
-                    <button
-                        onClick={() => setBankFilter('')}
-                        className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
-                            !bankFilter ? 'bg-[#052d4a] text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                        }`}
-                    >
-                        All
-                    </button>
-                    {PANEL_BANKS.map(b => (
-                        <button
-                            key={b}
-                            onClick={() => setBankFilter(b === bankFilter ? '' : b)}
-                            className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
-                                bankFilter === b ? 'bg-[#03a9e7] text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                            }`}
-                        >
-                            {b}
-                        </button>
-                    ))}
+                        Legal
+                    </h1>
+                    <p className="page-subtitle mt-1">Conveyancing panel and fee references for your client.</p>
                 </div>
 
-                <NoteStrip>{PANEL_NOTE}</NoteStrip>
+                <Segmented
+                    value={view}
+                    onChange={setView}
+                    options={[
+                        { value: 'panel', label: 'Bank Panel' },
+                        { value: 'prices', label: 'Price List' },
+                    ]}
+                />
+            </header>
 
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm border-collapse">
-                        <thead>
-                            <tr className="text-left text-[11px] text-slate-400 uppercase tracking-wide">
-                                <th className={`${STICKY} bg-slate-50 px-4 py-2.5 font-semibold min-w-[230px]`}>Law Firm</th>
-                                <th className="bg-slate-50/70 px-3 py-2.5 font-semibold whitespace-nowrap">Contact</th>
-                                {PANEL_BANKS.map(b => (
-                                    <th key={b}
-                                        className={`px-2 py-2.5 font-semibold text-center whitespace-nowrap transition-colors ${bankFilter === b ? 'text-[#03a9e7] bg-sky-50' : 'bg-slate-50/70'}`}>
-                                        {b}
-                                    </th>
-                                ))}
-                                <th className="bg-slate-50/70 px-3 py-2.5 font-semibold whitespace-nowrap">Location</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {panelFirms.map((firm, i) => (
-                                <tr key={firm.name} className={`border-t border-slate-100 ${rowBg(i)}`}>
-                                    <td className={`${STICKY} ${rowBg(i)} px-4 py-3 align-top`}>
-                                        <FirmName firm={firm} />
-                                    </td>
-                                    <td className="px-3 py-3 align-top whitespace-nowrap">
-                                        <p className="text-slate-700">{firm.contact}</p>
-                                        <a href={`tel:${firm.mobile}`} className="text-[11px] text-slate-400 hover:text-[#03a9e7] inline-flex items-center gap-1 transition-colors">
-                                            <Phone size={10} /> {firm.mobile}
-                                        </a>
-                                    </td>
-                                    {PANEL_BANKS.map(b => (
-                                        <td key={b} className={`px-2 py-3 text-center align-middle ${bankFilter === b ? 'bg-sky-50/70' : ''}`}>
-                                            <PanelMark on={firm.panel[b]} />
-                                        </td>
-                                    ))}
-                                    <td className="px-3 py-3 align-top whitespace-nowrap text-slate-600">
-                                        <span className="inline-flex items-center gap-1"><MapPin size={11} className="text-slate-400" /> {firm.location}</span>
-                                    </td>
-                                </tr>
-                            ))}
-                            {panelFirms.length === 0 && (
-                                <tr><td colSpan={PANEL_BANKS.length + 3} className="px-4 py-8 text-center text-sm text-slate-400">
-                                    No firm on {bankFilter}&apos;s panel in this list.
-                                </td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </SectionCard>
+            {view === 'panel' ? <PanelView /> : <PriceView />}
 
-            {/* ── Price list ── */}
-            <SectionCard
-                icon={<Receipt size={15} className="text-[#03a9e7]" />}
-                title="Price List"
-                meta="Scroll for all fee types →"
-            >
-                <NoteStrip>{PRICE_NOTE}</NoteStrip>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm border-collapse">
-                        <thead>
-                            <tr className="text-left text-[11px] text-slate-400 uppercase tracking-wide">
-                                <th className={`${STICKY} bg-slate-50 px-4 py-2.5 font-semibold min-w-[200px]`}>Law Firm</th>
-                                {FEE_TYPES.map(ft => (
-                                    <th key={ft.key} className="bg-slate-50/70 px-3 py-2.5 font-semibold align-bottom min-w-[132px]">{ft.label}</th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {LAW_FIRMS.map((firm, i) => (
-                                <tr key={firm.name} className={`border-t border-slate-100 ${rowBg(i)}`}>
-                                    <td className={`${STICKY} ${rowBg(i)} px-4 py-3 align-top`}>
-                                        <FirmName firm={firm} hideNote />
-                                    </td>
-                                    {FEE_TYPES.map(ft => (
-                                        <td key={ft.key} className="px-3 py-3 align-top">
-                                            <FeeCell text={firm.fees[ft.key]} />
-                                        </td>
-                                    ))}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </SectionCard>
-
-            {LEGAL_VERIFY.length > 0 && (
-                <div className="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                    <Info size={14} className="text-slate-400 shrink-0 mt-0.5" />
-                    <div className="text-[12px] text-slate-500 leading-relaxed">
-                        <span className="font-semibold text-slate-600">A few cells to double-check</span> — these were hard to read off the sheet and are shown as best-guess:
-                        <ul className="mt-1 space-y-0.5">
-                            {LEGAL_VERIFY.map(v => <li key={v} className="flex gap-1.5"><span className="text-slate-400">·</span>{v}</li>)}
-                        </ul>
-                    </div>
-                </div>
-            )}
-
-            <p className="text-xs text-slate-400 text-center">
-                Reference figures collated from the desk&apos;s law-firm sheet and may change without notice — confirm with the firm before quoting a client.
+            <p className="mt-10 text-xs text-slate-400 text-center leading-relaxed">
+                Reference figures from the desk&apos;s law-firm sheet and may change without notice.
+                Confirm with the firm before quoting a client.
             </p>
         </div>
     )
 }
 
-// ── Building blocks ────────────────────────────────────────────────────────
+// ── Bank panel ─────────────────────────────────────────────────────────────
 
-function SectionCard({ icon, title, meta, children }: { icon: ReactNode; title: string; meta?: string; children: ReactNode }) {
+function PanelView() {
+    // The real question an agent asks: "which firm can I use for this bank?"
+    const [bank, setBank] = useState<PanelBank | null>(null)
+    const firms = bank ? LAW_FIRMS.filter(f => f.panel[bank]) : LAW_FIRMS
+
     return (
-        <section className="card !p-0 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-100">
-                <h2 className="text-sm font-bold text-[#052d4a] flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-md bg-sky-100 flex items-center justify-center shrink-0">{icon}</span>
-                    {title}
-                </h2>
-                {meta && <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">{meta}</span>}
+        <div className="space-y-6">
+            <div>
+                <p className="text-[13px] font-medium text-slate-500 mb-2.5">Filter by bank</p>
+                <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
+                    <Chip active={bank === null} onClick={() => setBank(null)}>All banks</Chip>
+                    {PANEL_BANKS.map(b => (
+                        <Chip key={b} active={bank === b} onClick={() => setBank(bank === b ? null : b)}>{b}</Chip>
+                    ))}
+                </div>
             </div>
-            {children}
-        </section>
-    )
-}
 
-function NoteStrip({ children }: { children: ReactNode }) {
-    return (
-        <div className="flex items-start gap-2 px-5 py-2.5 bg-amber-50 border-b border-amber-100">
-            <Info size={13} className="text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-[12px] text-amber-800 leading-relaxed">{children}</p>
+            <Hint>{PANEL_NOTE}</Hint>
+
+            {firms.length > 0 ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                    {firms.map(f => <FirmCard key={f.name} firm={f} highlight={bank} />)}
+                </div>
+            ) : (
+                <div className="rounded-3xl bg-white border border-slate-200/70 py-16 text-center">
+                    <p className="text-[15px] font-medium text-slate-700">No firm on {bank}&apos;s panel</p>
+                    <p className="text-sm text-slate-400 mt-1">None of the firms in this list are on that bank&apos;s panel.</p>
+                </div>
+            )}
         </div>
     )
 }
 
-function FirmName({ firm, hideNote }: { firm: LawFirm; hideNote?: boolean }) {
+function FirmCard({ firm, highlight }: { firm: LawFirm; highlight: PanelBank | null }) {
+    const onPanel = PANEL_BANKS.filter(b => firm.panel[b])
+    const offPanel = PANEL_BANKS.filter(b => !firm.panel[b])
+    const initials = firm.name.split(/\s+/).slice(0, 2).map(w => w[0]).join('')
+
     return (
-        <div>
-            <p className="font-semibold text-[#052d4a] leading-tight">{firm.name}</p>
-            {!hideNote && firm.note && <p className="text-[11px] text-red-500 mt-0.5 leading-snug">{firm.note}</p>}
+        <article className="rounded-3xl bg-white border border-slate-200/70 p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col">
+            <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-sm font-semibold shrink-0">
+                    {initials}
+                </div>
+                <div className="min-w-0 flex-1">
+                    <h3 className="text-[17px] font-semibold text-slate-900 leading-snug">{firm.name}</h3>
+                    <p className="mt-1 text-[13px] text-slate-500 inline-flex items-center gap-1">
+                        <MapPin size={13} className="text-slate-400" /> {firm.location}
+                    </p>
+                </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3">
+                <div className="min-w-0">
+                    <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">Contact</p>
+                    <p className="text-[15px] font-medium text-slate-800">{firm.contact}</p>
+                </div>
+                <a
+                    href={`tel:${firm.mobile}`}
+                    className="inline-flex items-center gap-2 rounded-full bg-white border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 active:scale-[0.98] transition"
+                >
+                    <Phone size={14} className="text-[#03a9e7]" />
+                    {formatPhone(firm.mobile)}
+                </a>
+            </div>
+
+            <div className="mt-5">
+                <p className="text-[13px] font-medium text-slate-500 mb-2">
+                    On panel <span className="text-slate-400 font-normal">· {onPanel.length} of {PANEL_BANKS.length} banks</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                    {onPanel.map(b => (
+                        <span
+                            key={b}
+                            className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                                highlight === b ? 'bg-[#03a9e7] text-white' : 'bg-sky-50 text-sky-700'
+                            }`}
+                        >
+                            {b}
+                        </span>
+                    ))}
+                </div>
+                {offPanel.length > 0 && (
+                    <p className="mt-3 text-xs text-slate-400">
+                        Not on: {offPanel.join(', ')}
+                    </p>
+                )}
+            </div>
+        </article>
+    )
+}
+
+// ── Price list ─────────────────────────────────────────────────────────────
+
+function PriceView() {
+    const [group, setGroup] = useState<FeeGroup | null>(null)
+    const groups = group ? [group] : FEE_GROUPS
+
+    return (
+        <div className="space-y-6">
+            <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
+                <Chip active={group === null} onClick={() => setGroup(null)}>All fees</Chip>
+                {FEE_GROUPS.map(g => (
+                    <Chip key={g} active={group === g} onClick={() => setGroup(group === g ? null : g)}>{g}</Chip>
+                ))}
+            </div>
+
+            <Hint>{PRICE_NOTE}</Hint>
+
+            <div className="rounded-3xl bg-white border border-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-separate border-spacing-0">
+                        <thead>
+                            <tr>
+                                <th className="sticky left-0 z-20 bg-white text-left px-5 py-4 text-[12px] font-medium text-slate-400 min-w-[180px] border-b border-slate-100">
+                                    Fee type
+                                </th>
+                                {LAW_FIRMS.map(f => (
+                                    <th key={f.name} className="text-left px-4 py-4 text-[13px] font-semibold text-slate-800 min-w-[150px] align-bottom border-b border-slate-100">
+                                        {f.name}
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {groups.map(g => (
+                                <GroupRows key={g} group={g} showHeading={group === null} />
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {LEGAL_VERIFY.length > 0 && (
+                <Hint>
+                    A few cells were hard to read off the sheet and are best-guess: {LEGAL_VERIFY.join('; ')}
+                </Hint>
+            )}
         </div>
     )
 }
 
-function PanelMark({ on }: { on: boolean }) {
-    return on
-        ? <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100"><Check size={12} className="text-emerald-600" strokeWidth={3} /></span>
-        : <Minus size={13} className="inline text-slate-300" strokeWidth={2.5} />
+function GroupRows({ group, showHeading }: { group: FeeGroup; showHeading: boolean }) {
+    const rows = FEE_TYPES.filter(ft => ft.group === group)
+    return (
+        <>
+            {showHeading && (
+                <tr>
+                    <td
+                        colSpan={LAW_FIRMS.length + 1}
+                        className="sticky left-0 bg-slate-50/80 px-5 pt-5 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400"
+                    >
+                        {group}
+                    </td>
+                </tr>
+            )}
+            {rows.map(ft => (
+                <tr key={ft.key} className="group">
+                    <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 px-5 py-3.5 align-top text-slate-700 font-medium border-b border-slate-100 transition-colors">
+                        {ft.label}
+                    </td>
+                    {LAW_FIRMS.map(f => (
+                        <td key={f.name} className="px-4 py-3.5 align-top border-b border-slate-100 group-hover:bg-slate-50 transition-colors">
+                            <Fee text={f.fees[ft.key]} />
+                        </td>
+                    ))}
+                </tr>
+            ))}
+        </>
+    )
 }
 
-function FeeCell({ text }: { text: string }) {
+function Fee({ text }: { text: string }) {
     if (text.trim().toUpperCase().startsWith('N/A')) {
-        return <span className="text-slate-300">N/A</span>
+        return <span className="text-slate-300">—</span>
     }
-    // Split "$1,700\n(condition)" into a bold figure + a smaller note line.
+    // "$1,700\n(condition)" → the figure, then a quieter condition line.
     const [main, ...rest] = text.split('\n')
     return (
         <div className="leading-snug">
-            <p className="font-semibold text-slate-700 tabular-nums whitespace-nowrap">{main}</p>
-            {rest.length > 0 && <p className="text-[10px] text-slate-400 mt-0.5">{rest.join(' ')}</p>}
+            <p className="font-semibold text-slate-900 tabular-nums">{main}</p>
+            {rest.length > 0 && <p className="text-xs text-slate-400 mt-0.5">{rest.join(' ')}</p>}
         </div>
+    )
+}
+
+// ── Primitives ─────────────────────────────────────────────────────────────
+
+function Segmented<T extends string>({ value, onChange, options }: {
+    value: T
+    onChange: (v: T) => void
+    options: { value: T; label: string }[]
+}) {
+    return (
+        <div className="inline-flex self-start rounded-full bg-slate-200/60 p-1">
+            {options.map(o => (
+                <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => onChange(o.value)}
+                    className={`px-5 py-2 rounded-full text-sm font-semibold transition-all ${
+                        value === o.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                >
+                    {o.label}
+                </button>
+            ))}
+        </div>
+    )
+}
+
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`shrink-0 px-4 py-2 rounded-full text-[13px] font-medium transition-colors ${
+                active ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+            }`}
+        >
+            {children}
+        </button>
+    )
+}
+
+function Hint({ children }: { children: ReactNode }) {
+    return (
+        <p className="flex items-start gap-2 text-[13px] text-slate-500 leading-relaxed">
+            <Info size={15} className="text-slate-400 shrink-0 mt-0.5" />
+            <span>{children}</span>
+        </p>
     )
 }
