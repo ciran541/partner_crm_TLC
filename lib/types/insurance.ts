@@ -29,6 +29,15 @@ export interface ReferredBanker {
 // Commission payout state (only meaningful once a case is Closed Won).
 export type CommissionStatus = 'unpaid' | 'paid'
 
+export interface CaseCorrection {
+    at: string
+    by: string
+    reason: string
+    fee: number
+    mode: 'reopen' | 'record'
+    from_stage: PipelineStage
+}
+
 // ─── Closed-Won structured data ───────────────────────────────────────────────
 // One package (lock-in + rate schedule) closes one or more loans. Which loans
 // apply depends on the case type (see CLOSED_LOAN_KINDS_BY_CASE_TYPE in
@@ -62,6 +71,10 @@ export interface ClosedWonData {
     // to property_cases, a different app), and closed_won_data is already jsonb.
     property_address?: string
     package_features?: string[]     // free conversion, legal/valuation subsidy, waivers, etc.
+    // Recorded at closing so the NEXT cycle (a revisit) can be set up correctly:
+    // which bank now holds the loan, and when the lock-in started.
+    bank?: string
+    closed_at?: string              // YYYY-MM-DD (SGT) the case was closed
 }
 
 // Case Interface
@@ -73,6 +86,10 @@ export interface Case {
 
     // Pipeline
     stage: PipelineStage
+
+    // The case this one continues (a "revisit" of a Closed Won case) — following
+    // these links gives the client's journey across refinancing cycles.
+    parent_case_id?: string | null
 
     // Case Classification
     case_type: CaseType
@@ -104,6 +121,8 @@ export interface Case {
 
     // Commission payout state (Closed Won cases)
     commission_status?: CommissionStatus
+    correction_fee?: number
+    corrections?: CaseCorrection[]
 
     // Closure fields (only for Closed Won)
     closed_package_details?: string

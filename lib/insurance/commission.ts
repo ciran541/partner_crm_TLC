@@ -13,6 +13,14 @@ export type CommissionBucket = 'open' | 'closed_unpaid' | 'closed_paid'
 const CLOSED_WON = 'Closed Won'
 const CLOSED_LOST = 'Closed Lost'
 
+export const CORRECTION_FEE = 50
+
+export function commissionWithFee(loan: number, fee = 0): CommissionResult & { correctionFee: number } {
+    const base = calculateCommission(loan)
+    const correctionFee = Number.isFinite(fee) ? Math.max(0, Math.round(fee * 100) / 100) : 0
+    return { ...base, agent: Math.round((base.agent - correctionFee) * 100) / 100, tlc: Math.round((base.tlc + correctionFee) * 100) / 100, correctionFee }
+}
+
 /** The loan figure a case's commission is based on. */
 export function caseLoanBase(c: Case): number {
     if (c.stage === CLOSED_WON) {
@@ -36,8 +44,8 @@ export function commissionBucket(c: Case): CommissionBucket | null {
     return 'open'
 }
 
-export function caseCommission(c: Case): CommissionResult {
-    return calculateCommission(caseLoanBase(c))
+export function caseCommission(c: Case) {
+    return commissionWithFee(caseLoanBase(c), c.correction_fee)
 }
 
 export interface CommissionTotals {

@@ -22,6 +22,9 @@ import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import DecoupleOverview from '@/components/insurance/workflow/DecoupleOverview'
 import EquityLoanOverview from '@/components/insurance/workflow/EquityLoanOverview'
 import { stageBadge } from '@/lib/insurance/stages'
+import CaseJourney from '@/components/insurance/cases/CaseJourney'
+import CorrectionModal from '@/components/insurance/cases/CorrectionModal'
+import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
 import type { Case } from '@/lib/types'
 
 type CaseRow = Case & { profiles?: { id: string; name: string } | null }
@@ -32,9 +35,27 @@ interface ActivityLog {
 const ACTION_LABEL: Record<string, string> = {
     stage_change: 'Stage changed',
     commission_status_change: 'Commission status',
+    correction: 'Correction',
 }
 
-const money = (n?: number | null) => (n && n > 0 ? formatCurrency(n) : '—')
+// Activity line text. Corrections store an object (stage, fee, reason) rather than a single value.
+function describeLog(l: ActivityLog): React.ReactNode {
+    if (l.action === 'correction' && l.new_value && typeof l.new_value === 'object') {
+        const v = l.new_value as { mode?: string; fee?: number; reason?: string; stage?: string }
+        return (
+            <span className="font-normal text-slate-600">
+                {v.mode === 'reopen' ? 'sent back to agent' : 'fixed by TLC'}{v.fee ? ` · $${v.fee} fee` : ' · fee waived'}{v.reason ? ` · "${v.reason}"` : ''}
+            </span>
+        )
+    }
+    return (
+        <>
+            <span className="text-slate-500 font-normal">{String(l.old_value ?? '—')}</span> → <span className="font-semibold">{String(l.new_value ?? '—')}</span>
+        </>
+    )
+}
+
+const money = (n?: number | null) => (n != null ? formatCurrency(n) : '—')
 
 // ── insurance-style presentational helpers (mirrors the case Overview) ──
 function Card({ title, icon, children, action }: { title: string; icon: ReactNode; children: ReactNode; action?: ReactNode }) {
@@ -70,6 +91,7 @@ export default function AdminInsuranceCaseDetail() {
     const [error, setError] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
     const [logs, setLogs] = useState<ActivityLog[]>([])
+    const [correcting, setCorrecting] = useState(false)
 
     const loadLogs = () => {
         fetch(`/api/admin/insurance/case-activity?caseId=${id}`)
@@ -154,9 +176,26 @@ export default function AdminInsuranceCaseDetail() {
                             {c.profiles?.name && <span className="ml-2 text-[#03a9e7] font-medium">by {c.profiles.name}</span>}
                         </p>
                     </div>
-                    <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" style={{ color: badge.text, background: badge.bg }}>{c.stage}</span>
+                    <div className="flex items-center gap-2">
+                        <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" style={{ color: badge.text, background: badge.bg }}>{c.stage}</span>
+                        {isClosedWon && !paid && (
+                            <button type="button" onClick={() => setCorrecting(true)}
+                                className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
+                                Correct this case
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
+
+            <CorrectionNotice data={c} />
+            {correcting && (
+                <CorrectionModal
+                    caseData={c}
+                    onClose={() => setCorrecting(false)}
+                    onDone={updated => { setCase({ ...c, ...updated }); setCorrecting(false); loadLogs() }}
+                />
+            )}
 
             {/* Commission — back-check & confirm */}
             {loan > 0 && (
@@ -172,8 +211,9 @@ export default function AdminInsuranceCaseDetail() {
                             <p className="text-lg font-extrabold text-[#052d4a] mt-0.5">{money(comm.gross)}</p>
                         </div>
                         <div>
-                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Agent (90%)</p>
+                            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">{comm.correctionFee > 0 ? 'Agent payout' : 'Agent (90%)'}</p>
                             <p className="text-lg font-extrabold text-emerald-600 mt-0.5">{money(comm.agent)}</p>
+                            {comm.correctionFee > 0 && <p className="text-[11px] font-semibold text-red-600">after −{money(comm.correctionFee)} correction fee</p>}
                         </div>
                         <div>
                             <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">TLC (10%)</p>
@@ -204,6 +244,9 @@ export default function AdminInsuranceCaseDetail() {
             {workflowData?.kind === 'Refinancing' && (
                 <RefiOverview workflow={workflowData.wf} stage={c.stage} followUpDate={c.follow_up_date} onOpenWorkflow={noop} readOnly />
             )}
+
+            {/* Client journey across refinancing cycles (renders nothing if unlinked) */}
+            <CaseJourney caseId={c.id} parentId={c.parent_case_id} hrefFor={cid => `/admin/insurance/cases/${cid}`} />
 
             {/* Client */}
             <Card title="Client Information" icon={<User size={16} />}>
@@ -301,7 +344,7 @@ export default function AdminInsuranceCaseDetail() {
                                 </div>
                                 <div className="pb-4 min-w-0">
                                     <p className="text-sm font-medium text-slate-700">
-                                        {ACTION_LABEL[l.action] ?? l.action}: <span className="text-slate-500 font-normal">{String(l.old_value ?? '—')}</span> → <span className="font-semibold">{String(l.new_value ?? '—')}</span>
+                                        {ACTION_LABEL[l.action] ?? l.action}: {describeLog(l)}
                                     </p>
                                     <p className="text-xs text-slate-400 mt-0.5">{l.actor_name} · {formatDate(l.created_at)}</p>
                                 </div>

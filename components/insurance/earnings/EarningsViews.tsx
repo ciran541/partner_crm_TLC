@@ -6,7 +6,7 @@ import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { calculateCommission } from '@/lib/property/commission'
+import { commissionWithFee } from '@/lib/insurance/commission'
 import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import type { CommissionBucket, AgentCommissionRow } from '@/lib/insurance/commission'
@@ -212,7 +212,7 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
                                     // the row and the totals above it can never be
                                     // derived from two different rules.
                                     const loan = c.loan_value ?? 0
-                                    const comm = calculateCommission(loan)
+                                    const comm = commissionWithFee(loan, c.correction_fee)
                                     const bucket = (c.bucket ?? 'open') as CommissionBucket
                                     const badge = bucketBadge(bucket)
                                     return (
@@ -225,7 +225,7 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
                                             <td className="table-td" style={{ color: '#475569' }}>{c.case_type}</td>
                                             <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>{loan ? money(loan) : '—'}</td>
                                             <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>{money(comm.gross)}</td>
-                                            <td className="table-td" style={{ textAlign: 'right', fontWeight: 800, color: '#059669', fontSize: 15 }}>{money(comm.agent)}</td>
+                                            <td className="table-td" style={{ textAlign: 'right', fontWeight: 800, color: '#059669', fontSize: 15 }}>{money(comm.agent)}<div className="text-xs font-normal text-slate-500">Correction fee: {money(comm.correctionFee)}{comm.correctionFee > 0 ? ' deducted' : ' (not applied)'}</div></td>
                                             <td className="table-td"><span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span></td>
                                             <td className="table-td" style={{ fontSize: 12, color: '#94a3b8' }}>{formatDate(c.updated_at)}</td>
                                             {isAdmin && (

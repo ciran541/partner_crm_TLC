@@ -34,6 +34,12 @@ import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import { PIPELINE_STAGES, INACTIVE_STAGE, OPEN_STAGES } from '@/lib/insurance/stages'
+import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
+import RevisitControl from '@/components/insurance/cases/RevisitControl'
+import CaseJourney from '@/components/insurance/cases/CaseJourney'
+import { todaySgt } from '@/lib/insurance/promotions'
+import { CORRECTION_FEE, commissionWithFee } from '@/lib/insurance/commission'
+import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
 
 type TabKey = 'overview' | 'workflow'
 
@@ -72,6 +78,8 @@ function CaseDetailContent() {
     })()
 
     const [caseData, setCaseData] = useState<Case | null>(null)
+    // The follow-on case created by Revisit, if any (one per case — unique index).
+    const [revisitChildId, setRevisitChildId] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [isEditing, setIsEditing] = useState(false)
@@ -139,6 +147,9 @@ function CaseDetailContent() {
 
         const { data, error } = await supabase
             .from('cases').select('*').eq('id', caseId).single()
+        const { data: child } = await supabase
+            .from('cases').select('id').eq('parent_case_id', caseId).maybeSingle()
+        setRevisitChildId(child?.id ?? null)
 
         if (error || !data) {
             router.push('/insurance/dashboard/cases')
@@ -507,6 +518,9 @@ function CaseDetailContent() {
                 <InlineAlert type={alert.type} message={alert.message} onDismiss={() => setAlert(null)} />
             )}
 
+            {/* TLC corrected this submission — why, by whom, and any fee (internal; not on the Workflow tab) */}
+            {activeTab !== 'workflow' && <CorrectionNotice data={caseData} />}
+
             {/* Stage Bar — internal/pipeline; hidden on the client-facing Workflow tab */}
             {activeTab !== 'workflow' && (
             <div className="card p-5" style={{ background: 'linear-gradient(to right, #052d4a, #0f4a75)', color: 'white' }}>
@@ -538,6 +552,13 @@ function CaseDetailContent() {
                         >
                             Make active
                         </button>
+                    )}
+                    {caseData.stage === 'Closed Won' && !isEditing && (
+                        <RevisitControl
+                            caseData={caseData}
+                            childId={revisitChildId}
+                            casePath={id => `/insurance/dashboard/cases/${id}`}
+                        />
                     )}
                     {/* Stage progress dots */}
                     {caseData.stage !== INACTIVE_STAGE && (
@@ -586,6 +607,12 @@ function CaseDetailContent() {
             {/* Tab: Overview */}
             {activeTab === 'overview' && (
                 <div className="space-y-5">
+                    <CaseJourney
+                        key={`${caseId}:${revisitChildId ?? ''}`}
+                        caseId={caseId}
+                        parentId={caseData.parent_case_id}
+                        hrefFor={id => `/insurance/dashboard/cases/${id}`}
+                    />
                     {/* Closed-Won summary — loans, commission, and next-cycle income projection */}
                     {isClosedWon && caseData.closed_won_data?.loans?.length ? (
                         <ClosedWonSummaryCard data={caseData} isAdmin={isAdminUser} onTogglePaid={handleToggleCommissionPaid} />
@@ -758,8 +785,12 @@ function CaseDetailContent() {
                     initialData={caseData}
                     caseId={caseId}
                     onConfirm={async details => {
+                        const error = await persistCaseUpdate({ ...details, stage: 'Closed Won' })
+                        if (error) throw new Error(error)
+                        await loadCase()
+                        invalidateCaseData()
+                        setIsEditing(false)
                         setClosedWonOpen(false)
-                        await handleUpdate({ ...details, stage: 'Closed Won' })
                         // Sync the follow-up to Google Calendar (non-blocking).
                         if (details.follow_up_date) {
                             fetch(`/api/insurance/cases/${caseId}/followup`, {
@@ -897,7 +928,7 @@ async function downscaleForExtraction(file: File): Promise<File> {
 function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     initialData: Case
     caseId: string
-    onConfirm: (details: Partial<Case>) => void
+    onConfirm: (details: Partial<Case>) => Promise<void>
     onCancel: () => void
 }) {
     const caseType = (initialData.case_type ?? 'Purchase') as CaseType
@@ -934,6 +965,13 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     // Captured from the LO. No columns exist for these on the insurance `cases`
     // table, so they persist inside closed_won_data (jsonb).
     const [propertyAddress, setPropertyAddress] = useState(existing.property_address || '')
+    // The bank now holding the loan — the starting point of the next cycle (Revisit).
+    // Prefill: what was recorded before, else the only bank the case was referred to.
+    const [closedBank, setClosedBank] = useState(() => {
+        if (existing.bank) return existing.bank
+        const banks = [...new Set((initialData.referred_bankers ?? []).map(b => b.bank).filter(Boolean))]
+        return banks.length === 1 ? banks[0] : ''
+    })
     const [pkgFeatures, setPkgFeatures] = useState<string[]>(existing.package_features ?? [])
 
     const [hasSubsidy, setHasSubsidy] = useState(!!initialData.subsidy_provided)
@@ -948,6 +986,10 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     const [sora, setSora] = useState<SoraRates | null>(null)
     const [busy, setBusy] = useState(false)
     const [err, setErr] = useState<string | null>(null)
+    // Review page before the final, irreversible submit (+ the agent's confirmation tick).
+    const [reviewing, setReviewing] = useState(false)
+    const [confirmed, setConfirmed] = useState(false)
+    const bodyRef = useRef<HTMLDivElement>(null)
 
     // LO auto-extraction: reads the attached Letter of Offer and prefills the
     // loan/package fields. Advisory only — every figure stays editable and the
@@ -1008,6 +1050,7 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
             if (data.lockin_years != null) setLockin(String(data.lockin_years))
             if (data.schedule.length) setSchedule(data.schedule)
             if (data.property_address) setPropertyAddress(data.property_address)
+            if (data.bank) setClosedBank(b => b || data.bank!)
             if (data.features.length) setPkgFeatures(data.features)
             // Only ever turns the subsidy section ON. If the LO grants none, an
             // agent who already ticked it keeps what they typed — absence of a
@@ -1068,12 +1111,14 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     )
 
     const handleConfirm = async () => {
+        if (!canSave || !reviewing || !confirmed || extracting) return
         setBusy(true); setErr(null)
         try {
             // Upload any newly attached LO files to the agent's own folder.
             const uploaded = [...keptDocs]
             if (files.length) {
                 const { data: { user } } = await supabase.auth.getUser()
+                if (!user) throw new Error('Please sign in again before submitting.')
                 if (user) {
                     for (const f of files) {
                         const ext = f.name.split('.').pop()
@@ -1093,10 +1138,13 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                 combined_outstanding: totals.combinedOutstanding ?? undefined,
                 property_address: propertyAddress.trim() || undefined,
                 package_features: cleanFeatures.length ? cleanFeatures : undefined,
+                bank: closedBank.trim() || undefined,
+                // Kept from the first close if the agent edits the closure later.
+                closed_at: existing.closed_at ?? todaySgt(),
             }
 
             const firstYear = schedule.find(e => !e.thereafter)
-            onConfirm({
+            await onConfirm({
                 client_name: clientName.trim(),
                 client_mobile: clientMobile.trim() || undefined,
                 client_email: clientEmail.trim() || undefined,
@@ -1133,7 +1181,111 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                     </div>
                 </div>
 
-                <div className="px-6 py-5 space-y-6 overflow-y-auto">
+                <div ref={bodyRef} className="px-6 py-5 space-y-6 overflow-y-auto">
+                    {/* Deterrent 1 — reminder while keying in (always visible) */}
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-2.5">
+                        <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-900 leading-relaxed">
+                            <b>Submitting a case as Closed Won is final.</b> You won&apos;t be able to edit it afterwards, so check every figure against the Letter of Offer.
+                            If TLC has to correct a wrong submission, a <b>${CORRECTION_FEE} correction admin fee</b> is deducted from your payout.
+                        </p>
+                    </div>
+
+                    {reviewing ? (() => {
+                        // Deterrent 2 — the review page. Everything they're about to submit, in one place.
+                        const docCount = keptDocs.length + files.length
+                        const warnings = [
+                            docCount === 0 && 'No Letter of Offer attached — TLC checks every closure against it.',
+                            !closedBank.trim() && 'No bank selected.',
+                            lockinYears <= 0 && 'No lock-in period — the projected outstanding at lock-in end can\'t be worked out.',
+                            !followUp && 'No follow-up date — you won\'t be reminded to revisit this client when the lock-in ends.',
+                        ].filter(Boolean) as string[]
+                        const row = (label: string, value: React.ReactNode) => (
+                            <div className="flex items-start justify-between gap-4 py-1.5 border-b border-slate-50 last:border-b-0">
+                                <span className="text-xs text-slate-500 shrink-0">{label}</span>
+                                <span className="text-sm font-semibold text-[#052d4a] text-right">{value || <span className="text-slate-300 font-normal">—</span>}</span>
+                            </div>
+                        )
+                        const box = 'rounded-xl border border-slate-100 px-4 py-2'
+                        return (
+                            <div className="space-y-4">
+                                <div>
+                                    <p className="text-base font-bold text-[#052d4a]">Are these details in order?</p>
+                                    <p className="text-xs text-slate-500 mt-0.5">Check each one against the Letter of Offer before you submit.</p>
+                                </div>
+
+                                {warnings.length > 0 && (
+                                    <ul className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 space-y-1">
+                                        {warnings.map(w => <li key={w} className="text-xs text-red-700 flex gap-2"><AlertTriangle size={13} className="shrink-0 mt-0.5" />{w}</li>)}
+                                    </ul>
+                                )}
+
+                                <div>
+                                    <p className={sectionLabel}>Loan(s)</p>
+                                    <div className={box}>
+                                        {loans.map(l => row(CLOSED_LOAN_LABELS[l.kind], `${money(l.amount)} · ${l.tenure} yrs`))}
+                                        {loans.length > 1 && row('Total', money(totals.originalLoanTotal))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className={sectionLabel}>Package</p>
+                                    <div className={box}>
+                                        {row('Bank', closedBank.trim())}
+                                        {row('Lock-in', lockinYears > 0 ? `${lockinYears} yr${lockinYears > 1 ? 's' : ''}` : '')}
+                                        {row('Rates', packageSummary(schedule, lockinYears))}
+                                        {cleanFeatures.length > 0 && row('Features', cleanFeatures.join(', '))}
+                                        {row('Subsidy', hasSubsidy ? `${subsidyProvided || 'Yes'}${clawbackEnd ? ` · clawback until ${clawbackEnd}` : ''}` : 'None')}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className={sectionLabel}>Client &amp; property</p>
+                                    <div className={box}>
+                                        {row('Client', clientName.trim())}
+                                        {row('Mobile', clientMobile.trim())}
+                                        {row('Email', clientEmail.trim())}
+                                        {row('Property address', propertyAddress.trim())}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <p className={sectionLabel}>Paperwork &amp; follow-up</p>
+                                    <div className={box}>
+                                        {row('Letter of Offer', [...keptDocs.map(d => d.name), ...files.map(f => f.name)].join(', '))}
+                                        {row('Subsidy', hasSubsidy ? subsidyProvided : 'None')}
+                                        {row('Clawback end date', hasSubsidy ? clawbackEnd : '')}
+                                        {row('Remarks', remarks)}
+                                        {row('Referred banker(s)', bankers.map(b => `${b.name} (${b.bank})`).join(', '))}
+                                        {row('Follow-up date', followUp)}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 grid grid-cols-2 gap-3">
+                                    <div>
+                                        <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Your commission (this close)</p>
+                                        <p className="text-lg font-extrabold text-emerald-700">{money(commissionWithFee(totals.originalLoanTotal, initialData.correction_fee).agent)}</p>
+                                        {!!initialData.correction_fee && <p className="text-xs text-red-700">After {money(initialData.correction_fee)} correction fee</p>}
+                                    </div>
+                                    {totals.combinedOutstanding != null && (
+                                        <div>
+                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Outstanding at lock-in end</p>
+                                            <p className="text-lg font-extrabold text-[#052d4a]">{money(totals.combinedOutstanding)}</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <label className="flex items-start gap-2.5 rounded-xl border-2 border-[#052d4a]/15 px-4 py-3 cursor-pointer select-none">
+                                    <input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[#166534] shrink-0" />
+                                    <span className="text-xs text-slate-700 leading-relaxed">
+                                        I&apos;ve checked every detail above against the Letter of Offer. I understand this submission is <b>final</b>, and that if TLC has to correct it,
+                                        a <b>${CORRECTION_FEE} correction fee</b> will be deducted from my payout.
+                                    </span>
+                                </label>
+                            </div>
+                        )
+                    })() : (<>
+
                     {/* Client */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="sm:col-span-2">
@@ -1147,6 +1299,10 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                         <div>
                             <label className="label-xs">Email</label>
                             <input type="email" value={clientEmail} onChange={e => setClientEmail(e.target.value)} placeholder="client@email.com" className="input-std" />
+                        </div>
+                        <div>
+                            <label className="label-xs">Bank <span className="text-slate-400 normal-case">(now holding the loan)</span></label>
+                            <InsuranceBankDropdown value={closedBank} onChange={setClosedBank} placeholder="Select bank…" />
                         </div>
                         <div className="sm:col-span-2">
                             <label className="label-xs">Property Address <span className="text-slate-400 normal-case">(as per the LO)</span></label>
@@ -1375,19 +1531,38 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                         <textarea rows={3} value={remarks} onChange={e => setRemarks(e.target.value)} className="input-std" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
                     </div>
 
+                    </>)}
+
                     {err && <InlineAlert type="error" message={err} onDismiss={() => setErr(null)} />}
                 </div>
 
                 <div className="px-6 py-4 border-t border-slate-100 flex gap-3 shrink-0 bg-slate-50/50">
-                    <button onClick={onCancel} disabled={busy} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
-                    <button
-                        disabled={!canSave}
-                        onClick={handleConfirm}
-                        className="btn-primary py-2.5 text-sm flex items-center gap-2 justify-center disabled:opacity-40"
-                        style={{ flex: 2, background: '#166534', borderColor: '#166534' }}
-                    >
-                        {busy ? <Spinner size="sm" color="white" label="Saving…" /> : <><CheckCircle2 size={16} /> Save &amp; Close Won</>}
-                    </button>
+                    {reviewing ? (
+                        <>
+                            <button onClick={() => { setReviewing(false); setConfirmed(false); bodyRef.current?.scrollTo({ top: 0 }) }} disabled={busy}
+                                className="btn-ghost flex-1 justify-center py-2.5 text-sm">← Back to edit</button>
+                            <button
+                                disabled={!canSave || !confirmed || extracting}
+                                onClick={handleConfirm}
+                                className="btn-primary py-2.5 text-sm flex items-center gap-2 justify-center disabled:opacity-40"
+                                style={{ flex: 2, background: '#166534', borderColor: '#166534' }}
+                            >
+                                {busy ? <Spinner size="sm" color="white" label="Saving…" /> : <><CheckCircle2 size={16} /> Confirm &amp; submit Closed Won</>}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <button onClick={onCancel} disabled={busy} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
+                            <button
+                                disabled={!canSave || extracting}
+                                onClick={() => { setReviewing(true); bodyRef.current?.scrollTo({ top: 0 }) }}
+                                className="btn-primary py-2.5 text-sm flex items-center gap-2 justify-center disabled:opacity-40"
+                                style={{ flex: 2, background: '#166534', borderColor: '#166534' }}
+                            >
+                                Review &amp; submit →
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
         </div>
@@ -1524,7 +1699,7 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
     const lockin = cwd.package?.lockin_years ?? 0
     const original = cwd.original_loan_total ?? loans.reduce((s, l) => s + l.amount, 0)
     const outstanding = cwd.combined_outstanding
-    const now = calculateCommission(original)
+    const now = commissionWithFee(original, data.correction_fee)
     const next = outstanding != null ? calculateCommission(outstanding) : null
     const paid = data.commission_status === 'paid'
 
@@ -1587,7 +1762,10 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
                         </span>
                     </div>
                     <p className="text-xl font-bold text-emerald-700 mt-0.5">{money(now.agent)}</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">0.15% of {money(original)} · agent 90%</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                        0.15% of {money(original)} · agent 90%
+                        {now.correctionFee > 0 && <span className="text-red-600 font-semibold"> · −{money(now.correctionFee)} correction fee</span>}
+                    </p>
                     {isAdmin && (
                         <button type="button" onClick={onTogglePaid}
                             className="mt-2 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-colors"

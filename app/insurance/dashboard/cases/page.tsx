@@ -332,6 +332,11 @@ function CasesList() {
                                             <td className="table-td">
                                                 <p style={{ fontWeight: 600, color: '#0f172a' }}>
                                                     {c.client_name || <span style={{ color: '#94a3b8', fontStyle: 'italic', fontWeight: 400 }}>Unnamed</span>}
+                                                    {c.parent_case_id && (
+                                                    <span title="Revisit of an earlier closed case" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#0369a1', background: '#e0f2fe', padding: '1px 6px', borderRadius: 9999, verticalAlign: 'middle' }}>
+                                                        ↻ Returning client
+                                                    </span>
+                                                )}
                                                 </p>
                                                 {c.client_mobile && <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{c.client_mobile}</p>}
                                             </td>
@@ -388,7 +393,9 @@ function CasesList() {
                                         </p>
                                         <StageBadge stage={c.stage} />
                                     </div>
-                                    <p style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>{c.case_type}</p>
+                                    <p style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>
+                                        {c.case_type}{c.parent_case_id ? ' · ↻ Returning client' : ''}
+                                    </p>
                                     {c.client_mobile && <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>{c.client_mobile}</p>}
                                     {isAdmin && c.profiles?.name && (
                                         <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Agent: {c.profiles.name}</p>

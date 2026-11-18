@@ -1,0 +1,15 @@
+▲ Next.js 16.2.10 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.24:3000
+- Environments: .env.local
+✓ Ready in 1904ms
+- Experiments (use with caution):
+  · clientTraceMetadata
+
+○ Compiling /insurance/dashboard ...
+ GET /insurance/dashboard/calculators/amortization 200 in 12.7s (next.js: 5.6s, proxy.ts: 3.5s, application-code: 3.6s)
+ GET /insurance/dashboard/calculators/tdsr 200 in 12.8s (next.js: 6.8s, proxy.ts: 3.4s, application-code: 2.5s)
+ GET /insurance/login 200 in 8.7s (next.js: 2.0s, proxy.ts: 53ms, application-code: 6.6s)
+ GET /insurance/dashboard 200 in 10.8s (next.js: 5.4s, proxy.ts: 1382ms, application-code: 4.1s)
+ GET /insurance/dashboard/calculators/tdsr 200 in 2.1s (next.js: 114ms, proxy.ts: 1406ms, application-code: 536ms)
+ GET /api/insurance/cases?stage=all&draftsOnly=true&mine=true&limit=10 200 in 9.2s (next.js: 7.5s, application-code: 1654ms)
