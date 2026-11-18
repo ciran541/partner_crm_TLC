@@ -507,3 +507,58 @@ export function inputsFromWorkflow(d: PurchaseWorkflow): PurchaseInputs {
         })),
     }
 }
+
+// ─── Reverse: loan eligibility → max purchase price ──────────────────────────
+// The Affordability calculator runs the purchase workflow backwards: the loan a
+// client's income supports, divided by the option's LTV, is the highest price
+// that loan can finance. Downpayment split and fees reuse the same LTV matrix,
+// BSD/ABSD and fee schedule as computePurchase() so the two never disagree.
+
+export interface MaxPurchaseBreakdown {
+    price: number
+    loan: number
+    ltvPct: number
+    minCash: number
+    minCashPct: number
+    cashCpf: number
+    cashCpfPct: number
+    bsd: number
+    absd: number
+    absdRatePct: number
+    legalFee: number
+    valuationFee: number
+    fees: number            // BSD + ABSD + legal + valuation
+    totalUpfront: number    // everything except the loan: downpayment + fees
+}
+
+export function maxPurchaseFromLoan(args: {
+    loan: number
+    option: FinancingOption
+    propertyType: PurchasePropertyType
+    residency: Residency
+    propertyCount: 1 | 2 | 3
+}): MaxPurchaseBreakdown | null {
+    const { option, propertyType, residency, propertyCount } = args
+    // Work from the whole-dollar loan the card displays, so "$668,530 ÷ 75%" on
+    // screen always equals the price shown next to it (891,373 — not 891,374).
+    const loan = Math.round(args.loan)
+    if (!(loan > 0) || !(option.ltvPct > 0)) return null
+    const price = loan / option.ltvPct
+    const minCash = price * option.minCashPct
+    const cashCpf = Math.max(0, price - loan - minCash)
+    const bsd = calculateBSD(price)
+    const rate = absdRate(residency, propertyCount)
+    const absd = price * rate
+    const legal = legalFee(propertyType)
+    const valuation = valuationFee(propertyType, price)
+    const fees = bsd + absd + legal + valuation
+    return {
+        price, loan, ltvPct: option.ltvPct,
+        minCash, minCashPct: option.minCashPct,
+        cashCpf, cashCpfPct: option.cashCpfPct,
+        bsd, absd, absdRatePct: rate * 100,
+        legalFee: legal, valuationFee: valuation,
+        fees,
+        totalUpfront: minCash + cashCpf + fees,
+    }
+}

@@ -2,6 +2,12 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireInsuranceUser } from '@/lib/auth/requireInsuranceUser'
 import type { Case } from '@/lib/types'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { validateIntake, intakeToCaseRow, mobileKey, type RawIntake } from '@/lib/insurance/caseIntake'
+import { loadBankNames, ownMobileIndex } from '@/lib/insurance/caseIntakeServer'
+import { syncInsuranceFollowUp } from '@/lib/google/syncFollowUpInsurance'
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
 
 /**
  * GET /api/insurance/cases — the server-side case list.
@@ -25,7 +31,7 @@ import type { Case } from '@/lib/types'
  *
  * Query params
  *   search=          client name / mobile / email (+ agent name when admin)
- *   stage=           'active' (default, excludes Closed Won/Lost) | a stage | 'all'
+ *   stage=           'active' (default, excludes Closed Won/Lost and Inactive) | a stage | 'all'
  *   caseType=        exact case type
  *   agent=           created_by uuid — admin only, ignored for agents
  *   from= / to=      created_at date range, YYYY-MM-DD inclusive
@@ -148,4 +154,65 @@ export async function GET(request: Request) {
         // not need a second round trip just to find out who it is talking to.
         isAdmin: auth.isAdmin,
     })
+}
+
+/**
+ * POST /api/insurance/cases — "+ New Case": create one case from typed-in client
+ * details (the Mortgage Planner remains the way to start from a workflow).
+ *
+ * Body: RawIntake fields (see lib/insurance/caseIntake.ts) + optional `force`.
+ * Validation is the same validateIntake() the mass upload uses. A mobile the
+ * agent already has returns 409 with the existing case, unless `force: true`.
+ *
+ * Inserted with the caller's own session (RLS: created_by = auth.uid()), so the
+ * cases_protect_admin_fields trigger and every policy apply exactly as they do
+ * to a browser write — this route adds validation, it never widens access.
+ */
+export async function POST(request: Request) {
+    const auth = await requireInsuranceUser()
+    if (!auth.authorized) return auth.response
+
+    let body: RawIntake & { force?: boolean }
+    try {
+        body = await request.json()
+    } catch {
+        return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+    }
+
+    const db = await createServerSupabaseClient()
+    const banks = await loadBankNames(db)
+    const result = validateIntake(body, banks)
+    if (!result.ok) return NextResponse.json({ error: result.errors.join('. '), errors: result.errors }, { status: 400 })
+
+    if (!body.force) {
+        const existing = (await ownMobileIndex(db, auth.userId)).get(mobileKey(result.value.client_mobile))
+        if (existing) {
+            return NextResponse.json(
+                { error: 'duplicate', existing: { id: existing.id, name: existing.name } },
+                { status: 409 },
+            )
+        }
+    }
+
+    const { data, error } = await db
+        .from('cases')
+        .insert(intakeToCaseRow(result.value, auth.userId))
+        .select('id')
+        .single()
+
+    if (error || !data) {
+        console.error('[POST /api/insurance/cases]', error)
+        return NextResponse.json({ error: 'Could not create the case' }, { status: 500 })
+    }
+
+    // Same calendar sync the follow-up button does, so a date set here behaves
+    // identically. Never throws.
+    if (result.value.follow_up_date) {
+        await syncInsuranceFollowUp(
+            auth.userId, data.id, 'upsert', result.value.follow_up_date,
+            result.value.client_name, `${APP_URL}/insurance/dashboard/cases/${data.id}`, result.value.client_mobile,
+        ).catch(err => console.error('[Calendar sync] new case:', err))
+    }
+
+    return NextResponse.json({ id: data.id })
 }

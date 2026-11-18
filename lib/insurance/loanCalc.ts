@@ -32,6 +32,33 @@ export const DEFAULT_REFERENCE_RATE = 2.5      // % p.a. — planning default be
 export const MIN_PURCHASE_AGE = 21             // minimum age to buy property in Singapore
 export const EARLIEST_PURCHASE_YEAR = 1960     // anything earlier is treated as a typo
 
+// ─── Pledge / show funds ─────────────────────────────────────────────────────
+//
+// MAS financial-asset income recognition: pledged funds count as income
+// spread over 48 months; unpledged ("show") funds are recognised at only 30%
+// of their value. The serviceable instalment from that income is then capped
+// by the TDSR (55%) or MSR (30%) ratio.
+
+export const PLEDGE_MONTHS = 48
+export const SHOW_FUND_RECOGNITION = 0.30
+
+export type ServicingRule = 'tdsr' | 'msr'
+const ruleLimit = (rule: ServicingRule) => (rule === 'tdsr' ? TDSR_LIMIT : MSR_LIMIT)
+
+/** Funds needed to cover a monthly instalment shortfall. */
+export function fundsRequiredForInstalment(shortfall: number, rule: ServicingRule): { pledge: number; show: number } {
+    if (!(shortfall > 0)) return { pledge: 0, show: 0 }
+    const pledge = (shortfall * PLEDGE_MONTHS) / ruleLimit(rule)
+    return { pledge, show: pledge / SHOW_FUND_RECOGNITION }
+}
+
+/** Monthly instalment a given amount of cash supports, pledged or shown. */
+export function instalmentFromFunds(cash: number, rule: ServicingRule): { pledge: number; show: number } {
+    if (!(cash > 0)) return { pledge: 0, show: 0 }
+    const pledge = (cash / PLEDGE_MONTHS) * ruleLimit(rule)
+    return { pledge, show: pledge * SHOW_FUND_RECOGNITION }
+}
+
 // ─── Borrower age vs. year of purchase ───────────────────────────────────────
 
 export interface BorrowerAgeCheck {

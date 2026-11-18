@@ -3,7 +3,7 @@
 import React, { Suspense, useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { Case, PipelineStage, ReferredBanker } from '@/lib/types'
+import { Case, ReferredBanker } from '@/lib/types'
 import { RefinancingWorkflow as RefinancingWorkflowData, getRefinancingWorkflow, PurchaseWorkflow, getPurchaseWorkflow, DecoupleWorkflow, getDecoupleWorkflow, EquityLoanWorkflow, getEquityLoanWorkflow } from '@/lib/types/workflow'
 import RefinancingWorkflowPanel from '@/components/insurance/workflow/RefinancingWorkflow'
 import PurchaseWorkflowPanel from '@/components/insurance/workflow/PurchaseWorkflow'
@@ -33,17 +33,12 @@ import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
+import { PIPELINE_STAGES, INACTIVE_STAGE, OPEN_STAGES } from '@/lib/insurance/stages'
 
 type TabKey = 'overview' | 'workflow'
 
-const PIPELINE_STAGES: PipelineStage[] = [
-    'Touched Base',
-    'Pending Docs',
-    'Pending Approval',
-    'Pending Signature',
-    'Closed Won',
-    'Closed Lost',
-]
+// Progress dots show the live pipeline only — Inactive sits before it, Closed Lost beside it.
+const PROGRESS_STAGES = PIPELINE_STAGES.filter(s => s !== INACTIVE_STAGE && s !== 'Closed Lost')
 
 const CLOSED_LOST_REASONS = [
     'Client chose another bank directly',
@@ -372,8 +367,26 @@ function CaseDetailContent() {
             current_bank: caseData.current_bank,
             existing_loan_amount: caseData.existing_loan_amount,
             lock_in_end_date: caseData.lock_in_end_date,
+            property_address: caseData.property_address,
+            subsidy_provided: caseData.subsidy_provided,
+            remarks: caseData.remarks,
             referred_bankers: caseData.referred_bankers ?? [],
         })
+    }
+
+    // Inactive → live pipeline in one tap. Saves immediately, like follow-up.
+    const handleActivate = async () => {
+        if (!caseData) return
+        const next = OPEN_STAGES[0]
+        setCaseData({ ...caseData, stage: next })
+        const err = await persistCaseUpdate({ stage: next })
+        if (err) {
+            setCaseData({ ...caseData })
+            setAlert({ type: 'error', message: `Could not activate: ${err}` })
+        } else {
+            invalidateCaseData()
+            setAlert({ type: 'success', message: `Moved to ${next} — it's now in your active cases.` })
+        }
     }
 
     // Admin-only: mark this closed case's commission as paid / unpaid.
@@ -513,12 +526,25 @@ function CaseDetailContent() {
                         ) : (
                             <p className="text-xl font-bold">{caseData.stage}</p>
                         )}
+                        {caseData.stage === INACTIVE_STAGE && (
+                            <p className="text-[11px] opacity-70 mt-1">Parked for follow-up — not in your active cases or revenue.</p>
+                        )}
                     </div>
+                    {caseData.stage === INACTIVE_STAGE && !isEditing && (
+                        <button
+                            type="button"
+                            onClick={handleActivate}
+                            className="bg-white text-[#052d4a] text-sm font-bold px-4 py-2 rounded-lg hover:bg-sky-50 transition-colors"
+                        >
+                            Make active
+                        </button>
+                    )}
                     {/* Stage progress dots */}
+                    {caseData.stage !== INACTIVE_STAGE && (
                     <div className="hidden md:flex items-center gap-1.5">
-                        {PIPELINE_STAGES.filter(s => s !== 'Closed Lost').map((s, i) => {
-                            const stageIndex = PIPELINE_STAGES.indexOf(caseData.stage)
-                            const thisIndex = PIPELINE_STAGES.indexOf(s)
+                        {PROGRESS_STAGES.map((s, i) => {
+                            const stageIndex = PROGRESS_STAGES.indexOf(caseData.stage)
+                            const thisIndex = PROGRESS_STAGES.indexOf(s)
                             const isActive = s === caseData.stage
                             const isPast = thisIndex < stageIndex && !isClosed
                             return (
@@ -527,13 +553,14 @@ function CaseDetailContent() {
                                         isActive ? 'bg-white w-3 h-3' :
                                         isPast ? 'bg-white/60' : 'bg-white/25'
                                     }`} title={s} />
-                                    {i < PIPELINE_STAGES.filter(s => s !== 'Closed Lost').length - 1 && (
+                                    {i < PROGRESS_STAGES.length - 1 && (
                                         <div className={`w-5 h-px ${isPast ? 'bg-white/60' : 'bg-white/20'}`} />
                                     )}
                                 </div>
                             )
                         })}
                     </div>
+                    )}
                 </div>
             </div>
             )}
@@ -610,6 +637,18 @@ function CaseDetailContent() {
                             <GridField label="Email" isEditing={isEditing}>
                                 <input type="email" value={caseData.client_email || ''} onChange={e => handleFieldChange('client_email', e.target.value)} placeholder="client@email.com" className="input-std" />
                                 {caseData.client_email || <span className="text-slate-400">—</span>}
+                            </GridField>
+                            <GridField label="Property Address" isEditing={isEditing}>
+                                <input type="text" value={caseData.property_address || ''} onChange={e => handleFieldChange('property_address', e.target.value)} placeholder="optional" className="input-std" />
+                                {caseData.property_address || <span className="text-slate-400">—</span>}
+                            </GridField>
+                            <GridField label="Subsidy Received" isEditing={isEditing}>
+                                <input type="text" value={caseData.subsidy_provided || ''} onChange={e => handleFieldChange('subsidy_provided', e.target.value)} placeholder="e.g. $2,000" className="input-std" />
+                                {caseData.subsidy_provided || <span className="text-slate-400">—</span>}
+                            </GridField>
+                            <GridField label="Remarks" isEditing={isEditing}>
+                                <textarea rows={2} value={caseData.remarks || ''} onChange={e => handleFieldChange('remarks', e.target.value)} placeholder="optional" className="input-std" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
+                                {caseData.remarks ? <span className="whitespace-pre-wrap">{caseData.remarks}</span> : <span className="text-slate-400">—</span>}
                             </GridField>
                         </SectionCard>
 

@@ -93,6 +93,11 @@ export default function EquityLoanWorkflowPanel({
     const [rawEquityAmortT2, setRawEquityAmortT2] = useState('')
     const [preferredEquityAmortTenure2, setPreferredEquityAmortTenure2] = useState<number | undefined>()
     const [showCompare, setShowCompare] = useState(false)
+    // Home loan planner (mixed scenario) — same controls as the equity loan, own state
+    const [rawHomeAmortT1, setRawHomeAmortT1] = useState('')
+    const [rawHomeAmortT2, setRawHomeAmortT2] = useState('')
+    const [preferredHomeAmortTenure2, setPreferredHomeAmortTenure2] = useState<number | undefined>()
+    const [showHomeCompare, setShowHomeCompare] = useState(false)
     const [estEligTenure, setEstEligTenure] = useState<number | undefined>()
     const [estEligDraft, setEstEligDraft] = useState('')
 
@@ -1027,7 +1032,14 @@ export default function EquityLoanWorkflowPanel({
                 const equityT1 = equityClamp(data.preferred_equity_amort_tenure_1 ?? equityOnlyTenureMax)
                 const equityT2 = equityClamp(preferredEquityAmortTenure2 ?? equityOnlyTenureMax)
 
-                const homeT1 = data.current_tenure ?? equityTenureMax
+                // Home loan: refinanced at the new bank, so the tenure is a choice within the
+                // home-loan range (age + purchase year cap), not locked to what's left on the
+                // current loan. Default = the tenure picked in the TDSR breakdown, else the
+                // remaining tenure, else the max.
+                const homeClamp = (v: number) => Math.min(Math.max(v, equityTenureMin), equityTenureMax)
+                const homeDefault = homeClamp(data.preferred_tenure_refi ?? data.current_tenure ?? equityTenureMax)
+                const homeT1 = homeClamp(data.preferred_home_amort_tenure_1 ?? homeDefault)
+                const homeT2 = homeClamp(preferredHomeAmortTenure2 ?? homeDefault)
 
                 const effectiveLockin = (lockinYears != null && lockinYears > 0) ? lockinYears : null
                 const schedExplicitYears = activeSchedule.filter(e => !e.thereafter && e.year != null).length
@@ -1036,6 +1048,7 @@ export default function EquityLoanWorkflowPanel({
                 const equityAmort1 = computeAmortization(equityLoanAmt, equityT1, activeSchedule, soraForAmort)
                 const equityAmort2 = computeAmortization(equityLoanAmt, equityT2, activeSchedule, soraForAmort)
                 const homeAmort1 = homeLoanAmt > 0 ? computeAmortization(homeLoanAmt, homeT1, activeSchedule, soraForAmort) : []
+                const homeAmort2 = homeLoanAmt > 0 ? computeAmortization(homeLoanAmt, homeT2, activeSchedule, soraForAmort) : []
 
                 const inputCls = 'w-20 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-800 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/12'
                 const fmt2 = (n: number | null) => n != null ? `$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
@@ -1079,6 +1092,7 @@ export default function EquityLoanWorkflowPanel({
                     rows1: ReturnType<typeof computeAmortization>,
                     rows2: ReturnType<typeof computeAmortization>,
                     ta: number, tb: number,
+                    compare: boolean,
                 ) => {
                     const lockin = breakdownYears
                     const m1 = rows1[0]?.instalment ?? null
@@ -1133,7 +1147,7 @@ export default function EquityLoanWorkflowPanel({
                                         <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{ol1 != null ? fmt2(ol1) : '—'}</td>
                                         <td className="px-3 py-3 text-right font-bold text-[#052d4a]">{i1 != null ? fmt2(i1) : '—'}</td>
                                     </tr>
-                                    {showCompare && (
+                                    {compare && (
                                         <tr className="border-b border-slate-100">
                                             <td className="px-3 py-3">
                                                 <div className="flex items-center gap-1.5">
@@ -1148,7 +1162,7 @@ export default function EquityLoanWorkflowPanel({
                                             <td className="px-3 py-3 text-right font-semibold text-slate-700">{i2 != null ? fmt2(i2) : '—'}</td>
                                         </tr>
                                     )}
-                                    {showCompare && m1 != null && m2 != null && (
+                                    {compare && m1 != null && m2 != null && (
                                         <tr className="bg-slate-50/60 border-t-2 border-slate-200">
                                             <td className="px-3 py-2.5"><span className="text-xs font-black text-slate-500 uppercase tracking-wider">Difference</span></td>
                                             {diffCols.map((col, idx) => (
@@ -1176,11 +1190,12 @@ export default function EquityLoanWorkflowPanel({
                     rows1: ReturnType<typeof computeAmortization>,
                     rows2: ReturnType<typeof computeAmortization>,
                     ta: number, tb: number,
+                    compare: boolean,
                 ) => (
                     <>
                         {[
                             { rows: rows1, tv: ta, label: 'Tenure 1' },
-                            ...(showCompare ? [{ rows: rows2, tv: tb, label: 'Tenure 2' }] : []),
+                            ...(compare ? [{ rows: rows2, tv: tb, label: 'Tenure 2' }] : []),
                         ].map(({ rows, tv, label }) => rows.length > 0 && (
                             <div key={label} className="rounded-lg border border-slate-200 overflow-hidden">
                                 <div className="px-3 py-2 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
@@ -1353,15 +1368,69 @@ export default function EquityLoanWorkflowPanel({
                         {/* Mixed: home loan card (fixed tenure) + equity loan card (with comparison) */}
                         {isMix ? (
                             <>
-                                {/* Home Loan — display only, tenure is fixed at current remaining */}
+                                {/* Home Loan — tenure planner, same controls as the equity loan */}
                                 <div className="rounded-xl border border-sky-200 overflow-hidden">
                                     <div className="bg-sky-50 border-b border-sky-100 px-4 py-3">
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Home Loan (Existing)</p>
-                                        <p className="text-lg font-black text-[#052d4a]">{money2(homeLoanAmt)} · {homeT1} yrs remaining</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">Home Loan Tenure Planner</p>
+                                        <p className="text-lg font-black text-[#052d4a]">{money2(homeLoanAmt)}</p>
                                     </div>
                                     <div className="p-4 space-y-3">
                                         {renderLockInCards(homeAmort1)}
-                                        {renderAmortTables(homeAmort1, homeAmort1, homeT1, homeT1)}
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                                            Tenure Range: {equityTenureMin} – {equityTenureMax} yrs
+                                            {data.current_tenure != null && (
+                                                <span className="ml-2 font-normal normal-case tracking-normal text-slate-400">
+                                                    · {data.current_tenure} yrs remaining on current loan
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold">Preferred Tenure 1</label>
+                                                <div className="flex items-center gap-2">
+                                                    <input type="number" min={equityTenureMin} max={equityTenureMax}
+                                                        value={rawHomeAmortT1 !== '' ? rawHomeAmortT1 : (data.preferred_home_amort_tenure_1 != null ? String(data.preferred_home_amort_tenure_1) : '')}
+                                                        placeholder={String(homeDefault)}
+                                                        onChange={e => setRawHomeAmortT1(e.target.value)}
+                                                        onBlur={() => {
+                                                            const parsed = parseInt(rawHomeAmortT1, 10)
+                                                            setRawHomeAmortT1('')
+                                                            update({ preferred_home_amort_tenure_1: isNaN(parsed) ? undefined : homeClamp(parsed) })
+                                                        }}
+                                                        className={inputCls} />
+                                                    <span className="text-xs text-slate-500">yrs</span>
+                                                </div>
+                                                {data.preferred_home_amort_tenure_1 == null && (
+                                                    <p className="text-[11px] text-slate-400">
+                                                        {data.preferred_tenure_refi != null ? 'Defaults to TDSR breakdown tenure' : data.current_tenure != null ? 'Defaults to remaining tenure' : 'Defaults to max tenure'}
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 uppercase tracking-wide font-semibold cursor-pointer select-none">
+                                                    <input type="checkbox" checked={showHomeCompare} onChange={e => setShowHomeCompare(e.target.checked)}
+                                                        className="rounded border-slate-300 accent-[#03a9e7]" />
+                                                    {showHomeCompare ? 'Preferred Tenure 2' : 'Compare Tenure'}
+                                                </label>
+                                                {showHomeCompare && (
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="number" min={equityTenureMin} max={equityTenureMax}
+                                                            value={rawHomeAmortT2 !== '' ? rawHomeAmortT2 : (preferredHomeAmortTenure2 != null ? String(preferredHomeAmortTenure2) : '')}
+                                                            placeholder={String(homeDefault)}
+                                                            onChange={e => setRawHomeAmortT2(e.target.value)}
+                                                            onBlur={() => {
+                                                                const parsed = parseInt(rawHomeAmortT2, 10)
+                                                                setRawHomeAmortT2('')
+                                                                setPreferredHomeAmortTenure2(isNaN(parsed) ? undefined : homeClamp(parsed))
+                                                            }}
+                                                            className={inputCls} />
+                                                        <span className="text-xs text-slate-500">yrs</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {renderComparisonTable(homeAmort1, homeAmort2, homeT1, homeT2, showHomeCompare)}
+                                        {renderAmortTables(homeAmort1, homeAmort2, homeT1, homeT2, showHomeCompare)}
                                     </div>
                                 </div>
 
@@ -1417,8 +1486,8 @@ export default function EquityLoanWorkflowPanel({
                                                 )}
                                             </div>
                                         </div>
-                                        {renderComparisonTable(equityAmort1, equityAmort2, equityT1, equityT2)}
-                                        {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
+                                        {renderComparisonTable(equityAmort1, equityAmort2, equityT1, equityT2, showCompare)}
+                                        {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2, showCompare)}
                                     </div>
                                 </div>
                             </>
@@ -1470,8 +1539,8 @@ export default function EquityLoanWorkflowPanel({
                                         )}
                                     </div>
                                 </div>
-                                {renderComparisonTable(equityAmort1, equityAmort2, equityT1, equityT2)}
-                                {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2)}
+                                {renderComparisonTable(equityAmort1, equityAmort2, equityT1, equityT2, showCompare)}
+                                {renderAmortTables(equityAmort1, equityAmort2, equityT1, equityT2, showCompare)}
                             </>
                         )}
 

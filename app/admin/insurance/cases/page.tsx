@@ -7,20 +7,11 @@ import { usePagedCases } from '@/lib/insurance/usePagedCases'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { caseCommission, commissionBucket } from '@/lib/insurance/commission'
-import type { CaseType, PipelineStage } from '@/lib/types'
+import type { CaseType } from '@/lib/types'
+import { PIPELINE_STAGES as STAGES, stageBadge } from '@/lib/insurance/stages'
 
-const STAGES: PipelineStage[] = [
-    'Touched Base', 'Pending Docs', 'Pending Approval', 'Pending Signature', 'Closed Won', 'Closed Lost',
-]
 const CASE_TYPES: CaseType[] = ['Purchase', 'Refinancing', 'Decouple', 'Equity Loan']
 
-const STAGE_BADGE: Record<string, { bg: string; text: string }> = {
-    'Closed Won': { bg: '#d1fae5', text: '#065f46' },
-    'Closed Lost': { bg: '#fee2e2', text: '#991b1b' },
-    'Pending Approval': { bg: '#fff7ed', text: '#9a3412' },
-    'Pending Signature': { bg: '#fef3c7', text: '#92400e' },
-}
-const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
 
 export default function AdminInsuranceCasesPage() {
     const router = useRouter()
@@ -132,7 +123,7 @@ export default function AdminInsuranceCasesPage() {
                             </thead>
                             <tbody className="divide-y divide-slate-50">
                                 {filtered.map(c => {
-                                    const badge = STAGE_BADGE[c.stage] ?? DEFAULT_STAGE_BADGE
+                                    const badge = stageBadge(c.stage)
                                     const bucket = commissionBucket(c)
                                     // Server-computed, so the column and the
                                     // aggregate can never disagree.
