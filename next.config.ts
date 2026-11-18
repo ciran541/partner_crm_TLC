@@ -64,7 +64,9 @@ const nextConfig: NextConfig = {
   // falls through to Gemini — confirmed in production logs, and it had been
   // degrading Banks' Insights the same way. It is a native module, so it must
   // stay external too: bundling a .node binary breaks its resolution.
-  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas"],
+  // exceljs: mass-upload template build/parse (lib/insurance/caseImportXlsx.ts) —
+  // plain Node package, loaded at runtime rather than bundled.
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas", "exceljs"],
 
   // Installing @napi-rs/canvas is not enough on Vercel. pdfjs-dist require()s
   // it dynamically inside a try/catch, so Next's output file tracing never sees

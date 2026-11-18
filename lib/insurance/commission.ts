@@ -25,10 +25,13 @@ export function caseLoanBase(c: Case): number {
     return base && base > 0 ? base : 0
 }
 
-/** Which earnings bucket a case falls into (null = excluded: drafts, closed lost). */
+/** Which earnings bucket a case falls into (null = excluded: drafts, closed lost, inactive). */
 export function commissionBucket(c: Case): CommissionBucket | null {
     if (isDraftCase(c)) return null
     if (c.stage === CLOSED_LOST) return null
+    // Past clients parked for follow-up — not live pipeline, so not potential
+    // revenue. Mirrored in SQL by migration 20261118000000_inactive_stage.sql.
+    if (c.stage === 'Inactive') return null
     if (c.stage === CLOSED_WON) return c.commission_status === 'paid' ? 'closed_paid' : 'closed_unpaid'
     return 'open'
 }

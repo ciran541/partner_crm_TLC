@@ -1,44 +1,30 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Plus, Search, Briefcase, ChevronDown, ArrowRight, AlertCircle, TrendingUp } from 'lucide-react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Plus, Search, Briefcase, ChevronDown, ArrowRight, AlertCircle, TrendingUp, Upload } from 'lucide-react'
+import NewCaseModal from '@/components/insurance/cases/NewCaseModal'
+import CaseImportModal from '@/components/insurance/cases/CaseImportModal'
+import { PIPELINE_STAGES, INACTIVE_STAGE, stageBadge } from '@/lib/insurance/stages'
 import FilterPills from '@/components/shared/FilterPills'
 import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
-import type { PipelineStage } from '@/lib/types'
-
-const PIPELINE_STAGES: PipelineStage[] = [
-    'Touched Base',
-    'Pending Docs',
-    'Pending Approval',
-    'Pending Signature',
-    'Closed Won',
-    'Closed Lost',
-]
-
-// "Active" = everything still in play (not closed). It's the default view.
+// "Active" = the live pipeline (not closed, not Inactive). It's the default view.
+// Inactive goes last: it's a parking area for past clients, not a pipeline step.
 const STATUS_PILL_OPTIONS = [
     { value: 'active', label: 'Active' },
-    ...PIPELINE_STAGES.map(s => ({ value: s, label: s })),
+    ...PIPELINE_STAGES.filter(s => s !== INACTIVE_STAGE).map(s => ({ value: s, label: s })),
+    { value: INACTIVE_STAGE, label: INACTIVE_STAGE },
 ]
 
 // Potential revenue ≈ loan size × 0.15%.
 const REVENUE_RATE = 0.0015
 
-const STAGE_BADGE: Record<string, { bg: string; text: string }> = {
-    'Closed Won': { bg: '#d1fae5', text: '#065f46' },
-    'Closed Lost': { bg: '#fee2e2', text: '#991b1b' },
-    'Pending Approval': { bg: '#fff7ed', text: '#9a3412' },
-    'Pending Signature': { bg: '#fef3c7', text: '#92400e' },
-}
-const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
-
 function StageBadge({ stage }: { stage: string }) {
-    const cfg = STAGE_BADGE[stage] ?? DEFAULT_STAGE_BADGE
+    const cfg = stageBadge(stage)
     return <span className="status-badge" style={{ color: cfg.text, background: cfg.bg }}>{stage}</span>
 }
 
@@ -64,8 +50,21 @@ const inputStyle: React.CSSProperties = {
     outline: 'none',
 }
 
+// Suspense: useSearchParams (the ?new=1 hand-off) needs a boundary in the App Router.
 export default function CasesPage() {
+    return (
+        <Suspense fallback={<Skeleton height={320} radius={14} />}>
+            <CasesList />
+        </Suspense>
+    )
+}
+
+function CasesList() {
     const router = useRouter()
+    const searchParams = useSearchParams()
+    // ?new=1 (e.g. from the dashboard's "+ New Case") opens the form on arrival.
+    const [newCaseOpen, setNewCaseOpen] = useState(() => searchParams.get('new') === '1')
+    const [importOpen, setImportOpen] = useState(false)
 
     const [stageFilter, setStageFilter] = useState('active')
     const [agentFilter, setAgentFilter] = useState('all')
@@ -153,14 +152,23 @@ export default function CasesPage() {
                     </div>
                     <p className="page-subtitle">Track your cases through the pipeline.</p>
                 </div>
-                <button
-                    onClick={() => router.push('/insurance/dashboard')}
-                    className="btn-primary btn-lg"
-                    style={{ flexShrink: 0 }}
-                >
-                    <Plus size={16} />
-                    New Plan
-                </button>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <button
+                        onClick={() => setImportOpen(true)}
+                        className="btn-lg"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 12, border: '1px solid #e2e8f0', background: 'white', color: '#052d4a', fontWeight: 600 }}
+                    >
+                        <Upload size={16} />
+                        Mass Upload
+                    </button>
+                    <button
+                        onClick={() => setNewCaseOpen(true)}
+                        className="btn-primary btn-lg"
+                    >
+                        <Plus size={16} />
+                        New Case
+                    </button>
+                </div>
             </div>
 
             {/* Filters */}
@@ -241,8 +249,9 @@ export default function CasesPage() {
                 </div>
             </div>
 
-            {/* Potential revenue — reflects the current filter */}
-            {!loading && !error && (
+            {/* Potential revenue — reflects the current filter. Not shown for
+                Inactive: parked past clients aren't pipeline revenue. */}
+            {!loading && !error && stageFilter !== INACTIVE_STAGE && (
                 <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14, background: 'linear-gradient(to right, #ecfeff, #f0f9ff)' }}>
                     <div style={{ width: 40, height: 40, borderRadius: 12, background: '#03a9e7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <TrendingUp size={20} color="white" />
@@ -284,7 +293,7 @@ export default function CasesPage() {
                     description={hasFilters
                         ? 'Try adjusting your filters to see more results.'
                         : 'Create your first case to start tracking your pipeline.'}
-                    action={hasFilters ? undefined : { label: 'Open Planner', onClick: () => router.push('/insurance/dashboard') }}
+                    action={hasFilters ? undefined : { label: 'New Case', onClick: () => setNewCaseOpen(true) }}
                 />
             )}
 
@@ -418,6 +427,13 @@ export default function CasesPage() {
                     )}
                 </div>
             )}
+            {newCaseOpen && (
+                <NewCaseModal
+                    onClose={() => setNewCaseOpen(false)}
+                    onCreated={id => { setNewCaseOpen(false); router.push(`/insurance/dashboard/cases/${id}`) }}
+                />
+            )}
+            {importOpen && <CaseImportModal onClose={() => setImportOpen(false)} />}
         </div>
     )
 }

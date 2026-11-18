@@ -21,6 +21,7 @@ import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
 import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import DecoupleOverview from '@/components/insurance/workflow/DecoupleOverview'
 import EquityLoanOverview from '@/components/insurance/workflow/EquityLoanOverview'
+import { stageBadge } from '@/lib/insurance/stages'
 import type { Case } from '@/lib/types'
 
 type CaseRow = Case & { profiles?: { id: string; name: string } | null }
@@ -33,13 +34,6 @@ const ACTION_LABEL: Record<string, string> = {
     commission_status_change: 'Commission status',
 }
 
-const STAGE_BADGE: Record<string, { bg: string; text: string }> = {
-    'Closed Won': { bg: '#d1fae5', text: '#065f46' },
-    'Closed Lost': { bg: '#fee2e2', text: '#991b1b' },
-    'Pending Approval': { bg: '#fff7ed', text: '#9a3412' },
-    'Pending Signature': { bg: '#fef3c7', text: '#92400e' },
-}
-const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
 const money = (n?: number | null) => (n && n > 0 ? formatCurrency(n) : '—')
 
 // ── insurance-style presentational helpers (mirrors the case Overview) ──
@@ -135,7 +129,7 @@ export default function AdminInsuranceCaseDetail() {
     if (error && !c) return <div className="card p-6 flex items-center gap-3 text-red-600 text-sm"><AlertCircle size={18} />{error}</div>
     if (!c) return null
 
-    const badge = STAGE_BADGE[c.stage] ?? DEFAULT_STAGE_BADGE
+    const badge = stageBadge(c.stage)
     const loan = caseLoanBase(c)
     const comm = caseCommission(c)
     const cwd = c.closed_won_data

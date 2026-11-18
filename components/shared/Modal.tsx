@@ -7,7 +7,11 @@ interface ModalProps {
     title: string
     children: ReactNode
     onClose: () => void
+    /** Width. Default 'md' (forms with a few fields); 'lg'/'xl' for wide forms and tables. */
+    size?: 'md' | 'lg' | 'xl'
 }
+
+const SIZE = { md: 'max-w-md', lg: 'max-w-2xl', xl: 'max-w-5xl' } as const
 
 const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
 
@@ -15,7 +19,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, [ta
  * Shared Modal component.
  * Extracted from /dashboard/users/page.tsx for reuse across admin and property domains.
  */
-export default function Modal({ title, children, onClose }: ModalProps) {
+export default function Modal({ title, children, onClose, size = 'md' }: ModalProps) {
     const dialogRef = useRef<HTMLDivElement>(null)
     const titleId = useId()
 
@@ -60,9 +64,9 @@ export default function Modal({ title, children, onClose }: ModalProps) {
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={titleId}
-                className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+                className={`bg-white rounded-2xl shadow-2xl w-full ${SIZE[size]} overflow-hidden max-h-[92vh] flex flex-col`}
             >
-                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
                     <h3 id={titleId} className="text-lg font-bold text-[#052d4a]">{title}</h3>
                     <button
                         onClick={onClose}
@@ -72,7 +76,7 @@ export default function Modal({ title, children, onClose }: ModalProps) {
                         <X size={20} />
                     </button>
                 </div>
-                <div className="p-6">{children}</div>
+                <div className="p-6 overflow-y-auto">{children}</div>
             </div>
         </div>
     )

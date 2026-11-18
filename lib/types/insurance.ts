@@ -10,7 +10,9 @@ import type { RateScheduleEntry } from './rates'
 export type CaseType = 'Refinancing' | 'Purchase' | 'Decouple' | 'Equity Loan' | 'Divorce'
 
 // Pipeline Stages
+// Full ordered list + rules live in lib/insurance/stages.ts.
 export type PipelineStage =
+    | 'Inactive'          // past client parked for follow-up only — outside the live pipeline
     | 'Touched Base'
     | 'Pending Docs'
     | 'Pending Approval'
@@ -84,6 +86,7 @@ export interface Case {
     loan_size?: number
     property_type?: string
     property_price?: number
+    property_address?: string
 
     // Refinancing-specific fields
     current_bank?: string

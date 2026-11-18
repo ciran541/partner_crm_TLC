@@ -13,20 +13,11 @@ import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
 import { usePagedCases } from '@/lib/insurance/usePagedCases'
+import { stageBadge } from '@/lib/insurance/stages'
 
 const PLANNER_ROUTE = '/insurance/dashboard'
-
-const STAGE_BADGE: Record<string, { bg: string; text: string }> = {
-    'Closed Won': { bg: '#d1fae5', text: '#065f46' },
-    'Closed Lost': { bg: '#fee2e2', text: '#991b1b' },
-    'Pending Approval': { bg: '#fff7ed', text: '#9a3412' },
-    'Pending Signature': { bg: '#fef3c7', text: '#92400e' },
-}
-const DEFAULT_STAGE_BADGE = { bg: '#e0f2fe', text: '#0369a1' }
-
-function stageBadge(stage: string) {
-    return STAGE_BADGE[stage] ?? DEFAULT_STAGE_BADGE
-}
+// Opens the New Case form on the Cases page.
+const NEW_CASE_ROUTE = '/insurance/dashboard/cases?new=1'
 
 export default function PipelineDashboard() {
     const router = useRouter()
@@ -75,12 +66,12 @@ export default function PipelineDashboard() {
                     <p className="page-subtitle">Here&apos;s your pipeline overview.</p>
                 </div>
                 <button
-                    onClick={() => router.push(PLANNER_ROUTE)}
+                    onClick={() => router.push(NEW_CASE_ROUTE)}
                     className="btn-primary btn-sm"
                     style={{ flexShrink: 0 }}
                 >
                     <Plus size={15} />
-                    New Plan
+                    New Case
                 </button>
             </div>
 
