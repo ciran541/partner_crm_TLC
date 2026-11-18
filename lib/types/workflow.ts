@@ -338,6 +338,7 @@ export interface EquityLoanWorkflow {
     // Amortization comparison
     preferred_tenure_1?: number
     preferred_equity_amort_tenure_1?: number
+    preferred_home_amort_tenure_1?: number          // home loan Tenure 1 in the amortization planner (mixed scenario)
 
     next_actions_done?: string[]
     // Case-specific documents the client has gathered (ticked in Documents to prepare).
