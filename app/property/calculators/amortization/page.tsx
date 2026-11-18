@@ -2,6 +2,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { CalculatorDraftScope, CalculatorResetButton, useCalcDraft } from '@/lib/calculators/draft'
 import Link from 'next/link'
 import { ArrowLeft, Plus, Trash2, Calculator, Lock, Copy, X } from 'lucide-react'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
@@ -94,8 +95,10 @@ const letterFor = (i: number) => String.fromCharCode(65 + i) // A, B, C
 const hasAlt = (p: PackageConfig) => (p.altTenure ?? '').trim() !== ''
 const variantKey = (id: string, isAlt: boolean) => `${id}:${isAlt ? 'alt' : 'main'}`
 
-let pkgSeq = 1
-const nextPkgId = () => `pkg-${++pkgSeq}`
+// Next id above every existing one — packages can be restored from a saved
+// draft, so a module-level counter starting at 1 would hand out duplicates.
+const nextPkgId = (existing: { id: string }[]) =>
+    `pkg-${Math.max(0, ...existing.map(p => parseInt(p.id.replace(/\D/g, '')) || 0)) + 1}`
 
 /** Everything derived from one package config at one of its tenures. */
 interface PackageResult {
@@ -152,15 +155,15 @@ function buildResult(
 // ── Component ─────────────────────────────────────────────────────────────────
 
 function AmortizationCalculator() {
-    const [loanAmount, setLoanAmount] = useState('300,000')
-    const [packages, setPackages] = useState<PackageConfig[]>([
+    const [loanAmount, setLoanAmount] = useCalcDraft('loanAmount', '300,000')
+    const [packages, setPackages] = useCalcDraft<PackageConfig[]>('packages', [
         { id: 'pkg-1', name: 'Package A', tenure: '25', lockIn: '', schedule: newSchedule() },
     ])
-    const [activeId, setActiveId] = useState('pkg-1')
+    const [activeId, setActiveId] = useCalcDraft('activeId', 'pkg-1')
     // Which of the active package's two tenures the summary cards and the
     // year-by-year table are showing. Held per package id, so switching tabs
     // never silently moves another package to its alt tenure.
-    const [altView, setAltView] = useState<Record<string, boolean>>({})
+    const [altView, setAltView] = useCalcDraft<Record<string, boolean>>('altView', {})
     const [sora, setSora] = useState<SoraRates | null>(null)
 
     useEffect(() => {
@@ -212,7 +215,7 @@ function AmortizationCalculator() {
     function addPackage(clone: boolean) {
         if (packages.length >= MAX_PACKAGES) return
         const src = packages[activeIdx]
-        const id = nextPkgId()
+        const id = nextPkgId(packages)
         setPackages(ps => [...ps, {
             id,
             name: clone ? `${src.name} (copy)` : `Package ${letterFor(ps.length)}`,
@@ -281,6 +284,7 @@ function AmortizationCalculator() {
                         <Calculator size={18} className="text-[#059669]" />
                     </span>
                     Amortization Calculator
+                    <CalculatorResetButton className="ml-auto" />
                 </h1>
                 <p className="page-subtitle mt-1">
                     Year-by-year breakdown with variable rates per period. Compare up to {MAX_PACKAGES} packages
@@ -1047,7 +1051,9 @@ function RateRow({
 export default function PropertyAmortizationPage() {
     return (
         <PropertyPremiumGate>
-            <AmortizationCalculator />
+            <CalculatorDraftScope id="amortization">
+                <AmortizationCalculator />
+            </CalculatorDraftScope>
         </PropertyPremiumGate>
     )
 }

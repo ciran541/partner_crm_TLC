@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { CalculatorDraftScope, CalculatorResetButton, useCalcDraft } from '@/lib/calculators/draft'
 import Link from 'next/link'
 import { ArrowLeft, Building2 } from 'lucide-react'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
@@ -110,13 +111,13 @@ function moneyChange(setter: (v: string) => void) {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 function BUCCalculator() {
-    const [purchasePrice, setPurchasePrice] = useState('1,000,000')
-    const [loanAmount,    setLoanAmount]    = useState('750,000')
-    const [cpfAmount,     setCpfAmount]     = useState('')
-    const [tenure,        setTenure]        = useState('30')
-    const [rateRef,       setRateRef]       = useState<'3M SORA' | '1M SORA' | 'Custom'>('3M SORA')
-    const [spread,        setSpread]        = useState('0.20')
-    const [customRate,    setCustomRate]    = useState('')
+    const [purchasePrice, setPurchasePrice] = useCalcDraft('purchasePrice', '1,000,000')
+    const [loanAmount,    setLoanAmount]    = useCalcDraft('loanAmount', '750,000')
+    const [cpfAmount,     setCpfAmount]     = useCalcDraft('cpfAmount', '')
+    const [tenure,        setTenure]        = useCalcDraft('tenure', '30')
+    const [rateRef,       setRateRef]       = useCalcDraft<'3M SORA' | '1M SORA' | 'Custom'>('rateRef', '3M SORA')
+    const [spread,        setSpread]        = useCalcDraft('spread', '0.20')
+    const [customRate,    setCustomRate]    = useCalcDraft('customRate', '')
     const [sora,          setSora]          = useState<SoraRates | null>(null)
 
     useEffect(() => {
@@ -182,6 +183,7 @@ function BUCCalculator() {
                         <Building2 size={18} className="text-violet-600" />
                     </span>
                     BUC Calculator
+                    <CalculatorResetButton className="ml-auto" />
                 </h1>
                 <p className="page-subtitle mt-1">
                     Progressive payment schedule for Building Under Construction properties.
@@ -491,7 +493,9 @@ function BUCCalculator() {
 export default function PropertyBucPage() {
     return (
         <PropertyPremiumGate>
-            <BUCCalculator />
+            <CalculatorDraftScope id="buc">
+                <BUCCalculator />
+            </CalculatorDraftScope>
         </PropertyPremiumGate>
     )
 }

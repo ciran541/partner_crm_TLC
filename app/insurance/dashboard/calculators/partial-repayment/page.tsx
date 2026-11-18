@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { CalculatorDraftScope, CalculatorResetButton, useCalcDraft } from '@/lib/calculators/draft'
 import Link from 'next/link'
 import { ArrowLeft, Plus, Trash2, Coins, Lock } from 'lucide-react'
 import { computePartialRepayment, type Prepayment } from '@/lib/insurance/partialRepaymentCalc'
@@ -27,14 +28,14 @@ const DEFAULT_SCHEDULE: RateScheduleEntry[] = [
     { thereafter: true, type: 'floating', reference: '3M SORA', spread: 1.00 },
 ]
 
-interface PrepayInput { afterYear: string; amount: string }
+interface PrepayInput { afterMonth: string; amount: string }
 
-export default function PartialRepaymentPage() {
-    const [loanAmount, setLoanAmount] = useState('1,000,000')
-    const [tenure, setTenure] = useState('30')
-    const [lockInInput, setLockInInput] = useState('')
-    const [schedule, setSchedule] = useState<RateScheduleEntry[]>(DEFAULT_SCHEDULE)
-    const [prepayments, setPrepayments] = useState<PrepayInput[]>([{ afterYear: '1', amount: '' }])
+function PartialRepaymentCalculator() {
+    const [loanAmount, setLoanAmount] = useCalcDraft('loanAmount', '1,000,000')
+    const [tenure, setTenure] = useCalcDraft('tenure', '30')
+    const [lockInInput, setLockInInput] = useCalcDraft('lockInInput', '')
+    const [schedule, setSchedule] = useCalcDraft<RateScheduleEntry[]>('schedule', DEFAULT_SCHEDULE)
+    const [prepayments, setPrepayments] = useCalcDraft<PrepayInput[]>('prepayments', [{ afterMonth: '12', amount: '' }])
     const [sora, setSora] = useState<SoraRates | null>(null)
 
     useEffect(() => {
@@ -50,8 +51,8 @@ export default function PartialRepaymentPage() {
 
     const parsedPrepayments: Prepayment[] = useMemo(
         () => prepayments
-            .map(p => ({ afterYear: parseInt(p.afterYear), amount: parseFloat(p.amount.replace(/,/g, '')) }))
-            .filter(p => !isNaN(p.afterYear) && !isNaN(p.amount) && p.amount > 0),
+            .map(p => ({ afterMonth: parseInt(p.afterMonth), amount: parseFloat(p.amount.replace(/,/g, '')) }))
+            .filter(p => !isNaN(p.afterMonth) && !isNaN(p.amount) && p.amount > 0),
         [prepayments]
     )
 
@@ -59,15 +60,23 @@ export default function PartialRepaymentPage() {
         () => computePartialRepayment(loan, ten, schedule, sora, parsedPrepayments),
         [loan, ten, schedule, sora, parsedPrepayments]
     )
-    const { rows, totalInterest, baselineInterest, interestSaved, totalPrepaid } = result
+    const { rows: allRows, totalInterest, baselineInterest, interestSaved, totalPrepaid } = result
+    // Once the loan is paid off early, show a single "Paid off" month rather than
+    // hundreds of empty months running out the rest of the tenure.
+    const rows = useMemo(() => {
+        const paidIdx = allRows.findIndex(r => r.instalment == null && r.balance === 0)
+        return paidIdx >= 0 ? allRows.slice(0, paidIdx + 1) : allRows
+    }, [allRows])
     const hasPrepayments = parsedPrepayments.length > 0
 
     const lockInRaw = parseInt(lockInInput)
     const lockInYears = isNaN(lockInRaw) || lockInRaw < 0 ? 0 : lockInRaw
 
+    const lockInMonths = lockInYears * 12
+
     const totalPrincipal = rows
-        .filter(r => r.yearPrincipal != null)
-        .reduce((s, r) => s + (r.yearPrincipal ?? 0), 0)
+        .filter(r => r.principal != null)
+        .reduce((s, r) => s + (r.principal ?? 0), 0)
 
     function updateRow(idx: number, patch: Partial<RateScheduleEntry>) {
         setSchedule(s => s.map((e, i) => i === idx ? { ...e, ...patch } : e))
@@ -97,7 +106,7 @@ export default function PartialRepaymentPage() {
     }
 
     function addPrepayment() {
-        setPrepayments(p => [...p, { afterYear: '', amount: '' }])
+        setPrepayments(p => [...p, { afterMonth: '', amount: '' }])
     }
     function updatePrepayment(idx: number, patch: Partial<PrepayInput>) {
         setPrepayments(p => p.map((e, i) => i === idx ? { ...e, ...patch } : e))
@@ -126,6 +135,7 @@ export default function PartialRepaymentPage() {
                         <Coins size={18} className="text-[#03a9e7]" />
                     </span>
                     Partial Repayment Calculator
+                    <CalculatorResetButton className="ml-auto" />
                 </h1>
                 <p className="page-subtitle mt-1">See how lump-sum repayments lower the instalment and cut total interest.</p>
             </div>
@@ -301,25 +311,30 @@ export default function PartialRepaymentPage() {
                                 <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     Partial Repayments
                                 </span>
-                                <span className="text-[10px] text-slate-400">applied at the start of the following year</span>
+                                <span className="text-[10px] text-slate-400">applied at the start of the following month</span>
                             </div>
 
                             <div className="space-y-2">
                                 {prepayments.map((p, idx) => {
-                                    const yr = parseInt(p.afterYear)
-                                    const invalidYear = p.afterYear !== '' && (isNaN(yr) || yr < 1 || yr >= ten)
+                                    const mth = parseInt(p.afterMonth)
+                                    const invalidMonth = p.afterMonth !== '' && (isNaN(mth) || mth < 1 || mth >= ten * 12)
                                     return (
                                         <div key={idx} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50/60">
-                                            <span className="text-xs font-semibold text-slate-400 shrink-0">After Year</span>
+                                            <span className="text-xs font-semibold text-slate-400 shrink-0">After Month</span>
                                             <input
                                                 type="number"
-                                                value={p.afterYear}
-                                                onChange={e => updatePrepayment(idx, { afterYear: e.target.value })}
-                                                placeholder="1"
+                                                value={p.afterMonth}
+                                                onChange={e => updatePrepayment(idx, { afterMonth: e.target.value })}
+                                                placeholder="12"
                                                 min={1}
-                                                max={ten - 1}
-                                                className={`${inp} w-20 ${invalidYear ? 'border-red-300 focus:border-red-400 focus:ring-red-100' : ''}`}
+                                                max={ten * 12 - 1}
+                                                className={`${inp} w-20 ${invalidMonth ? 'border-red-300 focus:border-red-400 focus:ring-red-100' : ''}`}
                                             />
+                                            {!invalidMonth && mth >= 1 && (
+                                                <span className="text-[10px] text-slate-400 shrink-0 hidden sm:inline">
+                                                    Yr {Math.ceil(mth / 12)}{mth % 12 ? `, mth ${mth % 12}` : ' end'}
+                                                </span>
+                                            )}
                                             <div className="relative flex-1">
                                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">$</span>
                                                 <input
@@ -411,52 +426,60 @@ export default function PartialRepaymentPage() {
                 </div>
             </div>
 
-            {/* ── Year-by-year table ── */}
+            {/* ── Month-by-month table ── */}
             {rows.length > 0 && (
                 <div className="card overflow-hidden">
                     <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                        <h3 className="section-label mb-0">Year-by-Year Breakdown</h3>
+                        <h3 className="section-label mb-0">Month-by-Month Breakdown</h3>
                         <span className="text-[11px] text-slate-400">
-                            Repayment applied at the start of the year
+                            Repayment applied at the start of the month
                         </span>
                     </div>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-auto max-h-[70vh]">
                         <table className="w-full text-sm">
-                            <thead>
+                            <thead className="sticky top-0 z-10">
                                 <tr className="bg-slate-50 border-b border-slate-200">
-                                    <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider w-14">Yr</th>
+                                    <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider w-14">Mth</th>
                                     <th className="px-4 py-3 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wider">Rate</th>
                                     <th className="px-4 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Partial Redemption</th>
                                     <th className="px-4 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Mthly Instalment</th>
-                                    <th className="px-4 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Principal (yr)</th>
-                                    <th className="px-4 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Interest (yr)</th>
+                                    <th className="px-4 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Principal</th>
+                                    <th className="px-4 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Interest</th>
                                     <th className="px-4 py-3 text-right text-[11px] font-bold text-slate-500 uppercase tracking-wider">Balance</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {rows.map((row, i) => {
                                     const hasData = row.instalment != null
-                                    const isLockinRow = row.year <= lockInYears
-                                    const isLastLockin = row.year === lockInYears && lockInYears > 0
-                                    const isFirstOol = row.year === lockInYears + 1 && lockInYears > 0
+                                    const isLockinRow = row.month <= lockInMonths
+                                    const isLastLockin = row.month === lockInMonths && lockInMonths > 0
+                                    const isFirstOol = row.month === lockInMonths + 1 && lockInMonths > 0
+                                    const isYearStart = (row.month - 1) % 12 === 0
                                     const hasPrepay = row.prepayment > 0
 
                                     return [
-                                        isFirstOol && (
-                                            <tr key={`sep-${row.year}`}>
+                                        isYearStart && (
+                                            <tr key={`sep-${row.month}`}>
                                                 <td colSpan={7} className="px-4 py-1.5 bg-slate-50 border-t border-b border-slate-100">
                                                     <div className="flex items-center gap-3">
-                                                        <div className="flex-1 h-px bg-slate-200" />
-                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                                            Out of lock-in
+                                                        <span className={`text-[10px] font-bold uppercase tracking-wider ${isLockinRow ? 'text-[#03a9e7]' : 'text-slate-500'}`}>
+                                                            Year {row.year}
                                                         </span>
                                                         <div className="flex-1 h-px bg-slate-200" />
+                                                        {isFirstOol && (
+                                                            <>
+                                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                                                    Out of lock-in
+                                                                </span>
+                                                                <div className="flex-1 h-px bg-slate-200" />
+                                                            </>
+                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>
                                         ),
                                         <tr
-                                            key={row.year}
+                                            key={row.month}
                                             className={`border-b transition-colors ${
                                                 hasPrepay
                                                     ? 'border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50/70'
@@ -471,7 +494,7 @@ export default function PartialRepaymentPage() {
                                                 <div className="flex items-center gap-0 h-full">
                                                     <div className={`w-1 self-stretch rounded-r mr-3 ${isLockinRow ? 'bg-[#03a9e7]' : 'bg-transparent'}`} />
                                                     <span className={`font-bold ${isLockinRow ? 'text-[#03a9e7]' : 'text-slate-400'}`}>
-                                                        {row.year}
+                                                        {row.month}
                                                     </span>
                                                 </div>
                                             </td>
@@ -499,10 +522,10 @@ export default function PartialRepaymentPage() {
                                                 {hasData ? `$${fmt(row.instalment)}` : <span className="text-slate-200 text-xs">—</span>}
                                             </td>
                                             <td className="px-4 py-3 text-right text-slate-600">
-                                                {hasData ? `$${fmt(row.yearPrincipal)}` : <span className="text-slate-200 text-xs">—</span>}
+                                                {hasData ? `$${fmt(row.principal)}` : <span className="text-slate-200 text-xs">—</span>}
                                             </td>
                                             <td className="px-4 py-3 text-right text-slate-600">
-                                                {hasData ? `$${fmt(row.yearInterest)}` : <span className="text-slate-200 text-xs">—</span>}
+                                                {hasData ? `$${fmt(row.interest)}` : <span className="text-slate-200 text-xs">—</span>}
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 {hasData ? (
@@ -523,6 +546,8 @@ export default function PartialRepaymentPage() {
                                     ]
                                 })}
 
+                            </tbody>
+                            <tfoot className="sticky bottom-0 z-10">
                                 {/* Totals row */}
                                 <tr className="bg-slate-50 border-t-2 border-slate-200">
                                     <td className="px-4 py-3 text-xs font-black text-slate-600 uppercase tracking-wider" colSpan={2}>
@@ -540,7 +565,7 @@ export default function PartialRepaymentPage() {
                                     </td>
                                     <td className="px-4 py-3" />
                                 </tr>
-                            </tbody>
+                            </tfoot>
                         </table>
                     </div>
                 </div>
@@ -667,5 +692,13 @@ function RateRow({
                 </button>
             )}
         </div>
+    )
+}
+
+export default function PartialRepaymentPage() {
+    return (
+        <CalculatorDraftScope id="partial-repayment">
+            <PartialRepaymentCalculator />
+        </CalculatorDraftScope>
     )
 }

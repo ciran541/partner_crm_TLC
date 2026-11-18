@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
+import { CalculatorDraftScope, CalculatorResetButton, useCalcDraft } from '@/lib/calculators/draft'
 import Link from 'next/link'
 import { ArrowLeft, Users } from 'lucide-react'
 import { monthlyInstallment, TDSR_LIMIT, MSR_LIMIT, NOA_FACTOR } from '@/lib/insurance/loanCalc'
@@ -38,7 +39,10 @@ function compute(
     const hEmpL    = Math.max(M / MSR_LIMIT, (M + L) / TDSR_LIMIT)
     const hSelfEff  = Math.max(M / MSR_LIMIT, M / TDSR_LIMIT)
     const hSelfAnn  = hSelfEff / NOA_FACTOR * 12
-    const hSelfLAnn = hSelfAnn
+    // Liability counts against TDSR only (MSR is the mortgage alone), so the binding
+    // ratio is whichever of MSR / TDSR-with-liability demands more income — same rule
+    // as the employed-with-liability column, then grossed up for the NOA haircut.
+    const hSelfLAnn = Math.max(M / MSR_LIMIT, (M + L) / TDSR_LIMIT) / NOA_FACTOR * 12
 
     return {
         M,
@@ -180,10 +184,10 @@ function IncomeTable({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function AffordabilityPage() {
-    const [loanAmount, setLoanAmount] = useState('900,000')
-    const [tenure, setTenure]         = useState('30')
-    const [liability, setLiability]   = useState('')
+function AffordabilityCalculator() {
+    const [loanAmount, setLoanAmount] = useCalcDraft('loanAmount', '900,000')
+    const [tenure, setTenure]         = useCalcDraft('tenure', '30')
+    const [liability, setLiability]   = useCalcDraft('liability', '')
 
     const loan   = parseFloat(loanAmount.replace(/,/g, '')) || 0
     const tenRaw = parseInt(tenure)
@@ -218,6 +222,7 @@ export default function AffordabilityPage() {
                         <Users size={18} className="text-emerald-600" />
                     </span>
                     Reverse Affordability
+                    <CalculatorResetButton className="ml-auto" />
                 </h1>
                 <p className="page-subtitle mt-1">Find the minimum income needed to qualify for a given loan.</p>
             </div>
@@ -336,5 +341,13 @@ export default function AffordabilityPage() {
                 </div>
             )}
         </div>
+    )
+}
+
+export default function AffordabilityPage() {
+    return (
+        <CalculatorDraftScope id="reverse-affordability">
+            <AffordabilityCalculator />
+        </CalculatorDraftScope>
     )
 }

@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
+import { CalculatorDraftScope, CalculatorResetButton, useCalcDraft } from '@/lib/calculators/draft'
 import Link from 'next/link'
 import { ArrowLeft, Receipt, Minus, Plus } from 'lucide-react'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
@@ -117,12 +118,12 @@ function StatusBtns({ value, onChange }: { value: Status; onChange: (v: Status) 
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-export default function StampDutyPage() {
-    const [propertyValue, setPropertyValue] = useState('1,000,000')
-    const [purchaseType, setPurchaseType] = useState<PurchaseType>('single')
-    const [yourStatus, setYourStatus]     = useState<Status>('sc')
-    const [partnerStatus, setPartnerStatus] = useState<Status>('sc')
-    const [existingCount, setExistingCount] = useState(0)
+function StampDutyCalculator() {
+    const [propertyValue, setPropertyValue] = useCalcDraft('propertyValue', '1,000,000')
+    const [purchaseType, setPurchaseType] = useCalcDraft<PurchaseType>('purchaseType', 'single')
+    const [yourStatus, setYourStatus]     = useCalcDraft<Status>('yourStatus', 'sc')
+    const [partnerStatus, setPartnerStatus] = useCalcDraft<Status>('partnerStatus', 'sc')
+    const [existingCount, setExistingCount] = useCalcDraft('existingCount', 0)
 
     const value   = parseFloat(propertyValue.replace(/,/g, '')) || 0
     const isJoint = purchaseType !== 'single'
@@ -150,6 +151,7 @@ export default function StampDutyPage() {
                         <Receipt size={18} className="text-amber-600" />
                     </span>
                     Stamp Duty Calculator
+                    <CalculatorResetButton className="ml-auto" />
                 </h1>
                 <p className="page-subtitle mt-1">Compute BSD and ABSD for your Singapore property purchase.</p>
             </div>
@@ -357,5 +359,13 @@ export default function StampDutyPage() {
                 </div>
             )}
         </div>
+    )
+}
+
+export default function StampDutyPage() {
+    return (
+        <CalculatorDraftScope id="stamp-duty">
+            <StampDutyCalculator />
+        </CalculatorDraftScope>
     )
 }

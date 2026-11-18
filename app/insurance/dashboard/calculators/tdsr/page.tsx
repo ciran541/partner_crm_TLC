@@ -1,10 +1,14 @@
 'use client'
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
+import { CalculatorDraftScope, CalculatorResetButton, useCalcDraft } from '@/lib/calculators/draft'
 import Link from 'next/link'
 import { ArrowLeft, BarChart3, Plus, Minus } from 'lucide-react'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 import { TDSR_LIMIT, MSR_LIMIT, NOA_FACTOR, STRESS_TEST_RATE, incomeWeightedAge } from '@/lib/insurance/loanCalc'
+import { OPTION_MATRIX, maxPurchaseFromLoan, type MaxPurchaseBreakdown as PurchaseBreakdown, type PurchasePropertyType } from '@/lib/insurance/purchaseCalc'
+import type { Residency } from '@/lib/insurance/stampDuty'
+import MaxPurchaseBreakdown from '@/components/shared/MaxPurchaseBreakdown'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -19,6 +23,14 @@ const PROP_OPTS = {
 
 type PropertyType = 'hdb' | 'private' | 'ec'
 type Employment   = 'employed' | 'selfEmployed'
+
+// Fee schedule (legal / valuation) for the purchase-price breakdown. This page's
+// three types map onto the purchase workflow's: HDB → resale HDB, Private →
+// resale condo, EC → EC new launch. Assumes no outstanding housing loan — the
+// same assumption behind the 5% / 10% cash notes on the option cards.
+const FEE_TYPE: Record<PropertyType, PurchasePropertyType> = {
+    hdb: 'resale_hdb', private: 'resale_condo', ec: 'ec_new_launch',
+}
 
 interface Borrower {
     employment:         Employment
@@ -222,7 +234,7 @@ function BorrowerCard({ index, data, onChange }: {
 // ── Loan option card ──────────────────────────────────────────────────────────
 
 function LoanOptionCard({
-    label, maxAge, maxTen, loan, tenure, onTenureChange, bindingLabel, payment, na, cashNote,
+    label, maxAge, maxTen, loan, tenure, onTenureChange, bindingLabel, payment, na, cashNote, purchase,
 }: {
     label: string
     maxAge: number
@@ -234,6 +246,7 @@ function LoanOptionCard({
     payment: number
     na: boolean
     cashNote: string
+    purchase: PurchaseBreakdown | null
 }) {
     return (
         <div className={`card overflow-hidden transition-opacity ${na ? 'opacity-40 pointer-events-none' : ''}`}>
@@ -308,6 +321,8 @@ function LoanOptionCard({
                         </div>
                     </div>
                 )}
+
+                {!na && purchase && <MaxPurchaseBreakdown b={purchase} accent="#03a9e7" />}
             </div>
         </div>
     )
@@ -315,12 +330,15 @@ function LoanOptionCard({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function TDSRPage() {
-    const [numBorrowers, setNumBorrowers] = useState(1)
-    const [borrowers,    setBorrowers]   = useState<Borrower[]>([defaultBorrower()])
-    const [propertyType, setPropertyType] = useState<PropertyType>('private')
+function TDSRCalculator() {
+    const [numBorrowers, setNumBorrowers] = useCalcDraft('numBorrowers', 1)
+    const [borrowers,    setBorrowers]   = useCalcDraft<Borrower[]>('borrowers', [defaultBorrower()])
+    const [propertyType, setPropertyType] = useCalcDraft<PropertyType>('propertyType', 'private')
     const [adjTenure1,   setAdjTenure1]  = useState<number | null>(null)
     const [adjTenure2,   setAdjTenure2]  = useState<number | null>(null)
+    // ABSD profile for the purchase-price breakdown — highest-rate buyer on the purchase
+    const [residency,     setResidency]     = useCalcDraft<Residency>('residency', 'singaporean')
+    const [propertyCount, setPropertyCount] = useCalcDraft<1 | 2 | 3>('propertyCount', 1)
 
     // Sync borrower array length
     useEffect(() => {
@@ -329,7 +347,7 @@ export default function TDSRPage() {
             while (next.length < numBorrowers) next.push(defaultBorrower())
             return next.slice(0, numBorrowers)
         })
-    }, [numBorrowers])
+    }, [numBorrowers, setBorrowers])
 
     const liab        = useMemo(() => borrowers.reduce((s, b) => s + parseMoney(b.monthlyLiabilities), 0), [borrowers])
     const totalIncome = useMemo(() => borrowers.reduce((s, b) => s + effectiveIncome(b), 0), [borrowers])
@@ -357,9 +375,14 @@ export default function TDSRPage() {
 
     const hasIncome = totalIncome > 0
 
+    const [o1, o2] = OPTION_MATRIX['0']
+    const purchaseArgs = { propertyType: FEE_TYPE[propertyType], residency, propertyCount }
+    const purchase1 = maxPurchaseFromLoan({ loan: loan1, option: o1, ...purchaseArgs })
+    const purchase2 = maxPurchaseFromLoan({ loan: loan2, option: o2, ...purchaseArgs })
+
     const updateBorrower = useCallback((i: number, data: Borrower) => {
         setBorrowers(prev => prev.map((b, idx) => idx === i ? data : b))
-    }, [])
+    }, [setBorrowers])
 
     const bindingLabel = bindingIsMSR ? 'MSR 30%' : 'TDSR 55%'
 
@@ -379,6 +402,7 @@ export default function TDSRPage() {
                         <BarChart3 size={18} className="text-[#03a9e7]" />
                     </span>
                     Affordability
+                    <CalculatorResetButton className="ml-auto" />
                 </h1>
                 <p className="page-subtitle mt-1">
                     Loan eligibility from income, IWAA and property type. Stress-tested at {STRESS_RATE}%.
@@ -431,6 +455,41 @@ export default function TDSRPage() {
                             onChange={setPropertyType}
                         />
                     </div>
+
+                    {/* ABSD profile — drives the stamp duty in the purchase-price breakdown */}
+                    <div className="flex flex-wrap gap-x-8 gap-y-4">
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+                                Buyer Residency <span className="font-normal normal-case text-slate-400">(for ABSD)</span>
+                            </label>
+                            <Seg<Residency>
+                                options={[
+                                    { value: 'singaporean', label: 'Citizen' },
+                                    { value: 'pr',          label: 'PR' },
+                                    { value: 'foreigner',   label: 'Foreigner' },
+                                ]}
+                                value={residency}
+                                onChange={setResidency}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+                                This Purchase Is
+                            </label>
+                            <Seg<'1' | '2' | '3'>
+                                options={[
+                                    { value: '1', label: '1st property' },
+                                    { value: '2', label: '2nd' },
+                                    { value: '3', label: '3rd+' },
+                                ]}
+                                value={String(propertyCount) as '1' | '2' | '3'}
+                                onChange={v => setPropertyCount(parseInt(v) as 1 | 2 | 3)}
+                            />
+                        </div>
+                    </div>
+                    {numBorrowers > 1 && (
+                        <p className="text-[11px] text-slate-400 -mt-3">Joint purchase: pick the buyer with the highest ABSD rate.</p>
+                    )}
                 </div>
             </div>
 
@@ -498,6 +557,7 @@ export default function TDSRPage() {
                             payment={binding}
                             na={maxTen1 <= 0}
                             cashNote="Min 5% Cash Downpayment"
+                            purchase={purchase1}
                         />
                         <LoanOptionCard
                             label="Option 2"
@@ -510,10 +570,19 @@ export default function TDSRPage() {
                             payment={binding}
                             na={maxTen2 <= 0}
                             cashNote="Min 10% Cash Downpayment"
+                            purchase={purchase2}
                         />
                     </div>
                 </div>
             )}
         </div>
+    )
+}
+
+export default function TDSRPage() {
+    return (
+        <CalculatorDraftScope id="affordability">
+            <TDSRCalculator />
+        </CalculatorDraftScope>
     )
 }

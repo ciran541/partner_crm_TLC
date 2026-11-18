@@ -26,6 +26,8 @@ import {
     MIN_TENURE,
     DEFAULT_REFERENCE_RATE,
     checkBorrowerAges,
+    fundsRequiredForInstalment,
+    instalmentFromFunds,
 } from '@/lib/insurance/loanCalc'
 import { iwaa, averageAge } from '@/lib/insurance/refiCalc'
 import { weightedAge } from '@/lib/insurance/purchaseCalc'
@@ -301,5 +303,32 @@ describe('SORA staleness', () => {
         expect(isSoraStale(null)).toBe(false)
         expect(isSoraStale('not-a-date')).toBe(false)
         expect(soraAgeDays(undefined)).toBeNull()
+    })
+})
+
+// ── Pledge / show funds (figures from the TLC spreadsheet) ───────────────────
+
+describe('fundsRequiredForInstalment', () => {
+    it('matches the spreadsheet for a $5,160 shortfall', () => {
+        const tdsr = fundsRequiredForInstalment(5160, 'tdsr')
+        expect(tdsr.pledge).toBeCloseTo(450_327.27, 2)
+        expect(tdsr.show).toBeCloseTo(1_501_090.91, 2)
+        const msr = fundsRequiredForInstalment(5160, 'msr')
+        expect(msr.pledge).toBeCloseTo(825_600, 2)
+        expect(msr.show).toBeCloseTo(2_752_000, 2)
+    })
+    it('returns zero for no shortfall', () => {
+        expect(fundsRequiredForInstalment(0, 'tdsr')).toEqual({ pledge: 0, show: 0 })
+    })
+})
+
+describe('instalmentFromFunds', () => {
+    it('matches the spreadsheet for $200,000 of spare cash', () => {
+        const tdsr = instalmentFromFunds(200_000, 'tdsr')
+        expect(Math.round(tdsr.pledge)).toBe(2292)
+        expect(Math.round(tdsr.show)).toBe(688)
+        const msr = instalmentFromFunds(200_000, 'msr')
+        expect(msr.pledge).toBeCloseTo(1250, 6)
+        expect(msr.show).toBeCloseTo(375, 6)
     })
 })
