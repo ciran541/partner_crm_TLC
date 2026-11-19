@@ -12,7 +12,6 @@ export default function KnowledgePage() {
                 <h1 className="ios-page-title flex items-center gap-2">
                     <BookOpen size={24} className="text-[#03a9e7]" /> Knowledge
                 </h1>
-                <p className="page-subtitle">Ask anything about the mortgage process — you&apos;ll get a direct answer from TLC&apos;s playbook.</p>
             </div>
             <div className="card p-5">
                 <KnowledgeAsk autoFocus />

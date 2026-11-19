@@ -5,6 +5,7 @@ import { Sparkles, Search, CornerDownLeft, Info } from 'lucide-react'
 import { KnowledgeArticle } from '@/lib/types/knowledge'
 import KnowledgeArticleView from './KnowledgeArticleView'
 import Spinner from '@/components/shared/Spinner'
+import Modal from '@/components/shared/Modal'
 
 type Source = Pick<KnowledgeArticle, 'id' | 'title' | 'content' | 'category' | 'tags'>
 
@@ -29,6 +30,7 @@ export default function KnowledgeAsk({ autoFocus }: Props) {
     const [loading, setLoading] = useState(false)
     const [result, setResult] = useState<AskResult | null>(null)
     const [asked, setAsked] = useState('')
+    const [showDisclaimer, setShowDisclaimer] = useState(false)
 
     const ask = async () => {
         const question = q.trim()
@@ -73,8 +75,9 @@ export default function KnowledgeAsk({ autoFocus }: Props) {
                 </button>
             </div>
 
-            <p className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                <Info size={12} /> Answers come only from TLC&apos;s knowledge base. Ask general questions — avoid typing client personal details.
+            <p className="flex items-start gap-1.5 text-[11px] text-slate-400">
+                <Info size={12} className="shrink-0 mt-px" />
+                Answers are drawn from TLC&apos;s knowledge base. Please verify important details with the relevant banker or lawyer before advising clients.
             </p>
 
             {loading && (
@@ -129,8 +132,30 @@ export default function KnowledgeAsk({ autoFocus }: Props) {
                 </div>
             )}
 
-            {!loading && !result && (
-                <p className="text-xs text-slate-400 text-center py-6">Ask anything about the mortgage process. You&apos;ll get a direct answer drawn from TLC&apos;s playbook.</p>
+            <div className="flex justify-end">
+                <button
+                    type="button"
+                    onClick={() => setShowDisclaimer(true)}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-slate-600 border border-slate-200 hover:border-slate-300 rounded-md px-2 py-0.5 transition-colors"
+                >
+                    Disclaimer
+                </button>
+            </div>
+
+            {showDisclaimer && (
+                <Modal title="Important Notice" onClose={() => setShowDisclaimer(false)}>
+                    <div className="space-y-3 text-sm text-slate-600 leading-relaxed">
+                        <p>
+                            Information provided by TLC HUB is intended for general guidance and reference only. While we strive to ensure accuracy,
+                            information may be incomplete, outdated or subject to changes in bank policies and regulatory requirements.
+                        </p>
+                        <p>
+                            Users are responsible for independently verifying relevant information with bankers, lawyers or other qualified
+                            professionals where necessary. TLC shall not be liable for any loss or damage arising from reliance on the information
+                            provided, to the extent permitted by applicable law.
+                        </p>
+                    </div>
+                </Modal>
             )}
         </div>
     )

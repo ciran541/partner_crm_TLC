@@ -932,6 +932,7 @@ export default function PurchaseWorkflowPanel({
                                     </div>
                                 )}
                                 <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                    <div className="table-scroll">
                                     <table className="w-full text-sm">
                                         <thead>
                                             <tr className="bg-slate-50 border-b border-slate-200">
@@ -971,6 +972,7 @@ export default function PurchaseWorkflowPanel({
                                             </tr>
                                         </tfoot>
                                     </table>
+                                    </div>
                                 </div>
                                 <div className="flex gap-5 flex-wrap">
                                     <div className="flex items-center gap-2">
@@ -1265,6 +1267,7 @@ export default function PurchaseWorkflowPanel({
                                     ]
                                     return (
                                         <div className="rounded-lg border border-slate-200 overflow-hidden">
+                                            <div className="table-scroll">
                                             <table className="w-full text-sm">
                                                 <thead>
                                                     <tr className="bg-slate-50 border-b border-slate-200">
@@ -1333,6 +1336,7 @@ export default function PurchaseWorkflowPanel({
                                                     )}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         </div>
                                     )
                                 })()}

@@ -144,6 +144,7 @@ export default function CalendarAdminView() {
                 />
             ) : (
                 <div className="card overflow-hidden">
+                    <div className="table-scroll">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide">
@@ -187,6 +188,7 @@ export default function CalendarAdminView() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 

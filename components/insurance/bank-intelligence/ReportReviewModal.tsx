@@ -3,8 +3,7 @@
 import { useState } from 'react'
 import { X, ExternalLink } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
-import { safeHttpUrl } from '@/lib/types/news'
-import { isPdfUrl, type BankIntelligenceReport } from '@/lib/types/bankIntelligence'
+import { isPdfUrl, reportLinkHref, type BankIntelligenceReport } from '@/lib/types/bankIntelligence'
 
 interface Props {
     report: BankIntelligenceReport
@@ -20,7 +19,7 @@ interface Props {
 // than forcing a full re-extraction.
 export default function ReportReviewModal({ report, saving, onSave, onReExtract, reExtracting, onClose }: Props) {
     const [summary, setSummary] = useState(report.summary ?? '')
-    const pdfHref = safeHttpUrl(report.pdf_url)
+    const pdfHref = reportLinkHref(report)
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(5,45,74,0.5)', backdropFilter: 'blur(4px)' }}>
@@ -28,7 +27,7 @@ export default function ReportReviewModal({ report, saving, onSave, onReExtract,
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
                     <div>
                         <h3 className="text-lg font-bold text-[#052d4a]">{report.title}</h3>
-                        <p className="text-xs text-slate-500 mt-0.5">{report.bank} · {report.published_date ? new Date(report.published_date).toLocaleDateString('en-SG') : '—'}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{report.bank}{report.series ? ` · ${report.series}` : ''} ·{report.published_date ? new Date(report.published_date).toLocaleDateString('en-SG') : '—'}</p>
                     </div>
                     <button onClick={onClose} className="p-1 hover:bg-slate-200 rounded-full transition-colors text-slate-400"><X size={20} /></button>
                 </div>
@@ -36,7 +35,7 @@ export default function ReportReviewModal({ report, saving, onSave, onReExtract,
                 <div className="p-6 overflow-y-auto flex-1 space-y-3">
                     {pdfHref && (
                         <a href={pdfHref} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-[#03a9e7] hover:text-[#0284c7] flex items-center gap-1 w-fit">
-                            {pdfHref && isPdfUrl(pdfHref) ? 'View original PDF' : 'View original article'} <ExternalLink size={12} />
+                            {isPdfUrl(report.pdf_url) ? 'View original PDF' : 'View original article'} <ExternalLink size={12} />
                         </a>
                     )}
 

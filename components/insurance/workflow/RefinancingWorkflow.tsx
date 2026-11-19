@@ -1265,6 +1265,7 @@ export default function RefinancingWorkflowPanel({
                             ]
                             return (
                                 <div className="rounded-xl border border-slate-200 overflow-hidden">
+                                    <div className="table-scroll">
                                     <table className="w-full text-sm">
                                         <thead>
                                             <tr className="bg-slate-50 border-b border-slate-200">
@@ -1333,6 +1334,7 @@ export default function RefinancingWorkflowPanel({
                                             )}
                                         </tbody>
                                     </table>
+                                    </div>
                                 </div>
                             )
                         }
@@ -2074,6 +2076,7 @@ function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenureMin, te
 
             {/* Table — tenure inputs embedded in column headers */}
             <div className="rounded-lg border border-slate-200 overflow-hidden">
+                <div className="table-scroll">
                 <table className="w-full text-sm">
                     <thead>
                         <tr className="bg-slate-50 border-b border-slate-200">
@@ -2146,6 +2149,7 @@ function TenureComparison({ loan, ratePct, rateLabel, lockinYears, tenureMin, te
                         })()}
                     </tbody>
                 </table>
+                </div>
             </div>
 
             {grossIncome != null && grossIncome > 0 && (() => {

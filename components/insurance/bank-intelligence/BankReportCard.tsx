@@ -2,8 +2,7 @@
 
 import { useState } from 'react'
 import { Landmark, ExternalLink, ChevronRight } from 'lucide-react'
-import { isPdfUrl, stripMarkdownPreview, type BankIntelligenceReport } from '@/lib/types/bankIntelligence'
-import { safeHttpUrl } from '@/lib/types/news'
+import { isPdfUrl, reportLinkHref, stripMarkdownPreview, type BankIntelligenceReport } from '@/lib/types/bankIntelligence'
 import SummaryViewModal from '@/components/insurance/bank-intelligence/SummaryViewModal'
 
 const BANK_COLORS: Record<string, string> = {
@@ -17,7 +16,7 @@ const BANK_COLORS: Record<string, string> = {
 
 export default function BankReportCard({ report }: { report: BankIntelligenceReport }) {
     const [viewing, setViewing] = useState(false)
-    const pdfHref = safeHttpUrl(report.pdf_url)
+    const pdfHref = reportLinkHref(report)
     const preview = report.summary ? stripMarkdownPreview(report.summary) : null
 
     return (
@@ -28,6 +27,9 @@ export default function BankReportCard({ report }: { report: BankIntelligenceRep
                         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 ${BANK_COLORS[report.bank_key] ?? 'bg-slate-100 text-slate-600'}`}>
                             <Landmark size={11} /> {report.bank}
                         </span>
+                        {report.series && (
+                            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{report.series}</span>
+                        )}
                         <span className="text-xs text-slate-400">
                             {report.published_date ? new Date(report.published_date).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
                         </span>
@@ -35,7 +37,7 @@ export default function BankReportCard({ report }: { report: BankIntelligenceRep
                     {pdfHref && (
                         <a href={pdfHref} target="_blank" rel="noopener noreferrer"
                             className="text-xs font-semibold text-[#03a9e7] hover:text-[#0284c7] flex items-center gap-1 shrink-0">
-                            {isPdfUrl(pdfHref) ? 'Original PDF' : 'Original Article'} <ExternalLink size={12} />
+                            {isPdfUrl(report.pdf_url) ? 'Original PDF' : 'Original Article'} <ExternalLink size={12} />
                         </a>
                     )}
                 </div>

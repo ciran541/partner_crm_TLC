@@ -164,6 +164,7 @@ export default function AdminInsuranceAnalyticsPage() {
                     <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
                         <Users size={15} color="#8b5cf6" /><span className="text-sm font-semibold text-slate-700">Top Agents by Case Count</span>
                     </div>
+                    <div className="table-scroll">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-slate-100 bg-slate-50">
@@ -182,6 +183,7 @@ export default function AdminInsuranceAnalyticsPage() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
         </div>

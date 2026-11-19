@@ -462,7 +462,7 @@ function PartialRepaymentCalculator() {
                                             <tr key={`sep-${row.month}`}>
                                                 <td colSpan={7} className="px-4 py-1.5 bg-slate-50 border-t border-b border-slate-100">
                                                     <div className="flex items-center gap-3">
-                                                        <span className={`text-[10px] font-bold uppercase tracking-wider ${isLockinRow ? 'text-[#03a9e7]' : 'text-slate-500'}`}>
+                                                        <span className="text-[10px] font-bold uppercase tracking-wider text-red-600">
                                                             Year {row.year}
                                                         </span>
                                                         <div className="flex-1 h-px bg-slate-200" />

@@ -1113,6 +1113,7 @@ export default function EquityLoanWorkflowPanel({
                     ]
                     return (
                         <div className="rounded-xl border border-slate-200 overflow-hidden">
+                            <div className="table-scroll">
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="bg-slate-50 border-b border-slate-200">
@@ -1181,6 +1182,7 @@ export default function EquityLoanWorkflowPanel({
                                     )}
                                 </tbody>
                             </table>
+                            </div>
                         </div>
                     )
                 }

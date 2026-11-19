@@ -83,6 +83,7 @@ export default function CalendarPage() {
                 />
             ) : (
                 <div className="card overflow-hidden">
+                    <div className="table-scroll">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide">
@@ -107,6 +108,7 @@ export default function CalendarPage() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 
@@ -115,6 +117,7 @@ export default function CalendarPage() {
                     <div className="px-4 py-3 border-b border-slate-100">
                         <p className="text-[11px] font-bold text-[#052d4a] uppercase tracking-wider">Recent results</p>
                     </div>
+                    <div className="table-scroll">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide">
@@ -146,6 +149,7 @@ export default function CalendarPage() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 

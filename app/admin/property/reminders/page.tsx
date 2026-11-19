@@ -192,6 +192,7 @@ function Section({
                 <span className="text-sm font-semibold" style={{ color: headerColor.text }}>{title}</span>
                 <span className="ml-auto text-xs font-medium" style={{ color: headerColor.text }}>{rows.length}</span>
             </div>
+            <div className="table-scroll">
             <table className="w-full text-sm">
                 <thead>
                     <tr className="border-b border-slate-100 bg-slate-50">
@@ -247,6 +248,7 @@ function Section({
                     })}
                 </tbody>
             </table>
+            </div>
         </div>
     )
 }

@@ -53,6 +53,14 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Pin Turbopack's project root to this folder. Without it, Turbopack on this
+  // Windows machine intermittently inferred C:\Users\work (the parent) as the
+  // root, so PostCSS resolved `@import "tailwindcss"` from there and failed
+  // with "Can't resolve 'tailwindcss' in 'C:\Users\work'".
+  turbopack: {
+    root: __dirname,
+  },
+
   // pdf-parse (via pdfjs-dist) dynamically loads a separate worker script at
   // runtime — bundling it breaks that file resolution ("Setting up fake
   // worker failed", confirmed live). Keeping it external lets Node resolve

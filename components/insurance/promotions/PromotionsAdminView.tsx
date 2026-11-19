@@ -167,6 +167,7 @@ export default function PromotionsAdminView() {
                 />
             ) : (
                 <div className="card overflow-hidden">
+                    <div className="table-scroll">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide">
@@ -221,6 +222,7 @@ export default function PromotionsAdminView() {
                             })}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 

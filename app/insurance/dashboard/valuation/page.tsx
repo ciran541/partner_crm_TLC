@@ -119,6 +119,7 @@ export default function ValuationFeesPage() {
                             <p className="text-[12px] text-slate-600 leading-relaxed">{result.note}</p>
                         </div>
                     )}
+                    <div className="table-scroll">
                     <table className="w-full text-sm">
                         <tbody>
                             {result.entries.map((entry, i) => (
@@ -136,6 +137,7 @@ export default function ValuationFeesPage() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 

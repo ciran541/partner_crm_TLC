@@ -69,7 +69,8 @@ export interface LawFirm {
     note?: string
     contact: string
     mobile: string
-    location: string
+    /** Optional — omitted when the firm hasn't told us. */
+    location?: string
     /** true = on that bank's panel. */
     panel: Record<PanelBank, boolean>
     /** Fee display strings. 'N/A' where the firm doesn't offer it. */
@@ -160,6 +161,27 @@ const ALL_LAW_FIRMS: LawFirm[] = [
             hdb_redemption: '$700\n($900 if using CPF)', pte_redemption: '$700\n($900 if using CPF)',
             bridging: '$500', decoupling: '$7,000 (Private)\n$5,588 (HDB)',
             hdb_divorce: 'starting from $4,500', pte_divorce: 'starting from $5,500', fresh_cpf: '$1,800',
+        },
+    },
+    {
+        name: 'AT Law',
+        contact: 'Timothy',
+        mobile: '92290016',
+        // Location not given in their message — left blank (the card hides it).
+        panel: { DBS: T, OCBC: T, UOB: T, SCB: T, HSBC: T, Maybank: T, CIMB: F, RHB: F, HLF: F, BOC: F, Citibank: T },
+        // From AT Law's "indicative conveyancing fees" message (Nov 2026). Fee
+        // types not in that message are 'N/A' (rendered as "—"); for anything
+        // outside these criteria they review case by case.
+        fees: {
+            hdb_refi: 'N/A', pte_refi: '$1,800 – $2,000\n(below $2m)', pte_refi_ntl: 'N/A', pte_buc_refi: 'N/A',
+            hdb_resale: '$1,800 + GST\n(below $800k)', hdb_bto: '$2,800',
+            condo_resale: '$2,500 + GST\n(below $2m)', landed_resale: '$2,500 + GST\n(below $2m)',
+            pte_buc: '$3,000 + GST\n(BUC / new launch)', ec_buc: '$3,000 + GST\n(BUC / new launch)',
+            term_existing: 'N/A', term_fully_paid: 'N/A',
+            hdb_sale: '$1,500 nett', pte_sale: 'N/A',
+            hdb_redemption: 'N/A', pte_redemption: 'N/A',
+            bridging: 'N/A', decoupling: '$5,500\n(incl. purchase & sale)',
+            hdb_divorce: 'N/A', pte_divorce: 'N/A', fresh_cpf: 'N/A',
         },
     },
 ]

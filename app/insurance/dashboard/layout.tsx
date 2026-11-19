@@ -11,6 +11,7 @@ import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitch
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import { needsReconsent } from '@/lib/legal/checkConsent'
 import {
+    MoreHorizontal,
     LayoutDashboard,
     Briefcase,
     LogOut,
@@ -94,9 +95,12 @@ const internalNav: NavItem[] = [
 // Admin management (Users, Analytics, Cases oversight, etc.) now lives in the
 // dedicated ops console at /admin/insurance/* — admins are redirected there.
 
-// Mobile bottom tab bar shows the 4 primary client-safe tools; everything
-// internal lives behind the "More" tab.
+// Mobile bottom tab bar shows the 4 primary client-safe tools. The "More" sheet
+// holds every other tool (Resources, Banks' Insights, Document Guide, Valuation
+// Fees, Legal…) first, then the Internal items — so every page in the sidebar is
+// reachable on a phone. Derived from toolsNav, so a new tool appears here too.
 const mobileTabs = toolsNav.filter(t => !t.soon).slice(0, 4)
+const moreTools = toolsNav.filter(t => !t.soon && !mobileTabs.includes(t))
 
 // A case-detail URL (e.g. /insurance/dashboard/cases/<id>) is the client-facing
 // case screen, not the internal case list — even though it shares the /cases
@@ -132,6 +136,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     const isAdmin = role != null && isAdminRole(role as UserRole)
     const internalItems = internalNav
     const internalActive = internalItems.some(i => isActiveHref(pathname, i.href))
+    const moreToolsActive = moreTools.some(t => isGroupActive(pathname, t))
 
     // Internal is collapsed by default (back-of-house); it also stays expanded
     // whenever the current route already lives inside it, so deep links never look
@@ -412,17 +417,37 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                 <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end" onClick={() => setMoreOpen(false)}>
                     <div className="absolute inset-0 bg-[rgba(5,45,74,0.55)]" />
                     <div
-                        className="relative bg-white rounded-t-2xl p-4 pb-[calc(16px+env(safe-area-inset-bottom))] shadow-2xl"
+                        className="relative bg-white rounded-t-2xl p-4 pb-[calc(16px+env(safe-area-inset-bottom))] shadow-2xl max-h-[85dvh] overflow-y-auto"
                         onClick={e => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between mb-3 px-1">
-                            <p className="text-sm font-bold text-[#052d4a] flex items-center gap-1.5">
-                                <Lock size={13} className="text-slate-400" /> Internal
-                            </p>
+                            <p className="text-sm font-bold text-[#052d4a]">More tools</p>
                             <button onClick={() => setMoreOpen(false)} className="p-1.5 text-slate-400" aria-label="Close">
                                 <X size={18} />
                             </button>
                         </div>
+                        <ul className="grid grid-cols-3 gap-2 mb-5">
+                            {moreTools.map(item => (
+                                <li key={item.name}>
+                                    <Link
+                                        href={item.href}
+                                        prefetch
+                                        onClick={() => setMoreOpen(false)}
+                                        className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center transition-colors ${
+                                            isGroupActive(pathname, item)
+                                                ? 'border-[#03a9e7] bg-sky-50 text-[#03a9e7]'
+                                                : 'border-slate-200 text-slate-600'
+                                        }`}
+                                    >
+                                        <item.icon size={20} />
+                                        <span className="text-[11px] font-semibold leading-tight">{item.name}</span>
+                                    </Link>
+                                </li>
+                            ))}
+                        </ul>
+                        <p className="text-sm font-bold text-[#052d4a] flex items-center gap-1.5 mb-3 px-1">
+                            <Lock size={13} className="text-slate-400" /> Internal
+                        </p>
                         <ul className="grid grid-cols-3 gap-2">
                             {internalItems.map(item => (
                                 <li key={item.name}>
@@ -470,9 +495,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                     type="button"
                     onClick={() => setMoreOpen(true)}
                     className="pressable"
-                    style={{ ...tabStyle(moreOpen || internalActive), background: 'none', border: 'none', cursor: 'pointer' }}
+                    style={{ ...tabStyle(moreOpen || internalActive || moreToolsActive), background: 'none', border: 'none', cursor: 'pointer' }}
                 >
-                    <Lock size={22} strokeWidth={moreOpen || internalActive ? 2.4 : 2} />
+                    <MoreHorizontal size={22} strokeWidth={moreOpen || internalActive || moreToolsActive ? 2.4 : 2} />
                     <span>More</span>
                 </button>
             </nav>

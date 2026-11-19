@@ -101,9 +101,11 @@ function FirmCard({ firm, highlight }: { firm: LawFirm; highlight: PanelBank | n
                 </div>
                 <div className="min-w-0 flex-1">
                     <h3 className="text-[17px] font-semibold text-slate-900 leading-snug">{firm.name}</h3>
-                    <p className="mt-1 text-[13px] text-slate-500 inline-flex items-center gap-1">
-                        <MapPin size={13} className="text-slate-400" /> {firm.location}
-                    </p>
+                    {firm.location && (
+                        <p className="mt-1 text-[13px] text-slate-500 inline-flex items-center gap-1">
+                            <MapPin size={13} className="text-slate-400" /> {firm.location}
+                        </p>
+                    )}
                 </div>
             </div>
 

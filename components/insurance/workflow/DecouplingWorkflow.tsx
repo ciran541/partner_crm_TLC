@@ -1205,6 +1205,7 @@ export default function DecouplingWorkflowPanel({
                     ]
                     return (
                         <div className="rounded-xl border border-slate-200 overflow-hidden">
+                            <div className="table-scroll">
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="bg-slate-50 border-b border-slate-200">
@@ -1273,6 +1274,7 @@ export default function DecouplingWorkflowPanel({
                                     )}
                                 </tbody>
                             </table>
+                            </div>
                         </div>
                     )
                 }
@@ -1870,18 +1872,21 @@ function TdsrRemedy({ propertyUse, equityLoanAmount, pledge }: {
     const isOwnStay = propertyUse === 'own_stay'
     const hasEquity = (equityLoanAmount ?? 0) > 0
 
-    const text = isOwnStay && !hasEquity
-        ? 'Client may qualify for TDSR Waiver with most banks — to double check with banker.'
-        : isOwnStay && hasEquity
+    // No guidance sentence for a loan without an equity component (owner-occupied:
+    // TDSR waiver; investment: 3% pay-down) — removed by product decision; the
+    // pledge / show figures below still show.
+    const text = !hasEquity
+        ? null
+        : isOwnStay
             ? 'Pledge / Show funds required to pass TDSR for the equity loan component.'
-            : !isOwnStay && !hasEquity
-                ? 'Bank will require client to pay down 3% of outstanding loan and / or show some funds to prove repayment ability — to double check with banker.'
-                : 'Pledge / Show funds required to pass TDSR.'
+            : 'Pledge / Show funds required to pass TDSR.'
+
+    if (!text && !pledge) return null
 
     return (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
             <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
-            <p className="text-[12px] text-amber-700 leading-relaxed">{text}</p>
+            {text && <p className="text-[12px] text-amber-700 leading-relaxed">{text}</p>}
             {pledge && (
                 <p className="text-[12px] text-amber-900">
                     <span className="font-semibold">Pledge {money(pledge.pledgeFund)}</span> (locked 4 yrs)
@@ -2024,6 +2029,7 @@ function TenureComparison({
             }
 
             <div className="rounded-lg border border-slate-200 overflow-hidden">
+                <div className="table-scroll">
                 <table className="w-full text-sm">
                     <thead>
                         <tr className="bg-slate-50 border-b border-slate-200">
@@ -2110,23 +2116,8 @@ function TenureComparison({
                         })()}
                     </tbody>
                 </table>
+                </div>
             </div>
-
-            {grossIncome != null && grossIncome > 0 && (() => {
-                const pass1 = tdsr1 != null ? loan <= tdsr1 : null
-                const pass2 = tdsr2 != null ? loan <= tdsr2 : null
-                const anyFail = pass1 === false || pass2 === false
-                if (!anyFail) return null
-                const remedy = propertyUse === 'investment'
-                    ? 'Bank will require client to pay down 3% of outstanding loan and/or show some funds to prove repayment ability.'
-                    : 'Client may qualify for TDSR Waiver — to double check with banker.'
-                return (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-1">
-                        <p className="text-[12px] font-semibold text-amber-800">Potential Remedies</p>
-                        <p className="text-[12px] text-amber-700 leading-relaxed">{remedy}</p>
-                    </div>
-                )
-            })()}
 
             {(grossIncome == null || grossIncome === 0) && (
                 <p className="text-[11px] text-slate-400 flex items-center gap-1.5">

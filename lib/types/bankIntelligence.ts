@@ -24,9 +24,13 @@
 // fetchDbsReports); confirmed genuinely public via a clean unauthenticated
 // request, despite the article page's own data marking that link
 // "access":false (that flag turned out to govern something else).
+import { safeHttpUrl } from '@/lib/types/news'
+
+// OCBC is the first bank watched on more than one page — see OCBC_WATCH_RULES
+// in lib/insurance/bankIntelligence.ts; listingUrl here is just its main page.
 export const BANK_SOURCES = [
     { key: 'ocbc',    name: 'OCBC',    listingUrl: 'https://www.ocbc.com/group/research/research-with-filter.page?category=macro' },
-    { key: 'uob',     name: 'UOB',     listingUrl: 'https://www.uob.com.sg/personal/invest/wealth-insights/index.page' },
+    { key: 'uob',     name: 'UOB',     listingUrl: 'https://www.uobgroup.com/research/quarterly-global-outlook.page' },
     { key: 'hsbc',    name: 'HSBC',    listingUrl: 'https://www.privatebanking.hsbc.com/wih/investments-Insights/House-views/' },
     { key: 'maybank', name: 'Maybank', listingUrl: 'https://www.maybank2u.com.sg/en/personal/investment/maybank-research/insights/market-outlook/monthly/index.page' },
     { key: 'sc',      name: 'SC',      listingUrl: 'https://www.sc.com/en/wealth-retail-banking/wealth-solutions/wealth-insights/' },
@@ -40,9 +44,11 @@ export interface BankIntelligenceReport {
     bank: string
     bank_key: string
     title: string
+    series: string | null   // which watch rule found it, e.g. 'SORA' (null for single-series banks)
     report_period: string   // first-of-month date, e.g. '2026-07-01'
     published_date: string | null
     pdf_url: string
+    archive_path: string | null   // our private copy, when the source is overwritten in place (UOB FX)
     summary: string | null
     summary_generated_at: string | null
     extraction_error: string | null
@@ -88,5 +94,17 @@ export function stripMarkdownPreview(markdown: string, maxLength = 220): string 
  *  article page (HSBC) — used to label the link "Original PDF" vs "Original
  *  Article" without needing a separate DB column for it. */
 export function isPdfUrl(url: string): boolean {
-    return url.toLowerCase().endsWith('.pdf')
+    // Path only — UOB FX rows carry an edition marker (FX_Int_Rate.pdf#2026-11-06).
+    try {
+        return new URL(url, 'https://placeholder.invalid').pathname.toLowerCase().endsWith('.pdf')
+    } catch {
+        return false
+    }
+}
+
+/** Where the "Original PDF/Article" link should go: our archived copy when we
+ *  keep one (served to logged-in users only), otherwise the bank's own URL. */
+export function reportLinkHref(report: Pick<BankIntelligenceReport, 'id' | 'pdf_url' | 'archive_path'>): string | null {
+    if (report.archive_path) return `/api/insurance/bank-intelligence/archive?id=${encodeURIComponent(report.id)}`
+    return safeHttpUrl(report.pdf_url)
 }

@@ -418,6 +418,59 @@ a.card:active {
   border-bottom: 1px solid #f8fafc;
 }
 
+/* Tables scroll sideways on narrow screens instead of being cut off.
+   .table-scroll is the wrapper for tables that had no scroll container. */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Phones and iPads (where the sidebar takes width): give every scrollable
+   table room for its columns, so the rest is a swipe away rather than the
+   columns being squashed until figures are clipped. Desktop is unchanged. */
+@media (max-width: 1199px) {
+  .table-scroll > table,
+  .overflow-x-auto > table,
+  .overflow-auto > table,
+  [style*="overflow-x: auto"] > table,
+  [style*="overflow: auto"] > table {
+    min-width: 640px;
+  }
+
+}
+
+/* "There's more →" cue. iOS hides scrollbars until you're already swiping, so a
+   scrollable table looks exactly like a cut-off one. TableScrollHints
+   (components/shared, mounted in the root layout) marks a container
+   data-overflow="1" when its table is wider than the box, and data-end="1" once
+   scrolled to the right edge — so the fade appears only while there really is
+   more to see. The container becomes a flex row so the fade (position: sticky)
+   can sit beside the table and stay pinned while the table scrolls under it. */
+[data-overflow="1"] {
+  display: flex;
+  align-items: stretch;
+}
+[data-overflow="1"] > table {
+  flex: none;
+  width: 100%;
+}
+[data-overflow="1"]::after {
+  content: '';
+  flex: none;
+  position: sticky;
+  right: 0;
+  width: 32px;
+  margin-left: -32px;
+  pointer-events: none;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.95));
+  transition: opacity 0.15s;
+}
+[data-overflow="1"][data-end="1"]::after {
+  opacity: 0;
+}
+
 /* ─── Spinner ─────────────────────────────────────────────── */
 
 @keyframes spin {

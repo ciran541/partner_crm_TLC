@@ -41,7 +41,8 @@ export default function BankIntelligenceAdminView() {
             const res = await fetch('/api/admin/insurance/bank-intelligence/refresh', { method: 'POST' })
             const json = await res.json()
             if (!res.ok) throw new Error(json.error ?? 'Refresh failed')
-            setAlert({ type: 'success', message: `Checked — ${json.inserted} new report${json.inserted === 1 ? '' : 's'} found, ${json.extracted} summarized.` })
+            const more = json.pending > 0 ? ` ${json.pending} still waiting for a summary — click again to continue (or the daily run will).` : ''
+            setAlert({ type: 'success', message: `Checked — ${json.inserted} new report${json.inserted === 1 ? '' : 's'} found, ${json.extracted} summarized.${more}` })
             await load()
         } catch (e: any) {
             setAlert({ type: 'error', message: e.message })
@@ -155,6 +156,7 @@ export default function BankIntelligenceAdminView() {
                 />
             ) : (
                 <div className="card overflow-hidden">
+                    <div className="table-scroll">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide">
@@ -172,6 +174,7 @@ export default function BankIntelligenceAdminView() {
                                         <button onClick={() => setReviewing(r)} className="font-medium text-slate-800 hover:text-[#03a9e7] line-clamp-1 text-left">
                                             {r.title}
                                         </button>
+                                        {r.series && <p className="text-xs text-slate-500">{r.series}</p>}
                                         {r.extraction_error && <p className="text-xs text-red-500 line-clamp-1">Extraction failed</p>}
                                     </td>
                                     <td className="px-4 py-3 hidden sm:table-cell">
@@ -206,6 +209,7 @@ export default function BankIntelligenceAdminView() {
                             ))}
                         </tbody>
                     </table>
+                    </div>
                 </div>
             )}
 
