@@ -3,10 +3,10 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-    DndContext, DragOverlay, PointerSensor, TouchSensor, useDraggable, useDroppable,
+    DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable,
     useSensor, useSensors, type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core'
-import { CalendarDays, Phone } from 'lucide-react'
+import { CalendarDays, GripVertical, Phone } from 'lucide-react'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import { stageLabel } from '@/lib/insurance/stages'
@@ -30,8 +30,12 @@ import type { PipelineStage, ReferredBanker } from '@/lib/types'
  * the new status); moving into Pending Docs also offers an optional banker
  * picker. One save updates status + follow-up (+ bankers) together.
  *
- * Touch: a card needs a short press before it lifts on iPad, so the board
- * still scrolls normally under a finger; with a mouse it lifts after 6px.
+ * Touch (iPad): each card has a grip strip on its left edge. The grip has
+ * `touch-action: none`, so a finger on it drags IMMEDIATELY; anywhere else on
+ * the card the browser keeps the touch for scrolling (it cancels the pointer,
+ * so no drag starts) and a tap opens the case. An earlier press-and-hold
+ * approach failed on iPad whenever the finger drifted during the hold — iOS
+ * claimed it as a scroll. With a mouse the whole card drags after 6px.
  */
 
 const REVENUE_RATE = 0.0015
@@ -52,9 +56,10 @@ export default function TrackBoard({ search, agent }: { search: string; agent?: 
     const [dragging, setDragging] = useState<CaseListRow | null>(null)
     const [move, setMove] = useState<{ c: CaseListRow; to: PipelineStage } | null>(null)
 
+    // One pointer sensor for mouse, pen and touch. Touch only reaches it from
+    // the grip (touch-action: none); elsewhere iOS takes the touch for scrolling.
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-        useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
     )
 
     const onDragStart = (e: DragStartEvent) => setDragging((e.active.data.current?.c as CaseListRow) ?? null)
@@ -131,8 +136,8 @@ function DraggableCard({ c, today, hidden }: { c: CaseListRow; today: string; hi
     return (
         <div ref={setNodeRef} {...attributes} {...listeners}
             onClick={() => router.push(`/insurance/dashboard/cases/${c.id}`)}
-            className="touch-manipulation select-none"
-            style={{ opacity: hidden ? 0.3 : 1 }}>
+            className="select-none"
+            style={{ opacity: hidden ? 0.3 : 1, WebkitTouchCallout: 'none' }}>
             <CardBody c={c} today={today} showBanker={c.stage !== 'Touched Base'} />
         </div>
     )
@@ -145,7 +150,15 @@ function CardBody({ c, today, showBanker, lifted }: { c: CaseListRow; today: str
     const banker = c.referred_bankers?.[0]
     const more = (c.referred_bankers?.length ?? 0) - 1
     return (
-        <div className={`bg-white rounded-xl border border-slate-200 px-3 py-2.5 cursor-grab ${lifted ? 'shadow-xl rotate-1 cursor-grabbing' : 'hover:border-slate-300 hover:shadow-sm'}`}>
+        <div className={`bg-white rounded-xl border border-slate-200 flex cursor-grab ${lifted ? 'shadow-xl rotate-1 cursor-grabbing' : 'hover:border-slate-300 hover:shadow-sm'}`}>
+            {/* Drag grip — touch-action: none makes a finger here drag at once on iPad.
+                A tap on it doesn't open the case. */}
+            <span aria-hidden onClick={e => e.stopPropagation()}
+                className="w-8 shrink-0 flex items-center justify-center rounded-l-xl bg-slate-50 border-r border-slate-100 text-slate-400 cursor-grab"
+                style={{ touchAction: 'none' }}>
+                <GripVertical size={16} />
+            </span>
+            <div className="flex-1 min-w-0 px-3 py-2.5">
             <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-bold text-slate-800 truncate">{c.client_name || 'Unnamed'}</p>
                 <p className="text-sm font-bold text-[#052d4a] shrink-0">{c.loan_value ? formatCurrency(c.loan_value) : '—'}</p>
@@ -161,6 +174,7 @@ function CardBody({ c, today, showBanker, lifted }: { c: CaseListRow; today: str
             <p className={`text-xs font-semibold flex items-center gap-1 mt-1 ${overdue ? 'text-red-600' : dueToday ? 'text-amber-600' : 'text-slate-500'}`}>
                 <CalendarDays size={11} /> {fu ? `FU ${fmtShort(fu)}` : 'No follow-up'}{dueToday ? ' · today' : ''}
             </p>
+            </div>
         </div>
     )
 }
