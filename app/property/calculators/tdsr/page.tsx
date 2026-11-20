@@ -33,8 +33,8 @@ type Employment   = 'employed' | 'selfEmployed'
 
 // Fee schedule (legal / valuation) for the purchase-price breakdown. This page's
 // three types map onto the purchase workflow's: HDB → resale HDB, Private →
-// resale condo, EC → EC new launch. Assumes no outstanding housing loan — the
-// same assumption behind the 5% / 10% cash notes on the option cards.
+// resale condo, EC → EC new launch. LTV / min cash come from OPTION_MATRIX,
+// picked by the "This loan is" selector (number of outstanding housing loans).
 const FEE_TYPE: Record<PropertyType, PurchasePropertyType> = {
     hdb: 'resale_hdb', private: 'resale_condo', ec: 'ec_new_launch',
 }
@@ -94,7 +94,7 @@ function moneyChangeHandler(setter: (v: string) => void) {
 // ── Seg component ─────────────────────────────────────────────────────────────
 
 function Seg<T extends string>({ options, value, onChange }: {
-    options: { value: T; label: string }[]
+    options: { value: T; label: string; disabled?: boolean }[]
     value: T
     onChange: (v: T) => void
 }) {
@@ -104,11 +104,14 @@ function Seg<T extends string>({ options, value, onChange }: {
                 <button
                     key={o.value}
                     type="button"
+                    disabled={o.disabled}
                     onClick={() => onChange(o.value)}
                     className={`px-4 py-2 text-sm font-semibold transition-colors border-r border-slate-200 last:border-r-0 whitespace-nowrap ${
                         value === o.value
                             ? 'bg-[#052d4a] text-white'
-                            : 'bg-white text-slate-500 hover:bg-slate-50'
+                            : o.disabled
+                                ? 'bg-slate-50 text-slate-300 cursor-not-allowed'
+                                : 'bg-white text-slate-500 hover:bg-slate-50'
                     }`}
                 >
                     {o.label}
@@ -344,6 +347,18 @@ function AffordabilityCalculator() {
     // ABSD profile for the purchase-price breakdown — highest-rate buyer on the purchase
     const [residency,     setResidency]     = useCalcDraft<Residency>('residency', 'singaporean')
     const [propertyCount, setPropertyCount] = useCalcDraft<1 | 2 | 3>('propertyCount', 1)
+    // Which housing loan this is (1st / 2nd / 3rd+) — drives the MAS LTV tier.
+    // Separate from propertyCount: a 2nd property can still be a 1st loan when
+    // the existing home is fully paid.
+    const [loanCount,     setLoanCount]     = useCalcDraft<1 | 2 | 3>('loanCount', 1)
+
+    // Rules: HDB / EC new launch → 1st property & 1st loan only; a 1st property
+    // → 1st loan only. Derived (not written back) so switching back to Private
+    // restores what the agent had picked.
+    const firstOnly      = propertyType !== 'private'
+    const effPropertyCount: 1 | 2 | 3 = firstOnly ? 1 : propertyCount
+    const effLoanCount: 1 | 2 | 3     = effPropertyCount === 1 ? 1 : loanCount
+    const outstandingLoans = effLoanCount === 1 ? '0' : effLoanCount === 2 ? '1' : '2plus'
 
     // Sync borrower array length
     useEffect(() => {
@@ -380,8 +395,9 @@ function AffordabilityCalculator() {
 
     const hasIncome = totalIncome > 0
 
-    const [o1, o2] = OPTION_MATRIX['0']
-    const purchaseArgs = { propertyType: FEE_TYPE[propertyType], residency, propertyCount }
+    const [o1, o2] = OPTION_MATRIX[outstandingLoans]
+    const purchaseArgs = { propertyType: FEE_TYPE[propertyType], residency, propertyCount: effPropertyCount }
+    const cashNote = (o: typeof o1) => `LTV ${Math.round(o.ltvPct * 100)}% · Min ${Math.round(o.minCashPct * 100)}% Cash Downpayment`
     const purchase1 = maxPurchaseFromLoan({ loan: loan1, option: o1, ...purchaseArgs })
     const purchase2 = maxPurchaseFromLoan({ loan: loan2, option: o2, ...purchaseArgs })
 
@@ -483,15 +499,34 @@ function AffordabilityCalculator() {
                             </label>
                             <Seg<'1' | '2' | '3'>
                                 options={[
-                                    { value: '1', label: '1st property' },
-                                    { value: '2', label: '2nd' },
-                                    { value: '3', label: '3rd+' },
+                                    { value: '1', label: '1st Property' },
+                                    { value: '2', label: '2nd', disabled: firstOnly },
+                                    { value: '3', label: '3rd+', disabled: firstOnly },
                                 ]}
-                                value={String(propertyCount) as '1' | '2' | '3'}
+                                value={String(effPropertyCount) as '1' | '2' | '3'}
                                 onChange={v => setPropertyCount(parseInt(v) as 1 | 2 | 3)}
                             />
                         </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+                                This Loan Is
+                            </label>
+                            <Seg<'1' | '2' | '3'>
+                                options={[
+                                    { value: '1', label: '1st Loan' },
+                                    { value: '2', label: '2nd', disabled: effPropertyCount === 1 },
+                                    { value: '3', label: '3rd+', disabled: effPropertyCount === 1 },
+                                ]}
+                                value={String(effLoanCount) as '1' | '2' | '3'}
+                                onChange={v => setLoanCount(parseInt(v) as 1 | 2 | 3)}
+                            />
+                        </div>
                     </div>
+                    {firstOnly ? (
+                        <p className="text-[11px] text-slate-400 -mt-3">{propertyType === 'hdb' ? 'HDB' : 'EC new launch'}: 1st property and 1st loan only.</p>
+                    ) : effPropertyCount > 1 && (
+                        <p className="text-[11px] text-slate-400 -mt-3">2nd+ property can still be a 1st loan if the existing property is fully paid.</p>
+                    )}
                     {numBorrowers > 1 && (
                         <p className="text-[11px] text-slate-400 -mt-3">Joint purchase: pick the buyer with the highest ABSD rate.</p>
                     )}
@@ -561,7 +596,7 @@ function AffordabilityCalculator() {
                             bindingLabel={bindingLabel}
                             payment={binding}
                             na={maxTen1 <= 0}
-                            cashNote="Min 5% Cash Downpayment"
+                            cashNote={cashNote(o1)}
                             purchase={purchase1}
                         />
                         <LoanOptionCard
@@ -574,7 +609,7 @@ function AffordabilityCalculator() {
                             bindingLabel={bindingLabel}
                             payment={binding}
                             na={maxTen2 <= 0}
-                            cashNote="Min 10% Cash Downpayment"
+                            cashNote={cashNote(o2)}
                             purchase={purchase2}
                         />
                     </div>

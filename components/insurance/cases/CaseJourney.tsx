@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { History, ArrowRight } from 'lucide-react'
 import { supabase } from '@/lib/supabase/client'
-import { stageBadge } from '@/lib/insurance/stages'
+import { stageBadge, stageLabel } from '@/lib/insurance/stages'
 import { closingBank } from '@/lib/insurance/revisit'
 import type { Case } from '@/lib/types'
 
@@ -89,7 +89,7 @@ export default function CaseJourney({ caseId, parentId, hrefFor }: {
                                 <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Cycle {i + 1}</span>
                                     <span className="text-sm font-semibold text-[#052d4a]">{c.case_type}</span>
-                                    <span className="status-badge" style={{ color: badge.text, background: badge.bg }}>{c.stage}</span>
+                                    <span className="status-badge" style={{ color: badge.text, background: badge.bg }}>{stageLabel(c.stage)}</span>
                                     {isSelf && <span className="text-[10px] font-bold text-[#03a9e7] bg-sky-100 px-1.5 py-0.5 rounded-full">This case</span>}
                                 </div>
                                 <p className="text-xs text-slate-500 mt-1">

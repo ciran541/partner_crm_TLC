@@ -7,6 +7,7 @@ import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { usePagedCases } from '@/lib/insurance/usePagedCases'
+import { stageLabel } from '@/lib/insurance/stages'
 
 function daysLeft(dateString: string) {
     const now = new Date(); now.setHours(0, 0, 0, 0)
@@ -133,7 +134,7 @@ export default function UpcomingLockInsPage() {
                                                 <td className="table-td" style={{ color: '#475569' }}>{c.current_bank || '—'}</td>
                                                 <td className="table-td" style={{ fontWeight: 600, color: '#0f172a' }}>{formatDate(c.lock_in_end_date!)}</td>
                                                 <td className="table-td"><span className="status-badge" style={{ background: tone.bg, color: tone.text }}>{daysLeft(c.lock_in_end_date!)}</span></td>
-                                                <td className="table-td"><span className="status-badge" style={{ background: '#f1f5f9', color: '#475569' }}>{c.stage}</span></td>
+                                                <td className="table-td"><span className="status-badge" style={{ background: '#f1f5f9', color: '#475569' }}>{stageLabel(c.stage)}</span></td>
                                             </tr>
                                         )
                                     })}

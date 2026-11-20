@@ -3,8 +3,9 @@ import { requireCronAuth } from '@/lib/auth/requireCron'
 import { processInsuranceFollowUps } from '@/lib/insurance/processInsuranceFollowUps'
 
 // GET /api/cron/insurance-followups — daily Vercel cron (see vercel.json).
-// Finds all insurance cases where follow_up_date = today (excluding Closed Lost)
-// and POSTs each client to Privyr to trigger the automated WhatsApp template.
+// Client reminders: Closed Won cases whose agent ticked "Client agreed to
+// receive a reminder", on the follow-up date — one Privyr WhatsApp + one email.
+// See lib/insurance/processInsuranceFollowUps.ts.
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
@@ -18,6 +19,7 @@ export async function GET(request: Request) {
         ok: true,
         processed: result.processed,
         privyrSent: result.privyrSent,
+        emailsSent: result.emailsSent,
         errors: result.errors,
         ranAt: new Date().toISOString(),
     })

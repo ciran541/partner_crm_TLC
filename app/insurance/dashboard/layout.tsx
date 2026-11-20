@@ -7,6 +7,8 @@ import { useRouter, usePathname } from 'next/navigation'
 import { canAccessInsurance, getSafeRoute, isAdmin as isAdminRole } from '@/lib/permissions'
 import type { UserRole } from '@/lib/types/shared'
 import { clearCaseCaches } from '@/lib/insurance/caseCache'
+import { todaySgt } from '@/lib/insurance/promotions'
+import { addDays } from '@/lib/insurance/followUps'
 import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import { needsReconsent } from '@/lib/legal/checkConsent'
@@ -18,7 +20,7 @@ import {
     Percent,
     UserCircle,
     BookOpen,
-    Clock,
+    Target,
     LayoutGrid,
     Calculator,
     Receipt,
@@ -83,11 +85,12 @@ const toolsNav: NavItem[] = [
 // ── Back-of-house ("Internal") — cross-client / sales data. Tucked behind a
 //    collapsed dropdown and a "More" sheet on mobile so a client glancing at the
 //    screen never sees the pipeline, other clients' names, or follow-ups.
+const ACTION_CENTRE_HREF = '/insurance/dashboard/action-centre'
 const internalNav: NavItem[] = [
     { name: 'Dashboard', href: '/insurance/dashboard/pipeline', icon: LayoutDashboard },
     { name: 'Cases', href: '/insurance/dashboard/cases', icon: Briefcase },
     { name: 'Earnings', href: '/insurance/dashboard/earnings', icon: DollarSign },
-    { name: 'Follow ups', href: '/insurance/dashboard/followup', icon: Clock },
+    { name: 'Action Centre', href: ACTION_CENTRE_HREF, icon: Target },
     { name: 'Support', href: '/insurance/dashboard/support', icon: LifeBuoy, soon: true },
     { name: 'Profile', href: '/insurance/dashboard/profile', icon: UserCircle },
 ]
@@ -142,6 +145,19 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     // whenever the current route already lives inside it, so deep links never look
     // broken. Derived (not an effect) to avoid cascading re-renders.
     const [internalOpen, setInternalOpen] = useState(false)
+    // Overdue follow-ups, shown as a red count on the Action Centre link. Only
+    // visible once Internal is open, so a client glancing at the screen never sees it.
+    const [overdueCount, setOverdueCount] = useState(0)
+    useEffect(() => {
+        const q = new URLSearchParams({
+            stage: 'all', includeDrafts: 'true', hasFollowUp: 'true',
+            followUpTo: addDays(todaySgt(), -1), limit: '1',
+        })
+        fetch(`/api/insurance/cases?${q}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => setOverdueCount(typeof d?.total === 'number' ? d.total : 0))
+            .catch(() => {})
+    }, [pathname])
     const internalExpanded = internalOpen || internalActive
     const [moreOpen, setMoreOpen] = useState(false)
 
@@ -262,6 +278,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                     >
                         <item.icon size={20} />
                         <span className="flex-1">{item.name}</span>
+                        {item.href === ACTION_CENTRE_HREF && overdueCount > 0 && (
+                            <span className="text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 min-w-[18px] text-center leading-[18px]"
+                                title={`${overdueCount} overdue follow-up${overdueCount === 1 ? '' : 's'}`}>
+                                {overdueCount > 99 ? '99+' : overdueCount}
+                            </span>
+                        )}
                         {item.soon && (
                             <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 bg-white/5 px-1.5 py-0.5 rounded">
                                 Soon

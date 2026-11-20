@@ -12,6 +12,8 @@
 
 import type { CaseType, PipelineStage } from '@/lib/types'
 import { CREATABLE_STAGES, OPEN_STAGES } from '@/lib/insurance/stages'
+import { todaySgt } from '@/lib/insurance/promotions'
+import { defaultNewCaseFollowUp } from '@/lib/insurance/followUps'
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -447,7 +449,7 @@ export function workflowPrefill(c: CaseIntake): Record<string, unknown> {
  * based on for that case type (caseLoanBase() in commission.ts): the existing
  * loan for refinancing / equity, loan_size otherwise.
  */
-export function intakeToCaseRow(c: CaseIntake, createdBy: string) {
+export function intakeToCaseRow(c: CaseIntake, createdBy: string, today: string = todaySgt()) {
     const usesExisting = c.case_type === 'Refinancing' || c.case_type === 'Equity Loan'
     return {
         created_by: createdBy,
@@ -464,7 +466,9 @@ export function intakeToCaseRow(c: CaseIntake, createdBy: string) {
         property_type: c.property_type ?? null,
         property_price: c.property_value ?? null,
         lock_in_end_date: c.lock_in_end_date ?? null,
-        follow_up_date: c.follow_up_date ?? null,
+        // Every case needs a follow-up (followUps.ts). Left blank → 3 months
+        // before a known lock-in end, else today, so it shows up in the Action Centre.
+        follow_up_date: c.follow_up_date ?? defaultNewCaseFollowUp(c.lock_in_end_date, today),
         clawback_end_date: c.clawback_end_date ?? null,
         remarks: c.remarks ?? null,
         workflow_data: workflowPrefill(c),

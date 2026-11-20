@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { CheckCircle2, AlertCircle, CopyX, Loader2, Pencil, Trash2, Undo2, ChevronUp, Wand2 } from 'lucide-react'
 import { INTAKE_CASE_TYPES, INTAKE_PROPERTY_TYPES, type CaseIntake } from '@/lib/insurance/caseIntake'
-import { CREATABLE_STAGES } from '@/lib/insurance/stages'
+import { CREATABLE_STAGES, stageLabel } from '@/lib/insurance/stages'
 import { FIELD_LABELS } from '@/lib/insurance/columnMatch'
 import { reviewRows, rowsWithSameValue, type ReviewInput, type ReviewStatus } from '@/lib/insurance/importReview'
 
@@ -32,7 +32,7 @@ const EDIT_FIELDS: Field[] = [
 
 const SELECTS: Partial<Record<Field, { value: string; label: string }[]>> = {
     case_type: INTAKE_CASE_TYPES.map(t => ({ value: t.label, label: t.label })),
-    stage: CREATABLE_STAGES.map(s => ({ value: s, label: s })),
+    stage: CREATABLE_STAGES.map(s => ({ value: s, label: stageLabel(s) })),
     property_type: INTAKE_PROPERTY_TYPES.map(p => ({ value: p, label: p })),
     property_use: [{ value: 'Own stay', label: 'Own stay' }, { value: 'Investment', label: 'Investment' }],
     borrower_residency: [{ value: 'Singaporean', label: 'Singaporean' }, { value: 'PR', label: 'PR' }, { value: 'Foreigner', label: 'Foreigner' }],
@@ -136,7 +136,7 @@ export default function CaseImportReview({ initialRows, banks, existing, busy, e
                                         <p className={`font-semibold text-slate-700 ${r.status === 'removed' ? 'line-through' : ''}`}>{v?.client_name ?? (raw.client_name || <span className="text-slate-300">(no name)</span>)}</p>
                                         <p className="text-[11px] text-slate-400">{v?.client_mobile ?? raw.client_mobile ?? ''}</p>
                                     </td>
-                                    <td className="px-3 py-2 text-xs text-slate-600">{v ? `${typeLabel(v.case_type)} · ${v.stage}` : '—'}</td>
+                                    <td className="px-3 py-2 text-xs text-slate-600">{v ? `${typeLabel(v.case_type)} · ${stageLabel(v.stage)}` : '—'}</td>
                                     <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-600">{v ? money(v.loan_amount) : '—'}</td>
                                     <td className="px-3 py-2 text-xs text-slate-600">{v?.current_bank ?? '—'}</td>
                                     <td className="px-3 py-2 text-xs text-slate-600 tabular-nums">{v?.lock_in_end_date ?? '—'}</td>

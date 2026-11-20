@@ -12,6 +12,12 @@
  * closed package), remaining tenure, the bank now holding the loan, when the
  * new lock-in ends, property details, and borrowers (ages moved forward).
  *
+ * Closed Lost cases can be revisited too (same follow-up-date rule): lose a
+ * client today, set a follow-up two years out, and try again then. A lost case
+ * has no closure to project from, so the new case carries forward what the agent
+ * had already entered (loan, bank, workflow answers) and keeps the SAME case type
+ * — it's another attempt at the same deal, not the next refinance after a win.
+ *
  * Pure — tested in __tests__/revisit.test.ts. The API route
  * (/api/insurance/cases/[id]/revisit) enforces the same gate server-side.
  */
@@ -24,7 +30,13 @@ import type { Case, ClosedWonData, ClosedWonLoan } from '@/lib/types'
 
 export type RevisitGate =
     | { ok: true }
-    | { ok: false; reason: 'not_closed_won' | 'already_revisited' | 'no_follow_up' | 'too_early'; message: string; unlocksOn?: string }
+    | { ok: false; reason: 'not_closed' | 'already_revisited' | 'no_follow_up' | 'too_early'; message: string; unlocksOn?: string }
+
+/** Stages a client can be revisited from. */
+export const REVISITABLE_STAGES = ['Closed Won', 'Closed Lost'] as const
+export function isRevisitable(stage: string | null | undefined): boolean {
+    return (REVISITABLE_STAGES as readonly string[]).includes(stage ?? '')
+}
 
 /**
  * Revisit opens on the follow-up date, not before — so a just-closed client
@@ -36,7 +48,7 @@ export function revisitGate(
     today: string,
     childId?: string | null,
 ): RevisitGate {
-    if (c.stage !== 'Closed Won') return { ok: false, reason: 'not_closed_won', message: 'Only a Closed Won case can be revisited.' }
+    if (!isRevisitable(c.stage)) return { ok: false, reason: 'not_closed', message: 'Only a Closed Won or Closed Lost case can be revisited.' }
     if (childId) return { ok: false, reason: 'already_revisited', message: 'This case has already been revisited.' }
     if (!c.follow_up_date) return { ok: false, reason: 'no_follow_up', message: 'Set a follow-up date first — Revisit opens on that date.' }
     if (today < c.follow_up_date) return { ok: false, reason: 'too_early', message: 'Revisit opens on the follow-up date.', unlocksOn: c.follow_up_date }
@@ -102,11 +114,78 @@ export interface RevisitEstimate {
     lockInEnd?: string
 }
 
+/** Workflow answers that belong to the previous attempt only — never carried into a revisit. */
+const ATTEMPT_ONLY_KEYS = new Set([
+    'selected_package_snapshot', 'promo_snapshot', 'next_actions_done', 'documents_done',
+    'completed_steps', 'agent_notes', 'flags', 'ipa', 'ipa_done',
+])
+
+/** Borrowers carried forward with their ages moved on by `years`. */
+function agedBorrowers(borrowers: unknown, years: number): Record<string, unknown>[] | undefined {
+    if (!Array.isArray(borrowers)) return undefined
+    return (borrowers as Record<string, unknown>[]).map(b => ({
+        ...b,
+        ...(typeof b.age === 'number' && b.age > 0 ? { age: b.age + years } : {}),
+    }))
+}
+
+/**
+ * Revisit of a Closed Lost case: same case type, the agent's own figures and
+ * workflow answers carried forward (minus the previous attempt's package choice,
+ * checklists and notes), remaining tenure and borrower ages moved on.
+ */
+function buildLostRevisit(parent: Case, today: string) {
+    // No closing date is stored for a lost case; its last update is the closest.
+    const lostOn = (parent.updated_at ?? parent.created_at ?? today).slice(0, 10)
+    const years = yearsBetween(lostOn, today)
+
+    const pwf = (parent.workflow_data ?? {}) as Record<string, unknown>
+    const wf: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(pwf)) if (!ATTEMPT_ONLY_KEYS.has(k)) wf[k] = v
+    const borrowers = agedBorrowers(pwf.borrowers, years)
+    if (borrowers) wf.borrowers = borrowers
+    for (const k of ['current_tenure', 'current_equity_loan_tenure', 'current_tenure_equity_loan']) {
+        if (typeof pwf[k] === 'number') wf[k] = Math.max(0, (pwf[k] as number) - years) || undefined
+    }
+    // A lock-in date that has already passed no longer describes the client's loan.
+    for (const k of ['lockin_end_date']) {
+        if (typeof pwf[k] === 'string' && (pwf[k] as string) < today) delete wf[k]
+    }
+    const lockIn = parent.lock_in_end_date && parent.lock_in_end_date >= today ? parent.lock_in_end_date : null
+
+    const outstanding = parent.existing_loan_amount ?? parent.loan_size ?? null
+    const reason = parent.closed_lost_reason?.trim()
+    const remarks = `Revisit of the ${parent.case_type} case marked Closed Lost${reason ? ` (reason: ${reason})` : ''}.`
+
+    const estimate: RevisitEstimate = { outstanding, years, bank: parent.current_bank ?? undefined, lockInEnd: lockIn ?? undefined }
+    return {
+        estimate,
+        row: {
+            case_type: parent.case_type,
+            stage: 'Touched Base' as const,
+            client_name: parent.client_name ?? null,
+            client_mobile: parent.client_mobile ?? null,
+            client_email: parent.client_email ?? null,
+            property_type: parent.property_type ?? null,
+            property_price: parent.property_price ?? null,
+            property_address: parent.property_address ?? null,
+            current_bank: parent.current_bank ?? null,
+            existing_loan_amount: parent.existing_loan_amount ?? null,
+            loan_size: parent.loan_size ?? null,
+            lock_in_end_date: lockIn,
+            referred_bankers: [],
+            remarks,
+            workflow_data: wf,
+        },
+    }
+}
+
 /**
  * The new case's row (minus created_by / parent_case_id, which the route sets).
  * `today` = YYYY-MM-DD SGT; `sora` = current rates for floating packages.
  */
 export function buildRevisitCase(parent: Case, today: string, sora: SoraRates | null) {
+    if (parent.stage === 'Closed Lost') return buildLostRevisit(parent, today)
     const cw: ClosedWonData = parent.closed_won_data ?? {}
     const loans = (cw.loans ?? []).filter(l => l.amount > 0 && l.tenure > 0)
     const lockin = cw.package?.lockin_years ?? 0
@@ -158,12 +237,8 @@ export function buildRevisitCase(parent: Case, today: string, sora: SoraRates | 
     set('current_rate', rateAfterLockin)
     set('property_type', refiPropertyType(parent.case_type, pwf.property_type))
     for (const k of ['property_use', 'year_of_purchase', 'market_price', 'priority_client', 'priority_banks', 'provide_income']) set(k, pwf[k])
-    if (Array.isArray(pwf.borrowers)) {
-        wf.borrowers = (pwf.borrowers as Record<string, unknown>[]).map(b => ({
-            ...b,
-            ...(typeof b.age === 'number' && b.age > 0 ? { age: b.age + years } : {}),
-        }))
-    }
+    const borrowers = agedBorrowers(pwf.borrowers, years)
+    if (borrowers) wf.borrowers = borrowers
 
     const money = (n: number) => `$${Math.round(n).toLocaleString('en-SG')}`
     const closedOn = cw.closed_at ? new Date(`${cw.closed_at}T00:00:00Z`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : null
@@ -177,7 +252,7 @@ export function buildRevisitCase(parent: Case, today: string, sora: SoraRates | 
     return {
         estimate,
         row: {
-            case_type: 'Refinancing' as const,
+            case_type: 'Refinancing' as Case['case_type'],
             stage: 'Touched Base' as const,
             client_name: parent.client_name ?? null,
             client_mobile: parent.client_mobile ?? null,
@@ -187,6 +262,7 @@ export function buildRevisitCase(parent: Case, today: string, sora: SoraRates | 
             property_address: parent.property_address ?? cw.property_address ?? null,
             current_bank: bank ?? null,
             existing_loan_amount: total,
+            loan_size: null as number | null,
             lock_in_end_date: lockInEnd ?? null,
             referred_bankers: [],
             remarks,

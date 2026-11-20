@@ -25,6 +25,7 @@ import type { SoraRates } from '@/lib/insurance/sora'
 import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import Modal from '@/components/shared/Modal'
+import PotentialSavings from './PotentialSavings'
 import RefiPackages from './RefiPackages'
 import RefiPresentation from './RefiPresentation'
 import MultiBankSelect from './MultiBankSelect'
@@ -282,14 +283,6 @@ export default function RefinancingWorkflowPanel({
     const subsidyValue = data.subsidy_return_amount
     const t = computation.tenure
 
-    // Estimated subsidy the NEW bank will provide, based on loan size and property type.
-    // Include undisbursed for BUC types where disbursed may be 0.
-    const loanForSubsidy = (data.outstanding_disbursed ?? 0) + (data.outstanding_undisbursed ?? 0)
-    const estimatedSubsidy: number | null = data.property_type == null ? null
-        : meta?.isPrivate === false
-            ? loanForSubsidy >= 250_000 ? 2000 : 0                                        // HDB
-            : loanForSubsidy >= 1_000_000 ? 2500 : loanForSubsidy >= 500_000 ? 2000 : 0  // Private
-
     return (
         <div className="space-y-5">
             {/* Header */}
@@ -394,32 +387,6 @@ export default function RefinancingWorkflowPanel({
                             </p>
                         )
                     })()}
-
-                    {/* Estimated subsidy from new bank */}
-                    {estimatedSubsidy !== null && (
-                        <div className="flex items-start gap-2 rounded-lg border border-[#03a9e7]/25 bg-sky-50/60 px-3 py-2.5">
-                            <Info size={13} className="text-[#03a9e7] shrink-0 mt-0.5" />
-                            <div>
-                                <p className="text-xs font-semibold text-[#052d4a]">
-                                    Estimated Subsidy Provided:{' '}
-                                    <span className={estimatedSubsidy > 0 ? 'text-emerald-700' : 'text-slate-500'}>
-                                        {estimatedSubsidy > 0 ? money(estimatedSubsidy) : '$0'}
-                                    </span>
-                                </p>
-                                <p className="text-[11px] text-slate-400 mt-0.5">
-                                    {meta?.isPrivate === false
-                                        ? loanForSubsidy >= 250_000
-                                            ? `HDB loan ≥ $250k → $2,000`
-                                            : `HDB loan < $250k → $0`
-                                        : loanForSubsidy >= 1_000_000
-                                            ? `Private loan ≥ $1M → $2,500`
-                                            : loanForSubsidy >= 500_000
-                                                ? `Private loan ≥ $500k → $2,000`
-                                                : `Private loan < $500k → $0`}
-                                </p>
-                            </div>
-                        </div>
-                    )}
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <Question label={!meta?.isPrivate ? 'Current Financier' : 'Current Bank'}>
@@ -1125,6 +1092,17 @@ export default function RefinancingWorkflowPanel({
                 />
             )}
 
+            {/* ── Potential Savings (current rate vs selected package) ── */}
+            {computation.totalOutstanding > 0 && data.property_type && !ageCheck.error && (
+                <PotentialSavings
+                    currentRatePct={data.current_rate}
+                    newRatePct={(data.selected_package_snapshot?.year1_rate ?? data.selected_package_snapshot?.avg_rate_lockin_pct) as number | null | undefined}
+                    newBank={data.selected_package_snapshot?.bank as string | undefined}
+                    homeLoan={data.outstanding_disbursed ?? 0}
+                    equityLoan={meta?.canEquityLoan ? (data.outstanding_equity_loan ?? 0) : 0}
+                />
+            )}
+
             {/* ── RESULTS ── */}
             {ageCheck.error ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-2.5">
@@ -1719,7 +1697,7 @@ export default function RefinancingWorkflowPanel({
 
                     {/* Cost of refinancing */}
                     {remarks.cost.length > 0 && (
-                        <Section title="Cost of Refinancing" icon={<Receipt size={15} />}>
+                        <Section title="Cost of Simple Refinancing" icon={<Receipt size={15} />}>
                             <div className="rounded-lg border border-slate-200 overflow-hidden">
                                 {remarks.cost.map((line, i) => {
                                     const [label, ...rest] = line.split(':')

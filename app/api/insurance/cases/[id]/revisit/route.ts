@@ -9,16 +9,17 @@ import type { Case } from '@/lib/types'
 
 /**
  * POST /api/insurance/cases/[id]/revisit — start the next refinancing cycle for
- * a Closed Won client (see lib/insurance/revisit.ts).
+ * a Closed Won or Closed Lost client (see lib/insurance/revisit.ts).
  *
- * Creates a NEW active Refinancing case linked by parent_case_id; the closed
+ * Creates a NEW active case linked by parent_case_id — Refinancing after a win,
+ * the same case type after a loss (another attempt at the same deal); the closed
  * case is not modified except that its follow-up date is cleared (the follow-up
  * has now been acted on — leaving it would keep reminding the agent about a
  * client who is already back in their pipeline).
  *
  * Guards (the same rule the button shows, enforced here):
  *   - caller owns the case, or is an admin
- *   - stage is Closed Won
+ *   - stage is Closed Won or Closed Lost (revisitGate)
  *   - today (SGT) is on/after the case's follow-up date
  *   - not already revisited — also enforced by a unique index, so two quick taps
  *     return the same new case instead of creating two
@@ -57,7 +58,9 @@ export async function POST(
 
     const { data: created, error } = await admin
         .from('cases')
-        .insert({ ...row, created_by: parent.created_by, parent_case_id: id })
+        // A new active case needs a follow-up like any other: today, "Engage
+        // Prospect" (the DB fills the remark), so it heads the Action Centre.
+        .insert({ ...row, created_by: parent.created_by, parent_case_id: id, follow_up_date: todaySgt() })
         .select('id')
         .single()
 

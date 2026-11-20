@@ -38,6 +38,18 @@ export interface CaseCorrection {
     from_stage: PipelineStage
 }
 
+/** One entry in a case's follow-up history (case_follow_ups table, newest first). */
+export interface CaseFollowUp {
+    id: string
+    case_id: string
+    follow_up_date: string | null   // null = cleared / "Don't follow up"
+    remark: string | null
+    stage: PipelineStage            // the case's stage when this was set
+    no_follow_up: boolean
+    set_by: string | null
+    created_at: string
+}
+
 // ─── Closed-Won structured data ───────────────────────────────────────────────
 // One package (lock-in + rate schedule) closes one or more loans. Which loans
 // apply depends on the case type (see CLOSED_LOAN_KINDS_BY_CASE_TYPE in
@@ -110,8 +122,16 @@ export interface Case {
     existing_loan_amount?: number
     lock_in_end_date?: string
 
-    // Follow-up reminder (date column in the cases table)
+    // Follow-up: the current next date + remark. Every change is also kept in
+    // case_follow_ups (written by a DB trigger) — see CaseFollowUp.
     follow_up_date?: string
+    follow_up_remark?: string | null
+    // Closed Lost only: the agent chose to stop following up this client.
+    no_follow_up?: boolean
+    // Closed Won only: client agreed to a reminder (WhatsApp + email) on the follow-up date.
+    client_reminder_opt_in?: boolean
+    // The follow_up_date the client reminder was last sent for (stops double sends).
+    client_reminder_sent_for?: string | null
 
     // Bankers this case has been referred to (jsonb array of { bank, name })
     referred_bankers?: ReferredBanker[]

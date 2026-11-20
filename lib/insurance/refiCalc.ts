@@ -199,7 +199,7 @@ export function refinancingCost(args: {
         // HDB
         return {
             legalFee: 1500,
-            legalNote: 'nett cash/CPF',
+            legalNote: 'est cash/CPF (refer to legal fee table)',
             valuationDisplay: '$200 est cash',
             valuationFee: 200,
             estSubsidy: args.totalOutstanding >= HDB_SMALL_LOAN ? 2000 : 0,
@@ -210,7 +210,7 @@ export function refinancingCost(args: {
     const legalFee = args.decoupleNow ? 6000 : args.equityLoan ? 2100 : 1800
     const legalNote = args.decoupleNow ? 'est cash/CPF (decoupling)'
         : args.equityLoan ? 'est cash/CPF (equity loan)'
-        : 'nett cash/CPF'
+        : 'est cash/CPF (refer to legal fee table)'
     const estSubsidy = args.totalOutstanding >= 1_000_000 ? 2500
         : args.totalOutstanding >= PRIVATE_SMALL_LOAN ? 2000 : 0
     return {

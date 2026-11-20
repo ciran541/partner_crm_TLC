@@ -33,13 +33,16 @@ import Spinner from '@/components/shared/Spinner'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
-import { PIPELINE_STAGES, INACTIVE_STAGE, OPEN_STAGES } from '@/lib/insurance/stages'
+import { PIPELINE_STAGES, INACTIVE_STAGE, OPEN_STAGES, stageLabel } from '@/lib/insurance/stages'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import RevisitControl from '@/components/insurance/cases/RevisitControl'
 import CaseJourney from '@/components/insurance/cases/CaseJourney'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { CORRECTION_FEE, commissionWithFee } from '@/lib/insurance/commission'
 import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
+import FollowUpUpdateForm, { type FollowUpSaved } from '@/components/insurance/followup/FollowUpUpdateForm'
+import FollowUpHistory from '@/components/insurance/followup/FollowUpHistory'
+import { autoRemark, defaultClosedWonFollowUp, followUpBucket, needsFollowUp } from '@/lib/insurance/followUps'
 
 type TabKey = 'overview' | 'workflow'
 
@@ -91,7 +94,6 @@ function CaseDetailContent() {
     const [workflowData, setWorkflowData] = useState<RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow>({})
     const [workflowSaving, setWorkflowSaving] = useState(false)
     const [workflowSaved, setWorkflowSaved] = useState(false)
-    const [followUpSaving, setFollowUpSaving] = useState(false)
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     // Always-current case type — extractCaseFields runs inside a memoized callback
     // whose caseData closure can be stale, which would mis-route the column sync.
@@ -114,6 +116,10 @@ function CaseDetailContent() {
     const [closedLostOpen, setClosedLostOpen] = useState(false)
     // Pending Docs banker-selection modal
     const [pendingDocsOpen, setPendingDocsOpen] = useState(false)
+    // "Update follow-up" modal: every stage change ends by setting the next follow-up.
+    const [followUpModal, setFollowUpModal] = useState<{ presetStage?: string; title?: string } | null>(null)
+    // Bumped after any follow-up save so the history list reloads.
+    const [followUpVersion, setFollowUpVersion] = useState(0)
 
     useEffect(() => {
         if (caseId) loadCase()
@@ -189,20 +195,21 @@ function CaseDetailContent() {
         return error?.message ?? null
     }, [caseId, userRole])
 
-    const handleUpdate = async (updates: Partial<Case>) => {
-        if (!caseData) return
+    const handleUpdate = async (updates: Partial<Case> | Record<string, unknown>): Promise<boolean> => {
+        if (!caseData) return false
         setSaving(true)
         setAlert(null)
         const err = await persistCaseUpdate(updates)
         setSaving(false)
         if (err) {
             setAlert({ type: 'error', message: err })
-        } else {
-            await loadCase()
-            invalidateCaseData() // keep dashboard / cases-list cache in sync
-            setIsEditing(false)
-            setAlert({ type: 'success', message: 'Case updated successfully.' })
+            return false
         }
+        await loadCase()
+        invalidateCaseData() // keep dashboard / cases-list cache in sync
+        setIsEditing(false)
+        setAlert({ type: 'success', message: 'Case updated successfully.' })
+        return true
     }
 
     // Extract case-column values from workflow data so Overview stays in sync
@@ -302,12 +309,34 @@ function CaseDetailContent() {
     }
 
     const handleStageChange = (newStage: string) => {
-        if (!caseData) return
+        if (!caseData || newStage === caseData.stage) return
         if (newStage === 'Closed Won') { setClosedWonOpen(true); return }
         if (newStage === 'Closed Lost') { setClosedLostOpen(true); return }
         // Moving to Pending Docs prompts the agent to record which banker(s) the case was referred to.
         if (newStage === 'Pending Docs') { setPendingDocsOpen(true); return }
-        handleFieldChange('stage', newStage)
+        // Any other move saves together with the next follow-up (status + date + remark).
+        setFollowUpModal({ presetStage: newStage, title: `Move to ${stageLabel(newStage)}` })
+    }
+
+    // A follow-up save returns the case's new follow-up fields (and stage). Merged
+    // in rather than reloading, so unsaved edits elsewhere on the page survive.
+    const handleFollowUpSaved = (saved: FollowUpSaved) => {
+        setCaseData(prev => prev ? { ...prev, ...saved } : prev)
+        setFollowUpModal(null)
+        setFollowUpVersion(v => v + 1)
+        invalidateCaseData()
+        setAlert({ type: 'success', message: 'Follow-up saved.' })
+    }
+
+    // After a closing form writes the follow-up straight to the case, run the
+    // same values through the follow-up route so Google Calendar stays in step.
+    // Same values, so the DB logs no duplicate history row.
+    const syncFollowUpCalendar = (fields: Record<string, unknown>) => {
+        fetch(`/api/insurance/cases/${caseId}/followup`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fields),
+        }).then(() => setFollowUpVersion(v => v + 1)).catch(() => {})
     }
 
     // Assign/remove referred bankers — auto-saves immediately (no edit mode), like follow-up.
@@ -327,25 +356,29 @@ function CaseDetailContent() {
     // for the check so it's read synchronously, not subject to a stale closure
     // from an in-flight re-render.
     const followUpSavingRef = useRef(false)
+    // The workflow's date-only picker keeps whatever remark the case already has.
+    const followUpRemarkRef = useRef<string | null | undefined>(undefined)
+    followUpRemarkRef.current = caseData?.follow_up_remark
     const handleSetFollowUp = useCallback(async (date: string) => {
         if (followUpSavingRef.current) return
         followUpSavingRef.current = true
-        setFollowUpSaving(true)
         setCaseData(prev => prev ? { ...prev, follow_up_date: date } : prev)
         try {
             const res = await fetch(`/api/insurance/cases/${caseId}/followup`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ follow_up_date: date }),
+                body: JSON.stringify({ follow_up_date: date, follow_up_remark: followUpRemarkRef.current ?? undefined }),
             })
-            if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Failed to save') }
+            const d = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(d.error || 'Failed to save')
+            if (d.case) setCaseData(prev => prev ? { ...prev, ...d.case } : prev)
+            setFollowUpVersion(v => v + 1)
             invalidateCaseData()
             setAlert({ type: 'success', message: 'Follow-up reminder set.' })
         } catch (e) {
             setAlert({ type: 'error', message: `Follow-up save failed: ${e instanceof Error ? e.message : ''}` })
         } finally {
             followUpSavingRef.current = false
-            setFollowUpSaving(false)
         }
     }, [caseId])
 
@@ -386,18 +419,10 @@ function CaseDetailContent() {
     }
 
     // Inactive → live pipeline in one tap. Saves immediately, like follow-up.
-    const handleActivate = async () => {
+    // Saved together with the first follow-up, like every other stage move.
+    const handleActivate = () => {
         if (!caseData) return
-        const next = OPEN_STAGES[0]
-        setCaseData({ ...caseData, stage: next })
-        const err = await persistCaseUpdate({ stage: next })
-        if (err) {
-            setCaseData({ ...caseData })
-            setAlert({ type: 'error', message: `Could not activate: ${err}` })
-        } else {
-            invalidateCaseData()
-            setAlert({ type: 'success', message: `Moved to ${next} — it's now in your active cases.` })
-        }
+        setFollowUpModal({ presetStage: OPEN_STAGES[0], title: `Make active: move to ${stageLabel(OPEN_STAGES[0])}` })
     }
 
     // Admin-only: mark this closed case's commission as paid / unpaid.
@@ -437,7 +462,10 @@ function CaseDetailContent() {
             <div>
                 <button
                     type="button"
-                    onClick={() => router.push('/insurance/dashboard')}
+                    // Back goes to the Cases list. A planner draft (no client name yet) isn't
+                    // in that list — it lives in the Mortgage Planner's "In progress" — so it
+                    // goes back to the planner instead of to a list it doesn't appear in.
+                    onClick={() => router.push(caseData.client_name?.trim() ? '/insurance/dashboard/cases' : '/insurance/dashboard')}
                     className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-[#03a9e7] transition-colors mb-3"
                 >
                     <ArrowLeft size={15} />
@@ -534,11 +562,11 @@ function CaseDetailContent() {
                                 className="bg-white/10 text-white border border-white/20 rounded-lg px-3 py-2 text-sm font-semibold outline-none"
                             >
                                 {PIPELINE_STAGES.map(s => (
-                                    <option key={s} value={s} className="text-black">{s}</option>
+                                    <option key={s} value={s} className="text-black">{stageLabel(s)}</option>
                                 ))}
                             </select>
                         ) : (
-                            <p className="text-xl font-bold">{caseData.stage}</p>
+                            <p className="text-xl font-bold">{stageLabel(caseData.stage)}</p>
                         )}
                         {caseData.stage === INACTIVE_STAGE && (
                             <p className="text-[11px] opacity-70 mt-1">Parked for follow-up — not in your active cases or revenue.</p>
@@ -553,7 +581,16 @@ function CaseDetailContent() {
                             Make active
                         </button>
                     )}
-                    {caseData.stage === 'Closed Won' && !isEditing && (
+                    {isClosedLost && !isEditing && (
+                        <button
+                            type="button"
+                            onClick={() => setFollowUpModal({ presetStage: OPEN_STAGES[0], title: 'Reopen this case' })}
+                            className="bg-white/10 border border-white/25 text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-white/20 transition-colors"
+                        >
+                            Reopen
+                        </button>
+                    )}
+                    {(caseData.stage === 'Closed Won' || caseData.stage === 'Closed Lost') && !isEditing && (
                         <RevisitControl
                             caseData={caseData}
                             childId={revisitChildId}
@@ -622,28 +659,28 @@ function CaseDetailContent() {
                     {caseData.case_type === 'Purchase' ? (
                         <PurchaseOverview
                             workflow={workflowData as PurchaseWorkflow}
-                            stage={caseData.stage}
+                            stage={stageLabel(caseData.stage)}
                             followUpDate={caseData.follow_up_date}
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
                     ) : caseData.case_type === 'Decouple' ? (
                         <DecoupleOverview
                             workflow={workflowData as DecoupleWorkflow}
-                            stage={caseData.stage}
+                            stage={stageLabel(caseData.stage)}
                             followUpDate={caseData.follow_up_date}
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
                     ) : caseData.case_type === 'Equity Loan' ? (
                         <EquityLoanOverview
                             workflow={workflowData as EquityLoanWorkflow}
-                            stage={caseData.stage}
+                            stage={stageLabel(caseData.stage)}
                             followUpDate={caseData.follow_up_date}
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
                     ) : (
                         <RefiOverview
                             workflow={workflowData as RefinancingWorkflowData}
-                            stage={caseData.stage}
+                            stage={stageLabel(caseData.stage)}
                             followUpDate={caseData.follow_up_date}
                             onOpenWorkflow={() => setActiveTab('workflow')}
                         />
@@ -682,8 +719,8 @@ function CaseDetailContent() {
                         {/* Referred bankers — internal CRM, auto-saves on change (no edit mode needed) */}
                         <BankerControl value={caseData.referred_bankers ?? []} onSave={handleSetBankers} />
 
-                        {/* Follow-up reminder — internal CRM, never on the client-facing workflow */}
-                        <FollowUpControl value={caseData.follow_up_date} onSave={handleSetFollowUp} saving={followUpSaving} />
+                        {/* Follow-up: internal CRM, never on the client-facing workflow */}
+                        <FollowUpPanel caseData={caseData} version={followUpVersion} onSaved={handleFollowUpSaved} />
                     </div>
                 </div>
             )}
@@ -792,13 +829,11 @@ function CaseDetailContent() {
                         setIsEditing(false)
                         setClosedWonOpen(false)
                         // Sync the follow-up to Google Calendar (non-blocking).
-                        if (details.follow_up_date) {
-                            fetch(`/api/insurance/cases/${caseId}/followup`, {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ follow_up_date: details.follow_up_date }),
-                            }).catch(() => {})
-                        }
+                        syncFollowUpCalendar({
+                            follow_up_date: details.follow_up_date,
+                            follow_up_remark: details.follow_up_remark ?? undefined,
+                            client_reminder_opt_in: !!details.client_reminder_opt_in,
+                        })
                     }}
                     onCancel={() => setClosedWonOpen(false)}
                 />
@@ -807,9 +842,19 @@ function CaseDetailContent() {
             {/* Closed Lost Modal */}
             {closedLostOpen && (
                 <ClosedLostModal
-                    onConfirm={(reason, notes) => {
+                    onConfirm={async ({ reason, notes, followUp, remark, noFollowUp }) => {
                         setClosedLostOpen(false)
-                        handleUpdate({ stage: 'Closed Lost', closed_lost_reason: reason, closed_lost_notes: notes || undefined })
+                        // Stage and follow-up in ONE write: a stage change without a
+                        // follow-up (or "Don't follow up") is rejected by the DB.
+                        const ok = await handleUpdate({
+                            stage: 'Closed Lost', closed_lost_reason: reason, closed_lost_notes: notes || undefined,
+                            follow_up_date: noFollowUp ? null : followUp,
+                            follow_up_remark: noFollowUp ? null : remark,
+                            no_follow_up: noFollowUp,
+                        })
+                        if (ok) syncFollowUpCalendar(noFollowUp
+                            ? { no_follow_up: true }
+                            : { follow_up_date: followUp, follow_up_remark: remark })
                     }}
                     onCancel={() => setClosedLostOpen(false)}
                 />
@@ -819,12 +864,28 @@ function CaseDetailContent() {
             {pendingDocsOpen && (
                 <PendingDocsModal
                     initialBankers={caseData.referred_bankers ?? []}
-                    onConfirm={bankers => {
+                    onConfirm={async bankers => {
                         setPendingDocsOpen(false)
-                        handleUpdate({ stage: 'Pending Docs', referred_bankers: bankers })
+                        const err = await persistCaseUpdate({ referred_bankers: bankers })
+                        if (err) { setAlert({ type: 'error', message: `Banker save failed: ${err}` }); return }
+                        setCaseData(prev => prev ? { ...prev, referred_bankers: bankers } : prev)
+                        setFollowUpModal({ presetStage: 'Pending Docs', title: 'Move to Pending Docs' })
                     }}
                     onCancel={() => setPendingDocsOpen(false)}
                 />
+            )}
+
+            {/* Update follow-up: stage moves and the next follow-up, saved together */}
+            {followUpModal && (
+                <ModalOverlay>
+                    <FollowUpUpdateForm
+                        c={caseData}
+                        presetStage={followUpModal.presetStage}
+                        title={followUpModal.title ?? 'Update follow-up'}
+                        onSaved={handleFollowUpSaved}
+                        onCancel={() => setFollowUpModal(null)}
+                    />
+                </ModalOverlay>
             )}
 
             <style jsx global>{`
@@ -978,7 +1039,14 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     const [subsidyProvided, setSubsidyProvided] = useState(initialData.subsidy_provided || '')
     const [clawbackEnd, setClawbackEnd] = useState(initialData.clawback_end_date || '')
     const [remarks, setRemarks] = useState(initialData.remarks || '')
-    const [followUp, setFollowUp] = useState(initialData.follow_up_date || '')
+    // Follow-up is required. Until the agent picks one, it tracks the suggestion:
+    // 3 months before the new lock-in ends (else 2 years), see followUps.ts.
+    const [followUpPicked, setFollowUpPicked] = useState(() => {
+        const d = initialData.follow_up_date?.slice(0, 10)
+        return d && d > todaySgt() ? d : ''
+    })
+    const [followUpRemark, setFollowUpRemark] = useState(autoRemark('Closed Won'))
+    const [reminderOptIn, setReminderOptIn] = useState(!!initialData.client_reminder_opt_in)
     const [bankers, setBankers] = useState(initialData.referred_bankers ?? [])
 
     const [keptDocs, setKeptDocs] = useState(existing.lo_documents ?? [])
@@ -1093,6 +1161,8 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
         }))
     const lockinYears = parseInt(lockin) || 0
     const totals = closedWonTotals(loans, schedule, lockinYears, sora)
+    const followUp = followUpPicked || defaultClosedWonFollowUp(existing.closed_at ?? todaySgt(), lockinYears, todaySgt())
+    const reachable = !!(clientEmail.trim() || clientMobile.trim())
 
     const enabledValid = loans.length > 0 && loans.every(l => l.amount > 0 && l.tenure > 0)
     const canSave = !busy && clientName.trim() && enabledValid
@@ -1152,7 +1222,9 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                 clawback_end_date: hasSubsidy ? (clawbackEnd || undefined) : undefined,
                 remarks: remarks || undefined,
                 referred_bankers: bankers,
-                follow_up_date: followUp || undefined,
+                follow_up_date: followUp,
+                follow_up_remark: followUpRemark.trim() || autoRemark('Closed Won'),
+                client_reminder_opt_in: reminderOptIn && reachable,
                 closed_won_data,
                 // Legacy columns kept in sync for existing overview/list displays.
                 closed_package_details: packageSummary(schedule, lockinYears) || undefined,
@@ -1198,7 +1270,6 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                             docCount === 0 && 'No Letter of Offer attached — TLC checks every closure against it.',
                             !closedBank.trim() && 'No bank selected.',
                             lockinYears <= 0 && 'No lock-in period — the projected outstanding at lock-in end can\'t be worked out.',
-                            !followUp && 'No follow-up date — you won\'t be reminded to revisit this client when the lock-in ends.',
                         ].filter(Boolean) as string[]
                         const row = (label: string, value: React.ReactNode) => (
                             <div className="flex items-start justify-between gap-4 py-1.5 border-b border-slate-50 last:border-b-0">
@@ -1258,6 +1329,8 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                                         {row('Remarks', remarks)}
                                         {row('Referred banker(s)', bankers.map(b => `${b.name} (${b.bank})`).join(', '))}
                                         {row('Follow-up date', followUp)}
+                                        {row('Follow-up remark', followUpRemark)}
+                                        {row('Client reminder', reminderOptIn && reachable ? 'Yes: WhatsApp + email on the follow-up date' : 'No')}
                                     </div>
                                 </div>
 
@@ -1519,10 +1592,36 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                         <BankerMultiSelect value={bankers} onChange={setBankers} />
                     </div>
 
-                    {/* Follow-up */}
-                    <div>
-                        <label className="label-xs">Follow-up Date <span className="text-slate-400 normal-case">(syncs to your Google Calendar)</span></label>
-                        <input type="date" value={followUp} onChange={e => setFollowUp(e.target.value)} className="input-std" style={{ maxWidth: 200 }} />
+                    {/* Follow-up: required, for the next cycle of business */}
+                    <div className="space-y-3">
+                        <p className={sectionLabel}>Next follow-up (future business)</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="label-xs">Follow-up Date * <span className="text-slate-400 normal-case">(syncs to your Google Calendar)</span></label>
+                                <input type="date" value={followUp} min={todaySgt()} onChange={e => setFollowUpPicked(e.target.value)} className="input-std" />
+                                {!followUpPicked && (
+                                    <p className="text-[11px] text-slate-400 mt-1">
+                                        {lockinYears > 0 ? 'Suggested: 3 months before the lock-in ends.' : 'Suggested: 2 years from now. Add the lock-in to time it to the lock-in end.'}
+                                    </p>
+                                )}
+                            </div>
+                            <div>
+                                <label className="label-xs">Follow-up Remark</label>
+                                <input type="text" value={followUpRemark} maxLength={500} onChange={e => setFollowUpRemark(e.target.value)} className="input-std" />
+                            </div>
+                        </div>
+                        <label className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 select-none ${reachable ? 'border-slate-200 cursor-pointer' : 'border-slate-100 bg-slate-50 cursor-not-allowed'}`}>
+                            <input type="checkbox" checked={reminderOptIn && reachable} disabled={!reachable}
+                                onChange={e => setReminderOptIn(e.target.checked)} className="mt-0.5 w-4 h-4 accent-emerald-600 shrink-0" />
+                            <span className="text-sm text-slate-700 leading-snug">
+                                <span className="font-semibold">Client agreed to receive a reminder</span>
+                                <span className="block text-xs text-slate-500 mt-0.5">
+                                    {reachable
+                                        ? 'TLC will WhatsApp and email your client once, on the follow-up date, to review their loan with you. Only tick this if the client said yes.'
+                                        : 'Add the client\u2019s email or mobile above to turn this on.'}
+                                </span>
+                            </span>
+                        </label>
                     </div>
 
                     {/* Remarks */}
@@ -1572,11 +1671,16 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
 // ─── Closed Lost Modal ────────────────────────────────────────────────────────
 
 function ClosedLostModal({ onConfirm, onCancel }: {
-    onConfirm: (reason: string, notes: string) => void
+    onConfirm: (v: { reason: string; notes: string; followUp: string; remark: string; noFollowUp: boolean }) => void
     onCancel: () => void
 }) {
     const [reason, setReason] = useState('')
     const [notes, setNotes] = useState('')
+    const [followUp, setFollowUp] = useState('')
+    const [remark, setRemark] = useState(autoRemark('Closed Lost'))
+    const [noFollowUp, setNoFollowUp] = useState(false)
+    // A follow-up date is required, unless the agent chooses not to follow up at all.
+    const canConfirm = !!reason && (noFollowUp || !!followUp)
 
     return (
         <ModalOverlay>
@@ -1615,14 +1719,31 @@ function ClosedLostModal({ onConfirm, onCancel }: {
                         style={{ fontFamily: 'inherit', resize: 'vertical' }}
                     />
                 </div>
+                {!noFollowUp && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className="label-xs">Follow up again on *</label>
+                            <input type="date" value={followUp} min={todaySgt()} onChange={e => setFollowUp(e.target.value)} className="input-std" />
+                            <p className="text-[11px] text-slate-400 mt-1">You&apos;ll be reminded on this date, and <b>Revisit</b> unlocks so you can try again.</p>
+                        </div>
+                        <div>
+                            <label className="label-xs">Follow-up Remark</label>
+                            <input type="text" value={remark} maxLength={500} onChange={e => setRemark(e.target.value)} className="input-std" />
+                        </div>
+                    </div>
+                )}
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={noFollowUp} onChange={e => setNoFollowUp(e.target.checked)} className="w-4 h-4 accent-red-600" />
+                    <span className="text-sm text-slate-700">Don&apos;t follow up with this client again</span>
+                </label>
             </div>
             <div className="flex gap-3 mt-6">
                 <button onClick={onCancel} className="btn-ghost flex-1 justify-center py-2.5 text-sm">Cancel</button>
                 <button
-                    disabled={!reason}
-                    onClick={() => onConfirm(reason, notes)}
+                    disabled={!canConfirm}
+                    onClick={() => onConfirm({ reason, notes, followUp, remark: remark.trim() || autoRemark('Closed Lost'), noFollowUp })}
                     className="flex-2 py-2.5 text-sm rounded-lg font-semibold text-white flex items-center gap-2 justify-center transition-colors"
-                    style={{ flex: 2, background: reason ? '#dc2626' : '#fca5a5', cursor: reason ? 'pointer' : 'not-allowed' }}
+                    style={{ flex: 2, background: canConfirm ? '#dc2626' : '#fca5a5', cursor: canConfirm ? 'pointer' : 'not-allowed' }}
                 >
                     <X size={15} /> Confirm Closed Lost
                 </button>
@@ -1807,50 +1928,65 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
     )
 }
 
-// ─── Follow-up reminder (internal CRM) ────────────────────────────────────────
+// ─── Follow-up (internal CRM) ─────────────────────────────────────────────────
 // Lives on the Overview tab, never inside the client-facing Workflow tab.
-function FollowUpControl({ value, onSave, saving }: { value?: string; onSave: (date: string) => void; saving?: boolean }) {
-    const [date, setDate] = useState(value ?? '')
+// Shows the next follow-up + remark, "Update follow-up" (no clear / mark done:
+// a case always has a next date), and the follow-up history.
+function FollowUpPanel({ caseData, version, onSaved }: {
+    caseData: Case
+    version: number
+    onSaved: (saved: FollowUpSaved) => void
+}) {
+    const [editing, setEditing] = useState(false)
+    const today = todaySgt()
+    const date = caseData.follow_up_date?.slice(0, 10)
+    const bucket = date ? followUpBucket(date, today) : null
+    const missing = needsFollowUp(caseData)
+    const fmt = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
+
     return (
         <div className="card p-6">
             <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-100">
                 <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center">
                     <CalendarClock size={16} className="text-slate-500" />
                 </div>
-                <h3 className="font-bold text-slate-800">Follow-up Reminder</h3>
-            </div>
-            <div className="flex flex-wrap items-center gap-2.5">
-                <input
-                    type="date"
-                    value={date}
-                    onChange={e => setDate(e.target.value)}
-                    className="input-std"
-                    style={{ maxWidth: 200 }}
-                />
-                <button
-                    type="button"
-                    disabled={!date || saving}
-                    onClick={() => onSave(date)}
-                    className="btn-primary text-sm px-4 py-2 disabled:opacity-40"
-                >
-                    {saving ? 'Saving…' : 'Set reminder'}
-                </button>
-                {value && (
-                    <button
-                        type="button"
-                        disabled={saving}
-                        onClick={() => { setDate(''); onSave('') }}
-                        className="text-sm px-3 py-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-red-600 hover:border-red-200 disabled:opacity-40 flex items-center gap-1.5"
-                    >
-                        <X size={14} /> Clear
+                <h3 className="font-bold text-slate-800 flex-1">Follow-up</h3>
+                {!editing && (
+                    <button type="button" onClick={() => setEditing(true)} className="btn-primary text-sm px-4 py-2">
+                        Update follow-up
                     </button>
                 )}
-                {value && (
-                    <span className="text-xs font-medium text-emerald-600 flex items-center gap-1">
-                        <CheckCircle2 size={13} /> Saved · {new Date(value).toLocaleDateString()}
-                    </span>
-                )}
             </div>
+
+            {editing ? (
+                <FollowUpUpdateForm
+                    c={caseData}
+                    onSaved={saved => { setEditing(false); onSaved(saved) }}
+                    onCancel={() => setEditing(false)}
+                />
+            ) : caseData.no_follow_up ? (
+                <p className="text-sm text-slate-500">Not following up with this client (Closed Lost).</p>
+            ) : date ? (
+                <div className="space-y-1">
+                    <p className={`text-base font-bold ${bucket === 'overdue' ? 'text-red-600' : bucket === 'today' ? 'text-amber-600' : 'text-[#052d4a]'}`}>
+                        {fmt(date)}
+                        {bucket === 'overdue' && <span className="ml-2 text-xs font-semibold">Overdue</span>}
+                        {bucket === 'today' && <span className="ml-2 text-xs font-semibold">Due today</span>}
+                    </p>
+                    {caseData.follow_up_remark && <p className="text-sm text-slate-600">{caseData.follow_up_remark}</p>}
+                    {caseData.stage === 'Closed Won' && (
+                        <p className="text-xs text-slate-400">
+                            Client reminder: {caseData.client_reminder_opt_in ? 'on (WhatsApp + email on this date)' : 'off'}
+                        </p>
+                    )}
+                </div>
+            ) : missing ? (
+                <p className="text-sm text-red-600 font-semibold">No follow-up date. Set one so this client isn&apos;t forgotten.</p>
+            ) : (
+                <p className="text-sm text-slate-400">No follow-up needed yet.</p>
+            )}
+
+            <FollowUpHistory caseId={caseData.id} refreshKey={version} />
         </div>
     )
 }

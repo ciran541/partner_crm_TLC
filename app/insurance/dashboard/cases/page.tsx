@@ -5,18 +5,21 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, Search, Briefcase, ChevronDown, ArrowRight, AlertCircle, TrendingUp, Upload } from 'lucide-react'
 import NewCaseModal from '@/components/insurance/cases/NewCaseModal'
 import CaseImportModal from '@/components/insurance/cases/CaseImportModal'
-import { PIPELINE_STAGES, INACTIVE_STAGE, stageBadge } from '@/lib/insurance/stages'
+import { PIPELINE_STAGES, INACTIVE_STAGE, stageBadge, stageLabel } from '@/lib/insurance/stages'
 import FilterPills from '@/components/shared/FilterPills'
 import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
-// "Active" = the live pipeline (not closed, not Inactive). It's the default view.
+import TrackBoard from '@/components/insurance/cases/TrackBoard'
+// "Track" = the open pipeline as a drag-and-drop board. It's the default view.
+// The other pills are single stages ("Touched Base" is labelled "Active").
 // Inactive goes last: it's a parking area for past clients, not a pipeline step.
+const TRACK = 'track'
 const STATUS_PILL_OPTIONS = [
-    { value: 'active', label: 'Active' },
-    ...PIPELINE_STAGES.filter(s => s !== INACTIVE_STAGE).map(s => ({ value: s, label: s })),
+    { value: TRACK, label: 'Track' },
+    ...PIPELINE_STAGES.filter(s => s !== INACTIVE_STAGE).map(s => ({ value: s, label: stageLabel(s) })),
     { value: INACTIVE_STAGE, label: INACTIVE_STAGE },
 ]
 
@@ -25,7 +28,7 @@ const REVENUE_RATE = 0.0015
 
 function StageBadge({ stage }: { stage: string }) {
     const cfg = stageBadge(stage)
-    return <span className="status-badge" style={{ color: cfg.text, background: cfg.bg }}>{stage}</span>
+    return <span className="status-badge" style={{ color: cfg.text, background: cfg.bg }}>{stageLabel(stage)}</span>
 }
 
 // The loan figure comes from the server now (search_cases.loan_value), so the
@@ -66,7 +69,8 @@ function CasesList() {
     const [newCaseOpen, setNewCaseOpen] = useState(() => searchParams.get('new') === '1')
     const [importOpen, setImportOpen] = useState(false)
 
-    const [stageFilter, setStageFilter] = useState('active')
+    const [stageFilter, setStageFilter] = useState(TRACK)
+    const isTrack = stageFilter === TRACK
     const [agentFilter, setAgentFilter] = useState('all')
     const [search, setSearch] = useState('')
     const [agentList, setAgentList] = useState<{ id: string; name: string }[]>([])
@@ -100,7 +104,7 @@ function CasesList() {
         from: dateMode === 'range' ? fromDate || undefined : undefined,
         to: dateMode === 'range' ? toDate || undefined : undefined,
         month: dateMode === 'month' ? month || undefined : undefined,
-    })
+    }, { enabled: !isTrack })   // the board loads its own four columns
 
     // Admin-only: load the full agent roster for the agent filter. Gated on
     // isAdmin so the agent path never makes this call.
@@ -129,11 +133,11 @@ function CasesList() {
 
     const potentialRevenue = loanVolume * REVENUE_RATE
 
-    const filterLabel = stageFilter === 'active' ? 'Active' : stageFilter
-    const hasFilters = stageFilter !== 'active' || agentFilter !== 'all' || !!search || dateActive
+    const filterLabel = stageLabel(stageFilter)
+    const hasFilters = stageFilter !== TRACK || agentFilter !== 'all' || !!search || dateActive
 
     const resetFilters = () => {
-        setStageFilter('active'); setAgentFilter('all'); setSearch('')
+        setStageFilter(TRACK); setAgentFilter('all'); setSearch('')
         setDateMode('all'); setFromDate(''); setToDate(''); setMonth('')
     }
 
@@ -144,7 +148,7 @@ function CasesList() {
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <h1 className="ios-page-title">Cases</h1>
-                        {!loading && (
+                        {!loading && !isTrack && (
                             <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 9999, background: '#f1f5f9', color: '#64748b' }}>
                                 {total}
                             </span>
@@ -193,8 +197,8 @@ function CasesList() {
                         />
                     </div>
 
-                    {/* Date filter mode */}
-                    <div style={{ position: 'relative' }}>
+                    {/* Date filter mode (list views only: the board is "what's open now") */}
+                    {!isTrack && <div style={{ position: 'relative' }}>
                         <select
                             value={dateMode}
                             onChange={e => { setDateMode(e.target.value as DateMode); setFromDate(''); setToDate(''); setMonth('') }}
@@ -205,9 +209,9 @@ function CasesList() {
                             <option value="month">By month</option>
                         </select>
                         <ChevronDown size={13} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
-                    </div>
+                    </div>}
 
-                    {dateMode === 'range' && (
+                    {!isTrack && dateMode === 'range' && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <input type="date" value={fromDate} max={toDate || today}
                                 onChange={e => setFromDate(e.target.value)} style={inputStyle} aria-label="From date" />
@@ -216,7 +220,7 @@ function CasesList() {
                                 onChange={e => setToDate(e.target.value)} style={inputStyle} aria-label="To date" />
                         </div>
                     )}
-                    {dateMode === 'month' && (
+                    {!isTrack && dateMode === 'month' && (
                         <input type="month" value={month} max={thisMonth}
                             onChange={e => setMonth(e.target.value)} style={inputStyle} aria-label="Month" />
                     )}
@@ -249,9 +253,13 @@ function CasesList() {
                 </div>
             </div>
 
+            {isTrack && (
+                <TrackBoard search={search} agent={agentFilter === 'all' ? undefined : agentFilter} />
+            )}
+
             {/* Potential revenue — reflects the current filter. Not shown for
                 Inactive: parked past clients aren't pipeline revenue. */}
-            {!loading && !error && stageFilter !== INACTIVE_STAGE && (
+            {!isTrack && !loading && !error && stageFilter !== INACTIVE_STAGE && (
                 <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14, background: 'linear-gradient(to right, #ecfeff, #f0f9ff)' }}>
                     <div style={{ width: 40, height: 40, borderRadius: 12, background: '#03a9e7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <TrendingUp size={20} color="white" />
@@ -272,20 +280,20 @@ function CasesList() {
                 </div>
             )}
 
-            {loading && (
+            {!isTrack && loading && (
                 <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={48} radius={10} />)}
                 </div>
             )}
 
-            {error && !loading && (
+            {!isTrack && error && !loading && (
                 <div className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626', fontSize: 14 }}>
                     <AlertCircle size={16} style={{ flexShrink: 0 }} />
                     {error}
                 </div>
             )}
 
-            {!loading && !error && cases.length === 0 && (
+            {!isTrack && !loading && !error && cases.length === 0 && (
                 <EmptyState
                     icon={Briefcase}
                     iconColor="#03a9e7"
@@ -299,7 +307,7 @@ function CasesList() {
 
             {/* `refreshing` means a new query is loading OVER existing rows. Dim
                 rather than blank so there is no spinner flash or layout jump. */}
-            {!loading && !error && cases.length > 0 && (
+            {!isTrack && !loading && !error && cases.length > 0 && (
                 <div style={{
                     display: 'flex', flexDirection: 'column', gap: 20,
                     opacity: refreshing ? 0.55 : 1,

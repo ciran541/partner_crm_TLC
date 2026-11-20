@@ -45,6 +45,26 @@ export const STAGE_BADGE: Record<PipelineStage, { bg: string; text: string }> = 
     'Closed Lost':       { bg: '#fee2e2', text: '#991b1b' },
 }
 
+/**
+ * What agents SEE for each stage. "Touched Base" is shown as "Active" (product
+ * decision 2026-11-20, matching its "Engage Prospect" follow-up). The stored
+ * value stays 'Touched Base': DB rows, SQL functions, imports and Privyr all use
+ * it, so only labels change. Always render a stage through stageLabel().
+ */
+export const STAGE_LABELS: Record<PipelineStage, string> = {
+    'Inactive': 'Inactive',
+    'Touched Base': 'Active',
+    'Pending Docs': 'Pending Docs',
+    'Pending Approval': 'Pending Approval',
+    'Pending Signature': 'Pending Signature',
+    'Closed Won': 'Closed Won',
+    'Closed Lost': 'Closed Lost',
+}
+
+export function stageLabel(stage: string | null | undefined): string {
+    return STAGE_LABELS[stage as PipelineStage] ?? stage ?? ''
+}
+
 export function stageBadge(stage: string): { bg: string; text: string } {
     return STAGE_BADGE[stage as PipelineStage] ?? { bg: '#e0f2fe', text: '#0369a1' }
 }

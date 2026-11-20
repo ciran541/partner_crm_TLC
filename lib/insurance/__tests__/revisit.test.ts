@@ -47,7 +47,7 @@ describe('revisitGate — Revisit opens on the follow-up date, not before', () =
     })
     it('needs a follow-up date, a Closed Won case, and only once', () => {
         expect(revisitGate(dexter({ follow_up_date: undefined }), '2027-12-12')).toMatchObject({ reason: 'no_follow_up' })
-        expect(revisitGate(dexter({ stage: 'Pending Docs' }), '2027-12-12')).toMatchObject({ reason: 'not_closed_won' })
+        expect(revisitGate(dexter({ stage: 'Pending Docs' }), '2027-12-12')).toMatchObject({ reason: 'not_closed' })
         expect(revisitGate(dexter(), '2027-12-12', 'child-1')).toMatchObject({ reason: 'already_revisited' })
     })
 })
@@ -112,5 +112,54 @@ describe('helpers', () => {
     it('counts whole years', () => {
         expect(yearsBetween('2025-12-12', '2027-12-11')).toBe(1)
         expect(yearsBetween('2025-12-12', '2027-12-12')).toBe(2)
+    })
+})
+
+describe('Closed Lost revisit — lose today, try again on the follow-up date', () => {
+    // Lost to another broker; agent set a follow-up two years out.
+    const lostCase = (over: Partial<Case> = {}): Case => ({
+        id: 'lost-1', created_at: '2025-11-01T00:00:00Z', updated_at: '2025-12-12T08:00:00Z', created_by: 'agent-1',
+        stage: 'Closed Lost', case_type: 'Purchase',
+        client_name: 'Lucy Lim', client_mobile: '98765432',
+        current_bank: 'UOB', loan_size: 900_000, lock_in_end_date: '2025-06-30',
+        follow_up_date: '2027-12-12',
+        closed_lost_reason: 'Client used another broker',
+        workflow_data: {
+            property_type: 'resale_condo', property_price: 1_200_000,
+            borrowers: [{ age: 35, basic_salary: 9000 }],
+            selected_package_snapshot: { id: 'old' }, agent_notes: 'private', ipa_done: true,
+        },
+        ...over,
+    } as Case)
+
+    it('uses the same follow-up-date rule as Closed Won', () => {
+        expect(revisitGate(lostCase(), '2027-12-11')).toMatchObject({ reason: 'too_early', unlocksOn: '2027-12-12' })
+        expect(revisitGate(lostCase(), '2027-12-12').ok).toBe(true)
+        expect(revisitGate(lostCase({ follow_up_date: undefined }), '2027-12-12')).toMatchObject({ reason: 'no_follow_up' })
+    })
+
+    it('keeps the case type — another attempt at the same deal — and starts it active', () => {
+        const { row } = buildRevisitCase(lostCase(), '2027-12-12', null)
+        expect(row.case_type).toBe('Purchase')
+        expect(row.stage).toBe('Touched Base')
+        expect(row.loan_size).toBe(900_000)
+        expect(row.current_bank).toBe('UOB')
+        expect(commissionBucket({ ...row, client_name: 'Lucy Lim' } as unknown as Case)).toBe('open')
+        expect(row.remarks).toBe('Revisit of the Purchase case marked Closed Lost (reason: Client used another broker).')
+    })
+
+    it('carries the workflow forward, minus the old attempt, with ages moved on', () => {
+        const { row } = buildRevisitCase(lostCase(), '2027-12-12', null)
+        expect(row.workflow_data).toMatchObject({ property_type: 'resale_condo', property_price: 1_200_000, borrowers: [{ age: 37, basic_salary: 9000 }] })
+        for (const k of ['selected_package_snapshot', 'agent_notes', 'ipa_done']) expect(row.workflow_data).not.toHaveProperty(k)
+        expect(row.lock_in_end_date).toBeNull()   // the old lock-in date has passed
+    })
+
+    it('a lost refinancing case stays refinancing, with remaining tenure moved on', () => {
+        const c = lostCase({ case_type: 'Refinancing', existing_loan_amount: 650_000, loan_size: undefined, workflow_data: { current_tenure: 20, outstanding_disbursed: 650_000 } })
+        const { row } = buildRevisitCase(c, '2027-12-12', null)
+        expect(row.case_type).toBe('Refinancing')
+        expect(row.existing_loan_amount).toBe(650_000)
+        expect(row.workflow_data).toMatchObject({ current_tenure: 18, outstanding_disbursed: 650_000 })
     })
 })

@@ -13,7 +13,7 @@ import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
 import { usePagedCases } from '@/lib/insurance/usePagedCases'
-import { stageBadge } from '@/lib/insurance/stages'
+import { stageBadge, stageLabel } from '@/lib/insurance/stages'
 
 const PLANNER_ROUTE = '/insurance/dashboard'
 // Opens the New Case form on the Cases page.
@@ -226,7 +226,7 @@ export default function PipelineDashboard() {
                                                     </p>
                                                 </div>
                                                 <span className="status-badge" style={{ color: badge.text, background: badge.bg, flexShrink: 0 }}>
-                                                    {c.stage}
+                                                    {stageLabel(c.stage)}
                                                 </span>
                                                 <ChevronRight size={16} color="#cbd5e1" style={{ flexShrink: 0 }} />
                                             </button>

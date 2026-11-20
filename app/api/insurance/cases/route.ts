@@ -44,6 +44,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
  *   hasFollowUp=     'true' for cases with a follow-up date set
  *   followUpTo=      follow_up_date <= YYYY-MM-DD  (the "overdue" half)
  *   followUpAfter=   follow_up_date >  YYYY-MM-DD  (the "upcoming" half)
+ *   missingFollowUp= 'true' for cases that still need a follow-up date (Action Centre)
  *   lockInFrom= / lockInTo=  lock_in_end_date window, YYYY-MM-DD
  *   bucket=          'all' (any case with a commission bucket) | open |
  *                    closed_unpaid | closed_paid
@@ -120,6 +121,7 @@ export async function GET(request: Request) {
         p_has_follow_up: searchParams.get('hasFollowUp') === 'true',
         p_follow_up_to: param(searchParams, 'followUpTo'),
         p_follow_up_after: param(searchParams, 'followUpAfter'),
+        p_missing_follow_up: searchParams.get('missingFollowUp') === 'true',
         p_lock_in_from: param(searchParams, 'lockInFrom'),
         p_lock_in_to: param(searchParams, 'lockInTo'),
         p_bucket: param(searchParams, 'bucket'),
@@ -194,9 +196,10 @@ export async function POST(request: Request) {
         }
     }
 
+    const row = intakeToCaseRow(result.value, auth.userId)
     const { data, error } = await db
         .from('cases')
-        .insert(intakeToCaseRow(result.value, auth.userId))
+        .insert(row)
         .select('id')
         .single()
 
@@ -207,9 +210,9 @@ export async function POST(request: Request) {
 
     // Same calendar sync the follow-up button does, so a date set here behaves
     // identically. Never throws.
-    if (result.value.follow_up_date) {
+    if (row.follow_up_date) {
         await syncInsuranceFollowUp(
-            auth.userId, data.id, 'upsert', result.value.follow_up_date,
+            auth.userId, data.id, 'upsert', row.follow_up_date,
             result.value.client_name, `${APP_URL}/insurance/dashboard/cases/${data.id}`, result.value.client_mobile,
         ).catch(err => console.error('[Calendar sync] new case:', err))
     }

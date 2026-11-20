@@ -7,7 +7,7 @@ import Modal from '@/components/shared/Modal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 import { INTAKE_CASE_TYPES, INTAKE_PROPERTY_TYPES } from '@/lib/insurance/caseIntake'
-import { CREATABLE_STAGES, INACTIVE_STAGE } from '@/lib/insurance/stages'
+import { CREATABLE_STAGES, INACTIVE_STAGE, stageLabel } from '@/lib/insurance/stages'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import type { CaseType, PipelineStage } from '@/lib/types'
 
@@ -128,7 +128,7 @@ export default function NewCaseModal({ onClose, onCreated }: {
                     </Field>
                     <Field label="Stage">
                         <Pills
-                            options={CREATABLE_STAGES.map(s => ({ value: s, label: s }))}
+                            options={CREATABLE_STAGES.map(s => ({ value: s, label: stageLabel(s) }))}
                             value={form.stage}
                             onChange={v => set('stage', v as PipelineStage)}
                         />

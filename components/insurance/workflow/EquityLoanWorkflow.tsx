@@ -10,6 +10,7 @@ import { promoSnapshot, type MatchedPromotion } from '@/lib/insurance/promotions
 import type { SoraRates } from '@/lib/insurance/sora'
 import { Question, FieldInput, AgentNotesCard, Tip, TipGroup } from '@/components/insurance/workflow/WorkflowStep'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
+import PotentialSavings from './PotentialSavings'
 import RefiPackages from './RefiPackages'
 import EquityLoanPresentation from './EquityLoanPresentation'
 import MultiBankSelect from './MultiBankSelect'
@@ -1018,6 +1019,17 @@ export default function EquityLoanWorkflowPanel({
                     clientName={clientName}
                     caseType="Equity Loan"
                     onSelect={onSelectPackage}
+                />
+            )}
+
+            {/* ── Potential Savings (current rate vs selected package) ── */}
+            {(data.equity_loan_amount ?? 0) > 0 && data.property_type && !blocked && notFullyPaid && (
+                <PotentialSavings
+                    currentRatePct={data.current_rate}
+                    newRatePct={(data.selected_package_snapshot?.year1_rate ?? data.selected_package_snapshot?.avg_rate_lockin_pct) as number | null | undefined}
+                    newBank={data.selected_package_snapshot?.bank as string | undefined}
+                    homeLoan={data.outstanding_disbursed ?? 0}
+                    equityLoan={data.outstanding_equity_loan ?? 0}
                 />
             )}
 

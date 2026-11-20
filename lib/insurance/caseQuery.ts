@@ -42,6 +42,8 @@ export interface CaseQuery {
     followUpTo?: string
     /** follow_up_date > this date — the "upcoming" half. */
     followUpAfter?: string
+    /** Only cases that still need a follow-up date (Action Centre — needsFollowUp()). */
+    missingFollowUp?: boolean
     lockInFrom?: string
     lockInTo?: string
     /**
@@ -79,6 +81,7 @@ export function buildCaseParams(q: CaseQuery, cursor: string | null): URLSearchP
     if (q.hasFollowUp) p.set('hasFollowUp', 'true')
     if (q.followUpTo) p.set('followUpTo', q.followUpTo)
     if (q.followUpAfter) p.set('followUpAfter', q.followUpAfter)
+    if (q.missingFollowUp) p.set('missingFollowUp', 'true')
     if (q.lockInFrom) p.set('lockInFrom', q.lockInFrom)
     if (q.lockInTo) p.set('lockInTo', q.lockInTo)
     if (q.bucket) p.set('bucket', q.bucket)

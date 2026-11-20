@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { RefreshCw, Lock, ArrowRight, Loader2 } from 'lucide-react'
 import Modal from '@/components/shared/Modal'
-import { revisitGate, buildRevisitCase } from '@/lib/insurance/revisit'
+import { revisitGate, buildRevisitCase, isRevisitable } from '@/lib/insurance/revisit'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import type { Case } from '@/lib/types'
@@ -30,7 +30,8 @@ export default function RevisitControl({ caseData, childId, casePath }: {
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    if (caseData.stage !== 'Closed Won') return null
+    if (!isRevisitable(caseData.stage)) return null
+    const lost = caseData.stage === 'Closed Lost'
 
     if (childId) {
         return (
@@ -55,7 +56,7 @@ export default function RevisitControl({ caseData, childId, casePath }: {
         )
     }
 
-    const { estimate } = buildRevisitCase(caseData, todaySgt(), null)
+    const { estimate, row } = buildRevisitCase(caseData, todaySgt(), null)
     const name = caseData.client_name?.trim() || 'this client'
 
     async function revisit() {
@@ -85,15 +86,19 @@ export default function RevisitControl({ caseData, childId, casePath }: {
                 <Modal title={`Revisit ${name}?`} onClose={() => !busy && setConfirming(false)}>
                     <div className="space-y-4 text-sm text-slate-600">
                         <p>
-                            This starts a <b>new Refinancing case</b> for {name}, active straight away and counted in your potential revenue.
+                            This starts a <b>new {row.case_type} case</b> for {name}, active straight away and counted in your potential revenue.
+                            {lost && ' Your earlier details and workflow answers are carried over, so you can pick up where you left off.'}
                         </p>
                         <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 space-y-1.5 text-xs">
-                            <Row label="Estimated outstanding loan" value={estimate.outstanding ? `≈ $${Math.round(estimate.outstanding).toLocaleString('en-SG')}` : 'To be filled in'} />
+                            <Row label={lost ? 'Loan amount (from before)' : 'Estimated outstanding loan'} value={estimate.outstanding ? `${lost ? '' : '≈ '}$${Math.round(estimate.outstanding).toLocaleString('en-SG')}` : 'To be filled in'} />
                             <Row label="Current bank" value={estimate.bank ?? 'To be filled in'} />
-                            {estimate.lockInEnd && <Row label="Lock-in ended" value={fmt(estimate.lockInEnd)} />}
+                            {estimate.lockInEnd && <Row label={lost ? 'Lock-in ends' : 'Lock-in ended'} value={fmt(estimate.lockInEnd)} />}
+                            {lost && caseData.closed_lost_reason && <Row label="Lost because" value={caseData.closed_lost_reason} />}
                         </div>
                         <p className="text-xs text-slate-500">
-                            This closed case stays exactly as it is, including its commission. The two cases are linked, so the client&apos;s full history shows on both.
+                            {lost
+                                ? 'This Closed Lost case stays as it is. The two cases are linked, so the client\'s full history shows on both.'
+                                : 'This closed case stays exactly as it is, including its commission. The two cases are linked, so the client\'s full history shows on both.'}
                         </p>
                         {error && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
                         <div className="flex justify-end gap-2 pt-1">
