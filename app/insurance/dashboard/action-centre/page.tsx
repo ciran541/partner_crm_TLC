@@ -60,6 +60,7 @@ const viewStore = {
 const CALENDAR_LIMIT = 200
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const FILTER = 'h-10 px-3 text-sm rounded-lg border border-slate-200 bg-white text-slate-700 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/20 shrink-0'
 
 export default function ActionCentrePage() {
     const today = useMemo(() => todaySgt(), [])
@@ -186,7 +187,7 @@ export default function ActionCentrePage() {
                     {selectedDate && (
                         <Section icon={CalendarDays} title={fmt(selectedDate)} count={dayRows.length} tone="blue">
                             {dayRows.length === 0
-                                ? <p className="text-sm text-slate-400 px-1">No follow-ups on this date.</p>
+                                ? <p className="text-sm on-navy-muted px-1">No follow-ups on this date.</p>
                                 : dayRows.map(card)}
                         </Section>
                     )}
@@ -228,47 +229,49 @@ export default function ActionCentrePage() {
                     )}
 
                     {/* Plan ahead: everything from day 15 on */}
-                    <section className="pt-2 border-t border-slate-200">
+                    <section className="pt-2 border-t border-white/15">
                         <div className="flex items-center gap-2 mb-1 mt-5">
-                            <CalendarDays size={16} className="text-slate-500" />
-                            <h2 className="text-sm font-bold text-slate-600 uppercase tracking-wide">
+                            <CalendarDays size={16} className="on-navy-muted" />
+                            <h2 className="text-sm font-bold on-navy-strong uppercase tracking-wide">
                                 All upcoming follow-ups {!laterEmpty && !laterQ.loading && `(${laterQ.total})`}
                             </h2>
                         </div>
-                        <p className="text-xs text-slate-400 mb-3">From {fmt(addDays(soonEnd, 1))} onward, soonest first.</p>
+                        <p className="text-xs on-navy-muted mb-3">From {fmt(addDays(soonEnd, 1))} onward, soonest first.</p>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-                            <label className="col-span-2 relative">
+                        {/* Search takes the free space; each dropdown keeps a fixed width so its
+                            label never truncates. Month appears only once a year is
+                            picked (a greyed-out control reads as broken). Wraps on iPad portrait. */}
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            <label className="relative flex-1 min-w-[220px]">
                                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                                 <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Client name or mobile"
-                                    className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7]" />
+                                    className={`${FILTER} w-full pl-8`} />
                             </label>
-                            <select value={stage} onChange={e => setStage(e.target.value)}
-                                className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7]">
+                            <select value={stage} onChange={e => setStage(e.target.value)} className={`${FILTER} w-[170px]`} aria-label="Status">
                                 <option value="all">All statuses</option>
                                 {PIPELINE_STAGES.map(s => <option key={s} value={s}>{stageLabel(s)}</option>)}
                             </select>
-                            <div className="flex gap-2">
-                                <select value={year} onChange={e => { setYear(e.target.value); if (!e.target.value) setMonthFilter('') }}
-                                    className="flex-1 min-w-0 px-2 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7]">
-                                    <option value="">Any year</option>
-                                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                            <select value={year} onChange={e => { setYear(e.target.value); if (!e.target.value) setMonthFilter('') }}
+                                className={`${FILTER} w-[128px]`} aria-label="Year">
+                                <option value="">All years</option>
+                                {years.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                            {year && (
+                                <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)}
+                                    className={`${FILTER} w-[140px]`} aria-label="Month">
+                                    <option value="">All months</option>
+                                    {MONTHS.map((m, i) => <option key={m} value={String(i + 1)}>{m} {year}</option>)}
                                 </select>
-                                <select value={monthFilter} onChange={e => setMonthFilter(e.target.value)} disabled={!year}
-                                    className="flex-1 min-w-0 px-2 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7] disabled:opacity-50">
-                                    <option value="">Any month</option>
-                                    {MONTHS.map((m, i) => <option key={m} value={String(i + 1)}>{m}</option>)}
-                                </select>
-                            </div>
+                            )}
                         </div>
 
                         <div className="space-y-2.5">
                             {laterEmpty ? (
-                                <p className="text-sm text-slate-400 px-1">That period is covered by the sections above.</p>
+                                <p className="text-sm on-navy-muted px-1">That period is covered by the sections above.</p>
                             ) : laterQ.loading ? (
                                 <div className="py-6 flex justify-center"><Spinner size="sm" color="#03a9e7" label="Loading…" /></div>
                             ) : laterQ.rows.length === 0 ? (
-                                <p className="text-sm text-slate-400 px-1">No follow-ups match.</p>
+                                <p className="text-sm on-navy-muted px-1">No follow-ups match.</p>
                             ) : laterQ.rows.map(card)}
                             {!laterEmpty && <LoadMore q={laterQ} />}
                         </div>
@@ -281,10 +284,12 @@ export default function ActionCentrePage() {
 
 // ─── Pieces ──────────────────────────────────────────────────────────────────
 
+// Two palettes: `text` sits inside white cards (stat tiles), `head` / `icon`
+// sit straight on the navy Internal background (section headings).
 const TONES = {
-    red: { text: 'text-red-600', icon: 'text-red-500', pill: 'bg-red-50 text-red-600' },
-    amber: { text: 'text-amber-600', icon: 'text-amber-500', pill: 'bg-amber-50 text-amber-700' },
-    blue: { text: 'text-[#0369a1]', icon: 'text-[#03a9e7]', pill: 'bg-sky-50 text-[#0369a1]' },
+    red: { text: 'text-red-600', head: 'text-red-300', icon: 'text-red-300', pill: 'bg-red-50 text-red-600' },
+    amber: { text: 'text-amber-600', head: 'text-amber-300', icon: 'text-amber-300', pill: 'bg-amber-50 text-amber-700' },
+    blue: { text: 'text-[#0369a1]', head: 'text-sky-300', icon: 'text-sky-300', pill: 'bg-sky-50 text-[#0369a1]' },
 } as const
 type Tone = keyof typeof TONES
 
@@ -304,10 +309,10 @@ function Section({ icon: Icon, title, count, tone, hint, children }: {
         <section>
             <div className="flex items-center gap-2 mb-1">
                 <Icon size={16} className={TONES[tone].icon} />
-                <h2 className={`text-sm font-bold uppercase tracking-wide ${TONES[tone].text}`}>{title}</h2>
+                <h2 className={`text-sm font-bold uppercase tracking-wide ${TONES[tone].head}`}>{title}</h2>
                 <span className={`ml-auto text-xs font-bold px-2 py-0.5 rounded-full ${TONES[tone].pill}`}>{count}</span>
             </div>
-            {hint && <p className="text-xs text-slate-500 mb-2">{hint}</p>}
+            {hint && <p className="text-xs on-navy-muted mb-2">{hint}</p>}
             <div className="space-y-2.5 mt-2">{children}</div>
         </section>
     )
@@ -385,7 +390,7 @@ function LoadMore({ q }: { q: { rows: unknown[]; total: number; hasMore: boolean
     if (!q.hasMore) return null
     return (
         <button onClick={q.loadMore} disabled={q.loadingMore}
-            className="mt-1 w-full py-2.5 text-xs font-semibold rounded-lg border border-slate-200 text-[#0369a1] hover:bg-slate-50 disabled:text-slate-300">
+            className="mt-1 w-full py-2.5 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-[#0369a1] hover:bg-slate-50 disabled:text-slate-300">
             {q.loadingMore ? 'Loading…' : `Load more (${q.total - q.rows.length} remaining)`}
         </button>
     )

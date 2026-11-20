@@ -383,6 +383,25 @@ a.card:active {
   margin-top: 4px;
 }
 
+/* ── Internal (back-of-house) theme ──────────────────────────────────────────
+   Dashboard, Cases, Earnings, Action Centre, Profile: navy page, white cards.
+   Tells the agent at a glance "private screen — don't turn this to the client";
+   client-facing tools stay light. Applied by the insurance layout on Internal
+   routes only. A shade brighter than the sidebar (--brand-navy) so the two
+   don't merge into one block. Cards, tables and modals keep their own white
+   backgrounds, so everything inside them reads exactly as before; only text
+   drawn straight on the page needs the light variants below (.on-navy-*). */
+.theme-internal {
+  --bg-page: #0b3a5e;
+  background: var(--bg-page);
+}
+.theme-internal .ios-page-title { color: #ffffff; }
+.theme-internal .page-subtitle { color: #a9c4da; }
+.theme-internal .on-navy-muted { color: #a9c4da; }
+.theme-internal .on-navy-strong { color: #e6f0f8; }
+/* Navy buttons would vanish on the navy page: primary actions go brand cyan here. */
+.theme-internal .btn-primary { background: var(--brand-cyan); }
+
 .metric-value {
   font-size: var(--text-metric);
   font-weight: 800;

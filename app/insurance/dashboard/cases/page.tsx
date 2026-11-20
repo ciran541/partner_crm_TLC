@@ -245,7 +245,8 @@ function CasesList() {
                     {hasFilters && (
                         <button
                             onClick={resetFilters}
-                            style={{ fontSize: 12, color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
+                            className="on-navy-muted"
+                            style={{ fontSize: 12, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}
                         >
                             Clear filters
                         </button>

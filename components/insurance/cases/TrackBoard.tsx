@@ -100,7 +100,7 @@ function Column({ col, search, agent, today, draggingId }: {
                     <h3 className="text-sm font-bold" style={{ color: col.accent }}>{stageLabel(col.stage)}</h3>
                     <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-white/70" style={{ color: col.accent }}>{q.total}</span>
                 </div>
-                <p className="text-lg font-extrabold text-[#052d4a] leading-tight mt-0.5">{formatCurrency(q.loanVolume * REVENUE_RATE)}</p>
+                <p className="text-lg font-extrabold text-[#052d4a] leading-tight mt-0.5">{q.loanVolume > 0 ? formatCurrency(q.loanVolume * REVENUE_RATE) : '$0'}</p>
                 <p className="text-[10px] text-slate-500">potential revenue</p>
             </header>
 

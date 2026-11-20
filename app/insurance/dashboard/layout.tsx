@@ -525,7 +525,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             </nav>
 
             {/* Page Content */}
-            <div className="md:pl-[260px]">
+            {/* Internal screens get the navy theme (globals.css .theme-internal). */}
+            <div className={`md:pl-[260px] ${internalActive ? 'theme-internal' : ''}`}>
                 <div
                     className="px-4 pt-[calc(64px+env(safe-area-inset-top))] pb-[calc(72px+env(safe-area-inset-bottom))] md:px-8 md:py-7"
                     style={{ minHeight: '100dvh' }}

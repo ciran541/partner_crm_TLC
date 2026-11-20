@@ -241,7 +241,7 @@ export default function PipelineDashboard() {
                             className="card"
                             style={{
                                 padding: 24,
-                                background: 'linear-gradient(135deg, #052d4a 0%, #0284c7 100%)',
+                                background: 'linear-gradient(135deg, #0369a1 0%, #03a9e7 100%)',   // brighter than the navy Internal page it sits on
                                 display: 'flex', flexDirection: 'column', gap: 16,
                             }}
                         >

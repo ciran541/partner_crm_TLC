@@ -151,7 +151,7 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
         <div className="max-w-[1200px] mx-auto flex flex-col gap-5">
             <div>
                 {onBack && (
-                    <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-2">
+                    <button onClick={onBack} className="flex items-center gap-1.5 text-sm on-navy-muted hover:text-white mb-2">
                         <ArrowLeft size={15} /> All agents
                     </button>
                 )}
