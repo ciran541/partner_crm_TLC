@@ -16,6 +16,8 @@ import type { Case } from '@/lib/types'
  */
 export type CaseListRow = Case & {
     loan_value?: number
+    /** Closed Won only: the day it was marked Closed Won (SGT), YYYY-MM-DD. */
+    closed_on?: string | null
     bucket?: 'open' | 'closed_unpaid' | 'closed_paid' | null
 }
 
@@ -44,6 +46,8 @@ export interface CaseQuery {
     followUpAfter?: string
     /** Only cases that still need a follow-up date (Action Centre — needsFollowUp()). */
     missingFollowUp?: boolean
+    /** Closed Won cases closed in this month 'YYYY-MM' or year 'YYYY' (SGT) — the Closed Won tab. */
+    closedMonth?: string
     lockInFrom?: string
     lockInTo?: string
     /**
@@ -82,6 +86,7 @@ export function buildCaseParams(q: CaseQuery, cursor: string | null): URLSearchP
     if (q.followUpTo) p.set('followUpTo', q.followUpTo)
     if (q.followUpAfter) p.set('followUpAfter', q.followUpAfter)
     if (q.missingFollowUp) p.set('missingFollowUp', 'true')
+    if (q.closedMonth) p.set('closedMonth', q.closedMonth)
     if (q.lockInFrom) p.set('lockInFrom', q.lockInFrom)
     if (q.lockInTo) p.set('lockInTo', q.lockInTo)
     if (q.bucket) p.set('bucket', q.bucket)

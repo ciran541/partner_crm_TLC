@@ -2,10 +2,10 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, Search, Briefcase, ChevronDown, ArrowRight, AlertCircle, TrendingUp, Upload } from 'lucide-react'
+import { Plus, Search, Briefcase, ChevronDown, ArrowRight, AlertCircle, TrendingUp, TrendingDown, Upload } from 'lucide-react'
 import NewCaseModal from '@/components/insurance/cases/NewCaseModal'
 import CaseImportModal from '@/components/insurance/cases/CaseImportModal'
-import { PIPELINE_STAGES, INACTIVE_STAGE, stageBadge, stageLabel } from '@/lib/insurance/stages'
+import { PIPELINE_STAGES, INACTIVE_STAGE, stageLabel } from '@/lib/insurance/stages'
 import FilterPills from '@/components/shared/FilterPills'
 import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
@@ -13,6 +13,8 @@ import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import TrackBoard from '@/components/insurance/cases/TrackBoard'
+import ClosedWonMonthly from '@/components/insurance/cases/ClosedWonMonthly'
+import { todaySgt } from '@/lib/insurance/promotions'
 // "Track" = the open pipeline as a drag-and-drop board. It's the default view.
 // The other pills are single stages ("Touched Base" is labelled "Active").
 // Inactive goes last: it's a parking area for past clients, not a pipeline step.
@@ -26,10 +28,8 @@ const STATUS_PILL_OPTIONS = [
 // Potential revenue ≈ loan size × 0.15%.
 const REVENUE_RATE = 0.0015
 
-function StageBadge({ stage }: { stage: string }) {
-    const cfg = stageBadge(stage)
-    return <span className="status-badge" style={{ color: cfg.text, background: cfg.bg }}>{stageLabel(stage)}</span>
-}
+const CLOSED_WON = 'Closed Won'
+const CLOSED_LOST = 'Closed Lost'
 
 // The loan figure comes from the server now (search_cases.loan_value), so the
 // column and the revenue total are computed from ONE definition — the same one
@@ -42,6 +42,12 @@ function caseLoanAmount(c: CaseListRow) {
 }
 
 type DateMode = 'all' | 'range' | 'month'
+
+/** Follow-up date colour: red when overdue, blue otherwise, faint when missing. */
+function fuColor(fu: string | null | undefined, today: string): string {
+    if (!fu) return '#cbd5e1'
+    return fu.slice(0, 10) < today ? '#dc2626' : '#0369a1'
+}
 
 const inputStyle: React.CSSProperties = {
     padding: '8px 12px',
@@ -71,6 +77,11 @@ function CasesList() {
 
     const [stageFilter, setStageFilter] = useState(TRACK)
     const isTrack = stageFilter === TRACK
+    const isClosedWon = stageFilter === CLOSED_WON
+    // Closed Won tab: which closings to list — 'YYYY-MM' (a month) or 'YYYY'
+    // (whole year), SGT. Opens on this month.
+    const currentMonth = todaySgt().slice(0, 7)
+    const [closedMonth, setClosedMonth] = useState(currentMonth)
     const [agentFilter, setAgentFilter] = useState('all')
     const [search, setSearch] = useState('')
     const [agentList, setAgentList] = useState<{ id: string; name: string }[]>([])
@@ -104,6 +115,7 @@ function CasesList() {
         from: dateMode === 'range' ? fromDate || undefined : undefined,
         to: dateMode === 'range' ? toDate || undefined : undefined,
         month: dateMode === 'month' ? month || undefined : undefined,
+        closedMonth: isClosedWon ? closedMonth : undefined,
     }, { enabled: !isTrack })   // the board loads its own four columns
 
     // Admin-only: load the full agent roster for the agent filter. Gated on
@@ -132,6 +144,7 @@ function CasesList() {
     }, [])
 
     const potentialRevenue = loanVolume * REVENUE_RATE
+    const todayStr = todaySgt()
 
     const filterLabel = stageLabel(stageFilter)
     const hasFilters = stageFilter !== TRACK || agentFilter !== 'all' || !!search || dateActive
@@ -198,7 +211,7 @@ function CasesList() {
                     </div>
 
                     {/* Date filter mode (list views only: the board is "what's open now") */}
-                    {!isTrack && <div style={{ position: 'relative' }}>
+                    {!isTrack && !isClosedWon && <div style={{ position: 'relative' }}>
                         <select
                             value={dateMode}
                             onChange={e => { setDateMode(e.target.value as DateMode); setFromDate(''); setToDate(''); setMonth('') }}
@@ -211,7 +224,7 @@ function CasesList() {
                         <ChevronDown size={13} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
                     </div>}
 
-                    {!isTrack && dateMode === 'range' && (
+                    {!isTrack && !isClosedWon && dateMode === 'range' && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <input type="date" value={fromDate} max={toDate || today}
                                 onChange={e => setFromDate(e.target.value)} style={inputStyle} aria-label="From date" />
@@ -220,7 +233,7 @@ function CasesList() {
                                 onChange={e => setToDate(e.target.value)} style={inputStyle} aria-label="To date" />
                         </div>
                     )}
-                    {!isTrack && dateMode === 'month' && (
+                    {!isTrack && !isClosedWon && dateMode === 'month' && (
                         <input type="month" value={month} max={thisMonth}
                             onChange={e => setMonth(e.target.value)} style={inputStyle} aria-label="Month" />
                     )}
@@ -258,16 +271,34 @@ function CasesList() {
                 <TrackBoard search={search} agent={agentFilter === 'all' ? undefined : agentFilter} />
             )}
 
-            {/* Potential revenue — reflects the current filter. Not shown for
-                Inactive: parked past clients aren't pipeline revenue. */}
-            {!isTrack && !loading && !error && stageFilter !== INACTIVE_STAGE && (
-                <div className="card" style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14, background: 'linear-gradient(to right, #ecfeff, #f0f9ff)' }}>
-                    <div style={{ width: 40, height: 40, borderRadius: 12, background: '#03a9e7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <TrendingUp size={20} color="white" />
+            {/* Closed Won: every month of every year in one grid; tap a month or year to list it. */}
+            {isClosedWon && (
+                <ClosedWonMonthly
+                    scope={closedMonth}
+                    currentMonth={currentMonth}
+                    onScope={setClosedMonth}
+                    loanVolume={loanVolume}
+                    cases={total}
+                    loading={loading || refreshing}
+                    agent={agentFilter === 'all' ? undefined : agentFilter}
+                />
+            )}
+
+            {/* Revenue banner — reflects the current filter. Open stages show
+                Potential Revenue; Closed Lost shows Lost Revenue (the same 0.15%,
+                on the deals that got away). Not shown for Inactive (parked past
+                clients aren't pipeline revenue) or Closed Won (month view above). */}
+            {!isTrack && !isClosedWon && !loading && !error && stageFilter !== INACTIVE_STAGE && (
+                <div className="card" style={{
+                    padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 14,
+                    background: stageFilter === CLOSED_LOST ? 'linear-gradient(to right, #fef2f2, #fff7f7)' : 'linear-gradient(to right, #ecfeff, #f0f9ff)',
+                }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 12, background: stageFilter === CLOSED_LOST ? '#ef4444' : '#03a9e7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {stageFilter === CLOSED_LOST ? <TrendingDown size={20} color="white" /> : <TrendingUp size={20} color="white" />}
                     </div>
                     <div>
-                        <p style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                            Potential Revenue · {filterLabel}
+                        <p style={{ fontSize: 11, fontWeight: 700, color: stageFilter === CLOSED_LOST ? '#b91c1c' : '#0369a1', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                            {stageFilter === CLOSED_LOST ? 'Lost Revenue' : `Potential Revenue · ${filterLabel}`}
                         </p>
                         <p style={{ fontSize: 24, fontWeight: 800, color: '#052d4a', lineHeight: 1.15 }}>
                             {formatCurrency(potentialRevenue)}
@@ -298,11 +329,13 @@ function CasesList() {
                 <EmptyState
                     icon={Briefcase}
                     iconColor="#03a9e7"
-                    title={hasFilters ? 'No cases match filters' : 'No cases yet'}
-                    description={hasFilters
-                        ? 'Try adjusting your filters to see more results.'
-                        : 'Create your first case to start tracking your pipeline.'}
-                    action={hasFilters ? undefined : { label: 'New Case', onClick: () => setNewCaseOpen(true) }}
+                    title={isClosedWon ? 'Nothing closed in this period' : hasFilters ? 'No cases match filters' : 'No cases yet'}
+                    description={isClosedWon
+                        ? 'Tap another month or year in the grid above.'
+                        : hasFilters
+                            ? 'Try adjusting your filters to see more results.'
+                            : 'Create your first case to start tracking your pipeline.'}
+                    action={hasFilters || isClosedWon ? undefined : { label: 'New Case', onClick: () => setNewCaseOpen(true) }}
                 />
             )}
 
@@ -324,9 +357,9 @@ function CasesList() {
                                         {isAdmin && <th className="table-th">Agent</th>}
                                         <th className="table-th">Type</th>
                                         <th className="table-th" style={{ textAlign: 'right' }}>Loan Amount</th>
-                                        <th className="table-th">Stage</th>
                                         <th className="table-th">Banker</th>
-                                        <th className="table-th">Input / Follow-Up</th>
+                                        <th className="table-th">{isClosedWon ? 'Closed / Follow-Up' : 'Input / Follow-Up'}</th>
+                                        <th className="table-th">Remark</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -347,14 +380,14 @@ function CasesList() {
                                                     </span>
                                                 )}
                                                 </p>
-                                                {c.client_mobile && <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{c.client_mobile}</p>}
+                                                {c.client_mobile && <p style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{c.client_mobile}</p>}
+                                                {c.client_email && <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 1, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.client_email}</p>}
                                             </td>
                                             {isAdmin && (
                                                 <td className="table-td" style={{ color: '#475569' }}>{c.profiles?.name || 'Unknown Agent'}</td>
                                             )}
                                             <td className="table-td" style={{ color: '#475569' }}>{c.case_type}</td>
                                             <td className="table-td" style={{ textAlign: 'right', fontWeight: 600, color: '#0f172a' }}>{caseLoanAmount(c)}</td>
-                                            <td className="table-td"><StageBadge stage={c.stage} /></td>
                                             <td className="table-td">
                                                 {c.referred_bankers && c.referred_bankers.length > 0 ? (
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -366,11 +399,18 @@ function CasesList() {
                                                     </div>
                                                 ) : <span style={{ color: '#cbd5e1' }}>—</span>}
                                             </td>
-                                            <td className="table-td" style={{ fontSize: 12 }}>
-                                                <div style={{ color: '#475569' }}>In: {formatDate(c.created_at)}</div>
-                                                <div style={{ color: c.follow_up_date ? '#0369a1' : '#cbd5e1', marginTop: 2 }}>
+                                            <td className="table-td" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                                                <div style={{ color: '#475569' }}>
+                                                    {isClosedWon && c.closed_on ? `Closed: ${formatDate(c.closed_on)}` : `In: ${formatDate(c.created_at)}`}
+                                                </div>
+                                                <div style={{ color: fuColor(c.follow_up_date, todayStr), marginTop: 2 }}>
                                                     FU: {c.follow_up_date ? formatDate(c.follow_up_date) : '—'}
                                                 </div>
+                                            </td>
+                                            <td className="table-td" style={{ fontSize: 12, color: '#475569', maxWidth: 220 }}>
+                                                {c.follow_up_remark
+                                                    ? <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{c.follow_up_remark}</span>
+                                                    : <span style={{ color: '#cbd5e1' }}>—</span>}
                                             </td>
                                         </tr>
                                     ))}
@@ -400,12 +440,16 @@ function CasesList() {
                                         <p style={{ fontWeight: 700, color: '#0f172a', fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                             {c.client_name || 'Unnamed'}
                                         </p>
-                                        <StageBadge stage={c.stage} />
                                     </div>
                                     <p style={{ fontSize: 13, color: '#64748b', marginBottom: 8 }}>
                                         {c.case_type}{c.parent_case_id ? ' · ↻ Returning client' : ''}
                                     </p>
-                                    {c.client_mobile && <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>{c.client_mobile}</p>}
+                                    {(c.client_mobile || c.client_email) && (
+                                        <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {[c.client_mobile, c.client_email].filter(Boolean).join(' · ')}
+                                        </p>
+                                    )}
+                                    {c.follow_up_remark && <p style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>{c.follow_up_remark}</p>}
                                     {isAdmin && c.profiles?.name && (
                                         <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Agent: {c.profiles.name}</p>
                                     )}
@@ -416,7 +460,7 @@ function CasesList() {
                                     )}
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                                         <span style={{ fontSize: 12, color: '#94a3b8' }}>
-                                            In: {formatDate(c.created_at)}{c.follow_up_date ? ` · FU: ${formatDate(c.follow_up_date)}` : ''}
+                                            {isClosedWon && c.closed_on ? `Closed: ${formatDate(c.closed_on)}` : `In: ${formatDate(c.created_at)}`}{c.follow_up_date ? ` · FU: ${formatDate(c.follow_up_date)}` : ''}
                                         </span>
                                         <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{caseLoanAmount(c)}</span>
                                     </div>

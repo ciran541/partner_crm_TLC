@@ -1,17 +1,27 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { DollarSign, ArrowRight, ArrowLeft, Check, Clock } from 'lucide-react'
 import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
-import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { commissionWithFee } from '@/lib/insurance/commission'
 import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import type { CommissionBucket, AgentCommissionRow } from '@/lib/insurance/commission'
+import EarningsOverview from '@/components/insurance/earnings/EarningsOverview'
+import { todaySgt } from '@/lib/insurance/promotions'
+import { loUploadedAt } from '@/lib/insurance/closedWon'
 
-const money = (n: number) => formatCurrency(n)
+/** $1,620 or $1,147.50 — never "$1,147.5". */
+const money = (n: number) => {
+    if (!n) return formatCurrency(n)
+    const whole = Math.abs(n - Math.round(n)) < 0.005
+    return new Intl.NumberFormat('en-SG', {
+        style: 'currency', currency: 'SGD',
+        minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2,
+    }).format(n)
+}
 
 // ─── Admin master "excel" table ───────────────────────────────────────────────
 export function MasterEarningsTable({ rows, onOpen }: { rows: AgentCommissionRow[]; onOpen: (id: string) => void }) {
@@ -77,7 +87,11 @@ export function MasterEarningsTable({ rows, onOpen }: { rows: AgentCommissionRow
 }
 
 // ─── Agent earnings view (self, or admin drill-down) ──────────────────────────
-type Tab = 'all' | CommissionBucket
+// Earnings = commission actually earned: Closed Won cases only, awaiting payout
+// or paid. Active ("open") cases are pipeline, not earnings — they live in
+// Cases (Potential Revenue). So a revisited case only shows here once it is
+// itself Closed Won again, regardless of whether the earlier case was paid.
+type Tab = 'all' | 'closed_unpaid' | 'closed_paid'
 
 /**
  * Owns its own data rather than receiving a case array.
@@ -100,19 +114,16 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
     onBack?: () => void
 }) {
     const [tab, setTab] = useState<Tab>('all')
+    // Year the case was CLOSED (SGT). '' = all years. Opens on this year; the
+    // overview card above still shows every unpaid case, so nothing is hidden.
+    const thisYear = todaySgt().slice(0, 4)
+    const [year, setYear] = useState(thisYear)
+    const years = useClosedYears(agentId, thisYear)
 
     // Totals and per-tab counts come from the database over EVERY case in scope,
     // so the hero cards and tab badges stay correct however many rows are loaded.
     const { summary, loading: summaryLoading } = useCaseSummary({ agent: agentId })
     const c = summary.commission
-
-    const totals = {
-        open: c.open,
-        closedUnpaid: c.closed_unpaid,
-        closedPaid: c.closed_paid,
-        activeCases: c.active_cases,
-        total: c.total,
-    }
 
     const {
         rows: filtered,
@@ -122,29 +133,27 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
         refreshing,
         loadingMore,
         loadMore,
-    } = usePagedCases({ agent: agentId, stage: 'all', bucket: tab })
+        agentShare: tabAgentTotal,
+    } = usePagedCases({ ...scopeQuery(agentId, year), ...(tab === 'all' ? {} : { bucket: tab }) })
 
-    const bucketedCount = c.count_open + c.count_closed_unpaid + c.count_closed_paid
+    // Tab badges for the chosen year: one-row queries, the server counts.
+    const countAll = usePagedCases({ ...scopeQuery(agentId, year), limit: 1 }).total
+    const countUnpaid = usePagedCases({ ...scopeQuery(agentId, year), bucket: 'closed_unpaid', limit: 1 }).total
+    const countPaid = usePagedCases({ ...scopeQuery(agentId, year), bucket: 'closed_paid', limit: 1 }).total
+
+    // Empty state only when there's nothing closed at all (any year).
+    const bucketedCount = c.count_closed_unpaid + c.count_closed_paid
     const loading = summaryLoading || rowsLoading
 
     const tabs: { key: Tab; label: string; count: number }[] = [
-        { key: 'all', label: 'All', count: bucketedCount },
-        { key: 'open', label: 'Open', count: c.count_open },
-        { key: 'closed_unpaid', label: 'Unpaid', count: c.count_closed_unpaid },
-        { key: 'closed_paid', label: 'Paid', count: c.count_closed_paid },
+        { key: 'all', label: 'All', count: countAll },
+        { key: 'closed_unpaid', label: 'Awaiting payout', count: countUnpaid },
+        { key: 'closed_paid', label: 'Paid', count: countPaid },
     ]
-
-    // Agent-share total for the tab on screen — again from the server, so the
-    // footer figure covers the whole tab rather than the rows loaded so far.
-    const tabAgentTotal =
-        tab === 'open' ? c.open
-        : tab === 'closed_unpaid' ? c.closed_unpaid
-        : tab === 'closed_paid' ? c.closed_paid
-        : c.total
 
     const bucketBadge = (b: CommissionBucket) =>
         b === 'open' ? { label: 'Open', color: '#0369a1', bg: '#e0f2fe' }
-        : b === 'closed_unpaid' ? { label: 'Unpaid', color: '#d97706', bg: '#fffbeb' }
+        : b === 'closed_unpaid' ? { label: 'Awaiting payout', color: '#d97706', bg: '#fffbeb' }
         : { label: 'Paid', color: '#16a34a', bg: '#f0fdf4' }
 
     return (
@@ -159,22 +168,29 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
                 <p className="page-subtitle">{subtitle}</p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <HeroCard label="Open (potential)" value={money(totals.open)} sub={`${totals.activeCases} active case${totals.activeCases !== 1 ? 's' : ''}`} accent="#0369a1" bg="#e0f2fe" />
-                <HeroCard label="Closed — Unpaid" value={money(totals.closedUnpaid)} sub="Awaiting payout" accent="#d97706" bg="#fffbeb" />
-                <HeroCard label="Closed — Paid" value={money(totals.closedPaid)} sub="Paid out" accent="#16a34a" bg="#f0fdf4" />
-            </div>
+            <EarningsOverview
+                awaiting={c.closed_unpaid}
+                awaitingCases={c.count_closed_unpaid}
+                currentMonth={todaySgt().slice(0, 7)}
+                agentId={agentId}
+            />
 
             {loading ? (
                 <Skeleton height={320} radius={14} />
             ) : bucketedCount === 0 ? (
                 <EmptyState icon={DollarSign} iconColor="#03a9e7" title="No commission yet"
-                    description="Cases with a loan amount will show potential commission here; closed-won cases show earned commission." />
+                    description="When you mark a case Closed Won, its commission shows here until it's paid out." />
             ) : (
                 /* Dim while a tab switch loads over the existing rows — no spinner
                    flash, no layout jump. */
                 <div className="card transition-opacity duration-150" style={{ overflow: 'hidden', opacity: refreshing ? 0.55 : 1 }}>
-                    <div className="scroll-x" style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4 }}>
+                    <div className="scroll-x" style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4 }}>
+                        {/* Year closed — narrows the tabs, rows and total below. */}
+                        <select value={year} onChange={e => setYear(e.target.value)} aria-label="Year closed"
+                            className="h-9 pl-3 pr-8 mr-2 text-sm font-bold rounded-lg border border-slate-200 bg-white text-[#052d4a] outline-none focus:border-[#03a9e7] shrink-0">
+                            {years.map(y => <option key={y} value={y}>{y}</option>)}
+                            <option value="">All years</option>
+                        </select>
                         {tabs.map(t => {
                             const active = tab === t.key
                             return (
@@ -201,12 +217,17 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
                                     <th className="table-th" style={{ textAlign: 'right' }}>Loan</th>
                                     <th className="table-th" style={{ textAlign: 'right' }}>Gross</th>
                                     <th className="table-th" style={{ textAlign: 'right' }}>{isAdmin ? 'Agent Share' : 'Your Share'}</th>
-                                    <th className="table-th">Bucket</th>
-                                    <th className="table-th">Updated</th>
+                                    <th className="table-th">Status</th>
+                                    <th className="table-th">Log</th>
                                     {isAdmin && <th className="table-th" />}
                                 </tr>
                             </thead>
                             <tbody>
+                                {filtered.length === 0 && (
+                                    <tr><td colSpan={isAdmin ? 8 : 7} className="table-td" style={{ textAlign: 'center', color: '#94a3b8', padding: '28px 16px' }}>
+                                        No {tab === 'closed_paid' ? 'paid ' : tab === 'closed_unpaid' ? 'unpaid ' : ''}cases closed in {year || 'any year'}.
+                                    </td></tr>
+                                )}
                                 {filtered.map(c => {
                                     // loan_value and bucket are computed by SQL, so
                                     // the row and the totals above it can never be
@@ -225,9 +246,11 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
                                             <td className="table-td" style={{ color: '#475569' }}>{c.case_type}</td>
                                             <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>{loan ? money(loan) : '—'}</td>
                                             <td className="table-td" style={{ textAlign: 'right', color: '#475569' }}>{money(comm.gross)}</td>
-                                            <td className="table-td" style={{ textAlign: 'right', fontWeight: 800, color: '#059669', fontSize: 15 }}>{money(comm.agent)}<div className="text-xs font-normal text-slate-500">Correction fee: {money(comm.correctionFee)}{comm.correctionFee > 0 ? ' deducted' : ' (not applied)'}</div></td>
+                                            <td className="table-td" style={{ textAlign: 'right', fontWeight: 800, color: '#059669', fontSize: 15 }}>{money(comm.agent)}{comm.correctionFee > 0 && <div className="text-xs font-normal text-red-600">−{money(comm.correctionFee)} correction fee</div>}</td>
                                             <td className="table-td"><span className="status-badge" style={{ color: badge.color, background: badge.bg }}>{badge.label}</span></td>
-                                            <td className="table-td" style={{ fontSize: 12, color: '#94a3b8' }}>{formatDate(c.updated_at)}</td>
+                                            <td className="table-td" style={{ fontSize: 12, whiteSpace: 'nowrap', lineHeight: 1.6 }}>
+                                                <EarningsLog c={c} />
+                                            </td>
                                             {isAdmin && (
                                                 <td className="table-td" onClick={e => e.stopPropagation()}>
                                                     {bucket !== 'open' && onTogglePaid && (
@@ -271,7 +294,7 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
                             Showing {filtered.length} of {filteredTotal} case{filteredTotal !== 1 ? 's' : ''}
                         </span>
                         <span style={{ fontSize: 15, fontWeight: 800, color: '#059669' }}>
-                            {money(tabAgentTotal)} total
+                            {money(tabAgentTotal)} {year ? `total for ${year}` : 'total'}
                         </span>
                     </div>
                 </div>
@@ -280,12 +303,51 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, savingId,
     )
 }
 
-export function HeroCard({ label, value, sub, accent, bg }: { label: string; value: string; sub: string; accent: string; bg: string }) {
+/** DD/MM/YYYY in Singapore time. */
+function dmy(iso: string): string {
+    // Date-only strings are calendar days already; timestamps convert to SGT.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`
+    return new Date(iso).toLocaleDateString('en-GB', { timeZone: 'Asia/Singapore', day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+/**
+ * The case's payout trail, oldest first:
+ *   • LO uploaded to HUB on DD/MM/YYYY   (when TLC could start checking the closure)
+ *   • TLC payout on DD/MM/YYYY           (or "Awaiting TLC payout")
+ */
+function EarningsLog({ c }: { c: CaseListRow }) {
+    const lo = loUploadedAt(c.closed_won_data?.lo_documents)
     return (
-        <div className="card" style={{ padding: '20px 22px' }}>
-            <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: accent, background: bg, padding: '3px 8px', borderRadius: 6 }}>{label}</span>
-            <p style={{ fontSize: 28, fontWeight: 800, color: '#0f172a', letterSpacing: '-0.03em', marginTop: 12, lineHeight: 1 }}>{value}</p>
-            <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 8 }}>{sub}</p>
-        </div>
+        <>
+            <div style={{ color: lo ? '#475569' : '#d97706' }}>
+                {lo ? `LO uploaded to HUB on ${dmy(lo)}` : 'No LO uploaded yet'}
+            </div>
+            <div style={{ color: c.commission_paid_at ? '#16a34a' : '#94a3b8', fontWeight: c.commission_paid_at ? 600 : 400 }}>
+                {c.commission_paid_at ? `TLC payout on ${dmy(c.commission_paid_at)}` : 'Awaiting TLC payout'}
+            </div>
+        </>
     )
+}
+
+/** Earnings list scope: Closed Won, optionally only cases closed in `year`. */
+function scopeQuery(agentId: string | undefined, year: string) {
+    return { agent: agentId, stage: 'Closed Won', closedMonth: year || undefined }
+}
+
+/** Years the agent has closed cases in (newest first), always including this year. */
+function useClosedYears(agentId: string | undefined, thisYear: string): string[] {
+    const [years, setYears] = useState<string[]>([thisYear])
+    useEffect(() => {
+        let alive = true
+        fetch(`/api/insurance/cases/closed-by-month${agentId ? `?agent=${agentId}` : ''}`)
+            .then(r => (r.ok ? r.json() : { months: [] }))
+            .then(d => {
+                if (!alive) return
+                const ys = new Set<string>([thisYear, ...((d.months ?? []) as { month: string }[]).map(m => m.month.slice(0, 4))])
+                setYears([...ys].sort().reverse())
+            })
+            .catch(() => {})
+        return () => { alive = false }
+    }, [agentId, thisYear])
+    return years
 }

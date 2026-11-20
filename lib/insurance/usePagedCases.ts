@@ -41,6 +41,7 @@ interface PageState {
     rows: CaseListRow[]
     total: number
     loanVolume: number
+    agentShare: number
     nextCursor: string | null
     isAdmin: boolean
     fetchedAt: number
@@ -135,6 +136,7 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
                     rows: [...previous, ...((body.rows ?? []) as CaseListRow[])],
                     total: body.total ?? 0,
                     loanVolume: body.loanVolume ?? 0,
+                    agentShare: body.agentShare ?? 0,
                     nextCursor: body.nextCursor ?? null,
                     isAdmin: !!body.isAdmin,
                     fetchedAt: Date.now(),
@@ -222,6 +224,8 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
         total: displayed?.total ?? 0,
         /** Loan volume across ALL matching rows, not just the loaded page. */
         loanVolume: displayed?.loanVolume ?? 0,
+        /** Agent take-home across ALL matching rows (Earnings footer). */
+        agentShare: displayed?.agentShare ?? 0,
         isAdmin: displayed?.isAdmin ?? false,
         // Paging must follow the LIVE query, not the stale rows still on screen —
         // otherwise "Load more" during a pending search would append the previous

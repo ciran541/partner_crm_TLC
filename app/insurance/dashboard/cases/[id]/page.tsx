@@ -1195,7 +1195,7 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                         const path = `${user.id}/${caseId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
                         const { error } = await supabase.storage.from('insurance-documents').upload(path, f)
                         if (error) throw new Error(`Upload failed: ${error.message}`)
-                        uploaded.push({ path, name: f.name, type: f.type })
+                        uploaded.push({ path, name: f.name, type: f.type, uploaded_at: new Date().toISOString() })
                     }
                 }
             }

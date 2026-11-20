@@ -17,7 +17,7 @@ export default function InsuranceEarningsPage() {
     return (
         <AgentEarningsView
             title="Earnings"
-            subtitle="Your commission breakdown across all cases."
+            subtitle="Commission from your Closed Won cases: awaiting payout and paid."
             onRowOpen={id => router.push(`/insurance/dashboard/cases/${id}`)}
         />
     )

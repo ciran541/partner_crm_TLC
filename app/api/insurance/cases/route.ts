@@ -45,6 +45,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
  *   followUpTo=      follow_up_date <= YYYY-MM-DD  (the "overdue" half)
  *   followUpAfter=   follow_up_date >  YYYY-MM-DD  (the "upcoming" half)
  *   missingFollowUp= 'true' for cases that still need a follow-up date (Action Centre)
+ *   closedMonth=     YYYY-MM or YYYY — Closed Won cases closed in that month / year (SGT)
  *   lockInFrom= / lockInTo=  lock_in_end_date window, YYYY-MM-DD
  *   bucket=          'all' (any case with a commission bucket) | open |
  *                    closed_unpaid | closed_paid
@@ -68,6 +69,7 @@ interface SearchCasesResult {
     rows: Case[]
     total: number
     loan_volume: number
+    agent_share?: number
 }
 
 function parseCursor(raw: string | null): number {
@@ -122,6 +124,7 @@ export async function GET(request: Request) {
         p_follow_up_to: param(searchParams, 'followUpTo'),
         p_follow_up_after: param(searchParams, 'followUpAfter'),
         p_missing_follow_up: searchParams.get('missingFollowUp') === 'true',
+        p_closed_month: param(searchParams, 'closedMonth'),
         p_lock_in_from: param(searchParams, 'lockInFrom'),
         p_lock_in_to: param(searchParams, 'lockInTo'),
         p_bucket: param(searchParams, 'bucket'),
@@ -151,6 +154,7 @@ export async function GET(request: Request) {
         rows,
         total,
         loanVolume: Number(result.loan_volume ?? 0),
+        agentShare: Number(result.agent_share ?? 0),
         nextCursor: nextOffset < total ? String(nextOffset) : null,
         // Travels with the list so a screen that renders admin-only columns does
         // not need a second round trip just to find out who it is talking to.

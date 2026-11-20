@@ -77,6 +77,8 @@ Schema changes must go through migration files in `supabase/migrations/`. Filena
 
 After writing a migration: `npx supabase db push --remote` (the CLI now defaults to a local Docker stack; without `--remote` it fails with `ECONNREFUSED 127.0.0.1:54322`). Then `npm run sync-schema`.
 
+**Re-creating `search_cases()`**: it's redefined by many migrations (every new list filter/column). Always copy it from the NEWEST migration that defines it (`grep -l "FUNCTION public.search_cases" supabase/migrations/* | tail -1`) — copying an older one silently drops later columns (this once removed `correction_fee` from list rows; fixed in `20261129000000`).
+
 After any SQL Editor change (emergency only): `npm run sync-schema` to update the reference schema file (it dumps tables, FKs **and RLS policies**, so policy drift is visible in the repo).
 
 **RLS notes** (see `20260705000000_rls_hardening.sql`): admin checks in policies use the `is_admin_user()` SECURITY DEFINER function (never subquery `profiles` directly inside a `profiles` policy — infinite recursion). The client's UPDATE grant on `profiles` is **column-restricted** to identity fields (`name`, `full_name`, `mobile`, `cea_registration_no`, `agency_name`) — `role` / `app_type` / `status` / Google-token / session columns are writable only via service-role API routes; do not widen that grant. Insurance content tables (knowledge, rates, news, calendar, SORA) have RLS on with **no client policies** by design — all access goes through guarded server routes.

@@ -67,6 +67,7 @@ export interface LoDocument {
     path: string     // storage object path
     name: string     // original filename
     type: string     // MIME type
+    uploaded_at?: string  // ISO time it was uploaded to HUB (older files: see loUploadedAt())
 }
 
 export interface ClosedWonData {
@@ -141,6 +142,8 @@ export interface Case {
 
     // Commission payout state (Closed Won cases)
     commission_status?: CommissionStatus
+    // When the commission was marked paid (stamped by DB trigger; null while unpaid).
+    commission_paid_at?: string | null
     correction_fee?: number
     corrections?: CaseCorrection[]
 

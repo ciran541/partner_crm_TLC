@@ -142,3 +142,23 @@ export function packageSummary(schedule: RateScheduleEntry[], lockinYears: numbe
     const lock = lockinYears > 0 ? ` · ${lockinYears}-yr lock-in` : ''
     return head ? `${head}${lock}` : ''
 }
+
+/**
+ * When the Letter of Offer first reached HUB (ISO string), or null if none was
+ * uploaded. Newer files carry `uploaded_at`; older ones only have the upload
+ * time baked into their storage path (`<user>/<case>/<Date.now()>-<rand>.<ext>`),
+ * so that's read as a fallback. Earliest file wins — that's when TLC could
+ * first check the closure.
+ */
+export function loUploadedAt(docs: { path: string; uploaded_at?: string }[] | null | undefined): string | null {
+    let earliest: number | null = null
+    for (const d of docs ?? []) {
+        let t = d.uploaded_at ? Date.parse(d.uploaded_at) : NaN
+        if (Number.isNaN(t)) {
+            const m = d.path.split('/').pop()?.match(/^(\d{13})-/)
+            if (m) t = Number(m[1])
+        }
+        if (!Number.isNaN(t) && (earliest === null || t < earliest)) earliest = t
+    }
+    return earliest === null ? null : new Date(earliest).toISOString()
+}
