@@ -6,6 +6,8 @@ import { AlertCircle } from 'lucide-react'
 import Skeleton from '@/components/shared/Skeleton'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import { MasterEarningsTable, AgentEarningsView } from '@/components/insurance/earnings/EarningsViews'
+import RecordPayoutModal from '@/components/insurance/earnings/RecordPayoutModal'
+import { commissionWithFee } from '@/lib/insurance/commission'
 import type { CaseListRow } from '@/lib/insurance/usePagedCases'
 import type { AgentCommissionRow } from '@/lib/insurance/commission'
 
@@ -24,7 +26,8 @@ function Content() {
 
     const [rows, setRows] = useState<AgentCommissionRow[] | null>(null)
     const [error, setError] = useState<string | null>(null)
-    const [savingId, setSavingId] = useState<string | null>(null)
+    // Case whose payout ledger is open (record / reverse payouts).
+    const [payoutCase, setPayoutCase] = useState<CaseListRow | null>(null)
 
     // Per-agent commission is computed by the database across the whole roster —
     // including agents with no cases, who belong in the table as a row of zeros.
@@ -45,36 +48,37 @@ function Content() {
         return () => { active = false }
     }, [agentParam, reload])
 
-    const togglePaid = async (c: CaseListRow) => {
-        const next = c.commission_status === 'paid' ? 'unpaid' : 'paid'
-        setSavingId(c.id)
-        try {
-            const res = await fetch('/api/admin/update-case', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: c.id, updates: { commission_status: next } }),
-            })
-            if (!res.ok) throw new Error('Failed')
-            // Refreshes the paged rows and the summary totals behind the
-            // drill-down; the counter re-fetches the master table.
-            invalidateCaseData()
-            setReload(n => n + 1)
-        } catch { /* non-fatal */ } finally { setSavingId(null) }
+    // After a payout is recorded/reversed: refresh the paged rows and summary
+    // totals behind the drill-down; the counter re-fetches the master table.
+    const afterPayout = () => {
+        invalidateCaseData()
+        setReload(n => n + 1)
     }
 
     // Per-agent drill-down. The view scopes itself by agent id.
     if (agentParam) {
         const agentName = rows?.find(r => r.agentId === agentParam)?.agentName ?? 'Agent'
         return (
-            <AgentEarningsView
-                agentId={agentParam}
-                title={agentName}
-                subtitle={`${agentName}'s commission breakdown`}
-                isAdmin
-                savingId={savingId}
-                onTogglePaid={togglePaid}
-                onRowOpen={id => router.push(`/admin/insurance/cases/${id}`)}
-                onBack={() => router.push('/admin/insurance/earnings')}
-            />
+            <>
+                <AgentEarningsView
+                    agentId={agentParam}
+                    title={agentName}
+                    subtitle={`${agentName}'s commission breakdown`}
+                    isAdmin
+                    onRecordPayout={setPayoutCase}
+                    onRowOpen={id => router.push(`/admin/insurance/cases/${id}`)}
+                    onBack={() => router.push('/admin/insurance/earnings')}
+                />
+                {payoutCase && (
+                    <RecordPayoutModal
+                        caseId={payoutCase.id}
+                        clientName={payoutCase.client_name || 'Case'}
+                        owed={commissionWithFee(payoutCase.loan_value ?? 0, payoutCase.correction_fee).agent}
+                        onClose={() => setPayoutCase(null)}
+                        onSaved={afterPayout}
+                    />
+                )}
+            </>
         )
     }
 

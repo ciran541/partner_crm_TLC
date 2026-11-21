@@ -14,6 +14,7 @@ import type { CaseType, PipelineStage } from '@/lib/types'
 import { CREATABLE_STAGES, OPEN_STAGES } from '@/lib/insurance/stages'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { defaultNewCaseFollowUp } from '@/lib/insurance/followUps'
+import { LEAD_SOURCES, matchLeadSource, type LeadSource } from '@/lib/insurance/leadSources'
 
 // ─── Options ─────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,8 @@ export interface CaseIntake {
     lock_in_end_date?: string   // YYYY-MM-DD
     follow_up_date?: string     // YYYY-MM-DD
     remarks?: string
+    lead_source?: LeadSource    // where the lead came from (lib/insurance/leadSources.ts)
+    lead_source_other?: string  // free text when lead_source = 'others'
 }
 
 /** Loose input: strings from a form, or whatever an Excel cell held. */
@@ -193,7 +196,12 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
  * that doesn't is kept as typed — the client's current bank can legitimately be
  * one we don't partner with.
  */
-export function validateIntake(raw: RawIntake, banks: readonly string[] = []): IntakeResult {
+export function validateIntake(
+    raw: RawIntake,
+    banks: readonly string[] = [],
+    /** New Case requires a lead source; mass upload may leave it blank ("Not set"). */
+    opts: { requireLeadSource?: boolean } = {},
+): IntakeResult {
     // One message per field (the first problem found), so the review screen can
     // highlight the exact cell; `errors` is the same messages as a flat list.
     const fieldErrors: FieldErrors = {}
@@ -345,6 +353,18 @@ export function validateIntake(raw: RawIntake, banks: readonly string[] = []): I
     const bankTyped = text(raw.current_bank)
     const current_bank = bankTyped ? (matchFromList(bankTyped, banks) ?? bankTyped) : undefined
 
+    // Spreadsheets carry all sorts of source values (campaign names, "Privyr",
+    // a person's name…). On a mass upload an unrecognised one becomes "Others"
+    // with the original text kept as the detail, so the row still imports; the
+    // New Case form (a dropdown) must send a real one.
+    const matchedSource = matchLeadSource(raw.lead_source)
+    const lead_source = matchedSource === null && !opts.requireLeadSource ? 'others' : matchedSource
+    if (lead_source === null) fail('lead_source', `Lead source "${text(raw.lead_source)}" isn't one of: ${LEAD_SOURCES.map(s => s.label).join(', ')}`)
+    else if (lead_source === undefined && opts.requireLeadSource) fail('lead_source', 'Lead source is required')
+    const lead_source_other = lead_source !== 'others' ? undefined
+        : (text(raw.lead_source_other) || (matchedSource === null ? text(raw.lead_source) : '') || undefined)
+    if (lead_source_other && lead_source_other.length > 100) fail('lead_source_other', 'Lead source detail is too long (100 characters max)')
+
     const property_address = text(raw.property_address) || undefined
     const remarks = text(raw.remarks) || undefined
     if (remarks && remarks.length > 2000) fail('remarks', 'Remarks are too long (2,000 characters max)')
@@ -365,6 +385,7 @@ export function validateIntake(raw: RawIntake, banks: readonly string[] = []): I
             outstanding_equity_loan, equity_loan_tenure, clawback_end_date, property_use,
             borrower_age, borrower_income, borrower_variable, borrower_commitments, borrower_residency,
             lock_in_end_date, follow_up_date, remarks,
+            lead_source: lead_source ?? undefined, lead_source_other,
         },
     }
 }
@@ -471,6 +492,8 @@ export function intakeToCaseRow(c: CaseIntake, createdBy: string, today: string 
         follow_up_date: c.follow_up_date ?? defaultNewCaseFollowUp(c.lock_in_end_date, today),
         clawback_end_date: c.clawback_end_date ?? null,
         remarks: c.remarks ?? null,
+        lead_source: c.lead_source ?? null,
+        lead_source_other: c.lead_source_other ?? null,
         workflow_data: workflowPrefill(c),
     }
 }

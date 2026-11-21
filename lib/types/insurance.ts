@@ -104,6 +104,12 @@ export interface Case {
     // these links gives the client's journey across refinancing cycles.
     parent_case_id?: string | null
 
+    // Where the lead came from (lib/insurance/leadSources.ts) and when it first
+    // became a live opportunity (stamped once by DB trigger, never changes).
+    lead_source?: string | null
+    lead_source_other?: string | null
+    first_activated_at?: string | null
+
     // Case Classification
     case_type: CaseType
 
@@ -142,8 +148,10 @@ export interface Case {
 
     // Commission payout state (Closed Won cases)
     commission_status?: CommissionStatus
-    // When the commission was marked paid (stamped by DB trigger; null while unpaid).
+    // Payout ledger (commission_payouts, migration 20261202000000): Σ payouts,
+    // and when the final one made it fully paid. Both kept by the DB — never set them.
     commission_paid_at?: string | null
+    commission_paid_total?: number
     correction_fee?: number
     corrections?: CaseCorrection[]
 

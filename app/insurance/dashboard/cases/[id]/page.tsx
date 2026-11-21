@@ -43,6 +43,7 @@ import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
 import FollowUpUpdateForm, { type FollowUpSaved } from '@/components/insurance/followup/FollowUpUpdateForm'
 import FollowUpHistory from '@/components/insurance/followup/FollowUpHistory'
 import { autoRemark, defaultClosedWonFollowUp, followUpBucket, needsFollowUp } from '@/lib/insurance/followUps'
+import { LEAD_SOURCES, leadSourceLabel } from '@/lib/insurance/leadSources'
 
 type TabKey = 'overview' | 'workflow'
 
@@ -339,6 +340,16 @@ function CaseDetailContent() {
         }).then(() => setFollowUpVersion(v => v + 1)).catch(() => {})
     }
 
+    // Lead source — auto-saves immediately (no edit mode), so it can be filled in
+    // on closed cases too; the Dashboard's source analytics depend on it.
+    const saveLeadSource = useCallback(async (source: string | null, other: string | null) => {
+        const fields = { lead_source: source, lead_source_other: source === 'others' ? other : null }
+        setCaseData(prev => prev ? { ...prev, ...fields } : prev)
+        const err = await persistCaseUpdate(fields)
+        if (err) setAlert({ type: 'error', message: `Lead source save failed: ${err}` })
+        else invalidateCaseData()
+    }, [persistCaseUpdate])
+
     // Assign/remove referred bankers — auto-saves immediately (no edit mode), like follow-up.
     const handleSetBankers = useCallback(async (bankers: ReferredBanker[]) => {
         setCaseData(prev => prev ? { ...prev, referred_bankers: bankers } : prev)
@@ -425,16 +436,6 @@ function CaseDetailContent() {
         setFollowUpModal({ presetStage: OPEN_STAGES[0], title: `Make active: move to ${stageLabel(OPEN_STAGES[0])}` })
     }
 
-    // Admin-only: mark this closed case's commission as paid / unpaid.
-    const handleToggleCommissionPaid = async () => {
-        if (!caseData) return
-        const next = caseData.commission_status === 'paid' ? 'unpaid' : 'paid'
-        setCaseData({ ...caseData, commission_status: next })
-        const err = await persistCaseUpdate({ commission_status: next })
-        if (err) setAlert({ type: 'error', message: `Failed to update commission: ${err}` })
-        else invalidateCaseData()
-    }
-
     if (loading) return (
         <div className="max-w-4xl mx-auto" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <Skeleton height={18} width={130} radius={6} />
@@ -449,7 +450,6 @@ function CaseDetailContent() {
     const isClosedWon = caseData.stage === 'Closed Won'
     const isClosedLost = caseData.stage === 'Closed Lost'
     const isClosed = isClosedWon || isClosedLost
-    const isAdminUser = userRole === 'admin' || userRole === 'super_admin'
 
     const tabs: { key: TabKey; label: string; icon: React.ElementType }[] = [
         { key: 'overview', label: 'Overview', icon: User },
@@ -652,7 +652,7 @@ function CaseDetailContent() {
                     />
                     {/* Closed-Won summary — loans, commission, and next-cycle income projection */}
                     {isClosedWon && caseData.closed_won_data?.loans?.length ? (
-                        <ClosedWonSummaryCard data={caseData} isAdmin={isAdminUser} onTogglePaid={handleToggleCommissionPaid} />
+                        <ClosedWonSummaryCard data={caseData} />
                     ) : null}
 
                     {/* Deal summary leads the tab — it's the natural "overview". */}
@@ -701,6 +701,22 @@ function CaseDetailContent() {
                             <GridField label="Email" isEditing={isEditing}>
                                 <input type="email" value={caseData.client_email || ''} onChange={e => handleFieldChange('client_email', e.target.value)} placeholder="client@email.com" className="input-std" />
                                 {caseData.client_email || <span className="text-slate-400">—</span>}
+                            </GridField>
+                            {/* Saves on change, on any case (open or closed) — like Referred Bankers.
+                                Feeds the Dashboard's lead-source analytics. */}
+                            <GridField label="Lead Source" isEditing>
+                                <div className="space-y-2">
+                                    <select value={caseData.lead_source || ''} onChange={e => saveLeadSource(e.target.value || null, caseData.lead_source_other ?? null)}
+                                        className={`input-std ${caseData.lead_source ? '' : 'border-amber-300'}`}>
+                                        <option value="">Not set</option>
+                                        {LEAD_SOURCES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                                    </select>
+                                    {caseData.lead_source === 'others' && (
+                                        <input type="text" defaultValue={caseData.lead_source_other || ''} maxLength={100}
+                                            onBlur={e => saveLeadSource('others', e.target.value.trim() || null)} placeholder="Please specify" className="input-std" />
+                                    )}
+                                </div>
+                                <span>{leadSourceLabel(caseData.lead_source)}</span>
                             </GridField>
                             <GridField label="Property Address" isEditing={isEditing}>
                                 <input type="text" value={caseData.property_address || ''} onChange={e => handleFieldChange('property_address', e.target.value)} placeholder="optional" className="input-std" />
@@ -1813,7 +1829,9 @@ function BankerControl({ value, onSave }: { value: ReferredBanker[]; onSave: (v:
 }
 
 // ─── Closed-Won summary (loans, commission, next-cycle projection) ────────────
-function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isAdmin: boolean; onTogglePaid: () => void }) {
+// Payout status is read-only here: TLC records payouts in the admin console
+// (payout ledger, migration 20261202000000).
+function ClosedWonSummaryCard({ data }: { data: Case }) {
     const cwd = data.closed_won_data ?? {}
     const loans = cwd.loans ?? []
     const money = (n: number) => `$${Math.round(n).toLocaleString()}`
@@ -1823,6 +1841,8 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
     const now = commissionWithFee(original, data.correction_fee)
     const next = outstanding != null ? calculateCommission(outstanding) : null
     const paid = data.commission_status === 'paid'
+    const paidSoFar = Number(data.commission_paid_total ?? 0)
+    const partial = !paid && paidSoFar > 0
 
     const openDoc = async (path: string) => {
         const { data: signed } = await supabase.storage.from('insurance-documents').createSignedUrl(path, 120)
@@ -1878,8 +1898,8 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
                     <div className="flex items-center justify-between gap-2">
                         <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Commission (this close)</p>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                            style={paid ? { color: '#16a34a', background: '#dcfce7' } : { color: '#d97706', background: '#fef3c7' }}>
-                            {paid ? 'Paid' : 'Unpaid'}
+                            style={paid ? { color: '#16a34a', background: '#dcfce7' } : partial ? { color: '#0369a1', background: '#e0f2fe' } : { color: '#d97706', background: '#fef3c7' }}>
+                            {paid ? 'Paid' : partial ? `Partially paid · ${money(paidSoFar)}` : 'Awaiting payout'}
                         </span>
                     </div>
                     <p className="text-xl font-bold text-emerald-700 mt-0.5">{money(now.agent)}</p>
@@ -1887,13 +1907,6 @@ function ClosedWonSummaryCard({ data, isAdmin, onTogglePaid }: { data: Case; isA
                         0.15% of {money(original)} · agent 90%
                         {now.correctionFee > 0 && <span className="text-red-600 font-semibold"> · −{money(now.correctionFee)} correction fee</span>}
                     </p>
-                    {isAdmin && (
-                        <button type="button" onClick={onTogglePaid}
-                            className="mt-2 text-[11px] font-semibold px-2.5 py-1 rounded-lg border transition-colors"
-                            style={paid ? { color: '#64748b', borderColor: '#e2e8f0' } : { color: '#16a34a', borderColor: '#bbf7d0' }}>
-                            {paid ? 'Mark as unpaid' : 'Mark commission paid'}
-                        </button>
-                    )}
                 </div>
                 {next != null && outstanding != null ? (
                     <div className="rounded-lg bg-sky-50/60 border border-sky-100 p-3.5">

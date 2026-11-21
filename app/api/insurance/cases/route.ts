@@ -187,7 +187,7 @@ export async function POST(request: Request) {
 
     const db = await createServerSupabaseClient()
     const banks = await loadBankNames(db)
-    const result = validateIntake(body, banks)
+    const result = validateIntake(body, banks, { requireLeadSource: true })
     if (!result.ok) return NextResponse.json({ error: result.errors.join('. '), errors: result.errors }, { status: 400 })
 
     if (!body.force) {

@@ -60,7 +60,7 @@ export async function POST(
         .from('cases')
         // A new active case needs a follow-up like any other: today, "Engage
         // Prospect" (the DB fills the remark), so it heads the Action Centre.
-        .insert({ ...row, created_by: parent.created_by, parent_case_id: id, follow_up_date: todaySgt() })
+        .insert({ ...row, created_by: parent.created_by, parent_case_id: id, follow_up_date: todaySgt(), lead_source: 'existing_client' })
         .select('id')
         .single()
 

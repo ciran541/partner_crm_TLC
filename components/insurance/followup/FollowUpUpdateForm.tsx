@@ -54,8 +54,18 @@ export default function FollowUpUpdateForm({
     const stageMoved = stage !== c.stage
 
     // Keep a still-future date when only editing; a due/overdue one needs a NEW date.
-    const keepDate = !stageMoved && c.follow_up_date && c.follow_up_date.slice(0, 10) > today
-    const [date, setDate] = useState(keepDate ? c.follow_up_date!.slice(0, 10) : '')
+    // Starting date:
+    //  - Moving stage (Track drag / Move / case page): carry the case's current
+    //    follow-up over, so a quick move is one tap on Save. If it's already
+    //    overdue it can't be kept, so it starts at today (noted under the field).
+    //  - Plain "Update FU" (the follow-up was just done): a due/overdue date is
+    //    cleared so the agent sets the NEXT one; a still-future date is kept.
+    const current = c.follow_up_date?.slice(0, 10)
+    const carriedOverdue = stageMoved && !!current && current < today
+    const initialDate = stageMoved
+        ? (current ? (current < today ? today : current) : '')
+        : (current && current > today ? current : '')
+    const [date, setDate] = useState(initialDate)
     const [remark, setRemark] = useState(
         !stageMoved && c.follow_up_remark ? c.follow_up_remark : autoRemark(stage),
     )
@@ -147,6 +157,11 @@ export default function FollowUpUpdateForm({
                     <div>
                         <label className={label}>Next follow-up date *</label>
                         <input type="date" value={date} min={today} onChange={e => setDate(e.target.value)} className={input} style={{ maxWidth: 220 }} />
+                        {carriedOverdue && date === today && (
+                            <p className="text-[11px] text-amber-600 mt-1">
+                                Was {new Date(`${current}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })} (overdue), so it&apos;s set to today. Change it if needed.
+                            </p>
+                        )}
                         <div className="flex flex-wrap gap-1.5 mt-2">
                             {quick.map(q => (
                                 <button key={q.label} type="button" onClick={() => setDate(q.value)}

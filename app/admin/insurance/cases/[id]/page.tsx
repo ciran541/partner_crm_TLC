@@ -25,6 +25,7 @@ import { stageBadge } from '@/lib/insurance/stages'
 import CaseJourney from '@/components/insurance/cases/CaseJourney'
 import CorrectionModal from '@/components/insurance/cases/CorrectionModal'
 import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
+import RecordPayoutModal from '@/components/insurance/earnings/RecordPayoutModal'
 import type { Case } from '@/lib/types'
 
 type CaseRow = Case & { profiles?: { id: string; name: string } | null }
@@ -89,7 +90,8 @@ export default function AdminInsuranceCaseDetail() {
     const [c, setCase] = useState<CaseRow | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
-    const [saving, setSaving] = useState(false)
+    // Payout ledger window (record / reverse payouts).
+    const [payoutsOpen, setPayoutsOpen] = useState(false)
     const [logs, setLogs] = useState<ActivityLog[]>([])
     const [correcting, setCorrecting] = useState(false)
 
@@ -100,34 +102,17 @@ export default function AdminInsuranceCaseDetail() {
             .catch(() => {})
     }
 
-    useEffect(() => {
-        supabase.from('cases').select('*, profiles ( id, name )').eq('id', id).single()
-            .then(({ data, error }) => {
-                if (error || !data) setError('Case not found.')
-                else setCase(data as CaseRow)
-                setLoading(false)
-            })
-        loadLogs()
-    }, [id])
+    const loadCase = () => supabase.from('cases').select('*, profiles ( id, name )').eq('id', id).single()
+        .then(({ data, error }) => {
+            if (error || !data) setError('Case not found.')
+            else setCase(data as CaseRow)
+            setLoading(false)
+        })
 
-    const togglePaid = async () => {
-        if (!c) return
-        const next = c.commission_status === 'paid' ? 'unpaid' : 'paid'
-        setSaving(true)
-        try {
-            const res = await fetch('/api/admin/update-case', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: c.id, updates: { commission_status: next } }),
-            })
-            if (!res.ok) throw new Error('Failed')
-            setCase({ ...c, commission_status: next })
-            loadLogs()
-        } catch {
-            setError('Failed to update commission status.')
-        } finally {
-            setSaving(false)
-        }
-    }
+    useEffect(() => {
+        loadCase()
+        loadLogs()
+    }, [id])   // eslint-disable-line react-hooks/exhaustive-deps
 
     const openDoc = async (path: string) => {
         const { data } = await supabase.storage.from('insurance-documents').createSignedUrl(path, 120)
@@ -159,6 +144,8 @@ export default function AdminInsuranceCaseDetail() {
     const next = outstanding != null ? calculateCommission(outstanding) : null
     const isClosedWon = c.stage === 'Closed Won'
     const paid = c.commission_status === 'paid'
+    const paidSoFar = Number(c.commission_paid_total ?? 0)
+    const partial = !paid && paidSoFar > 0
     const noop = () => {}
 
     return (
@@ -201,7 +188,10 @@ export default function AdminInsuranceCaseDetail() {
             {loan > 0 && (
                 <Card title="Commission" icon={<DollarSign size={16} />}
                     action={isClosedWon ? (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={paid ? { color: '#16a34a', background: '#dcfce7' } : { color: '#d97706', background: '#fef3c7' }}>{paid ? 'Paid' : 'Unpaid'}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                            style={paid ? { color: '#16a34a', background: '#dcfce7' } : partial ? { color: '#0369a1', background: '#e0f2fe' } : { color: '#d97706', background: '#fef3c7' }}>
+                            {paid ? 'Paid' : partial ? `Partially paid · ${money(paidSoFar)}` : 'Unpaid'}
+                        </span>
                     ) : (
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-sky-50 text-[#0369a1]">Potential</span>
                     )}>
@@ -222,11 +212,20 @@ export default function AdminInsuranceCaseDetail() {
                     </div>
                     <p className="text-[11px] text-slate-400 mt-2">Based on {money(loan)} loan{isClosedWon ? '' : ' — payout can be confirmed once Closed Won'}.</p>
                     {isClosedWon && (
-                        <button onClick={togglePaid} disabled={saving}
-                            className="mt-3 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-60"
+                        <button onClick={() => setPayoutsOpen(true)}
+                            className="mt-3 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
                             style={paid ? { background: '#fff', color: '#64748b', border: '1px solid #e2e8f0' } : { background: '#059669', color: 'white' }}>
-                            {saving ? <Spinner size="sm" color={paid ? '#64748b' : 'white'} /> : paid ? 'Mark as unpaid' : <><CheckCircle2 size={15} /> Confirm commission paid</>}
+                            {paid ? 'View payouts' : <><CheckCircle2 size={15} /> Record payout</>}
                         </button>
+                    )}
+                    {payoutsOpen && (
+                        <RecordPayoutModal
+                            caseId={c.id}
+                            clientName={c.client_name || 'Case'}
+                            owed={comm.agent}
+                            onClose={() => setPayoutsOpen(false)}
+                            onSaved={() => { loadCase() }}
+                        />
                     )}
                 </Card>
             )}

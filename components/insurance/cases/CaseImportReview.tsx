@@ -5,6 +5,7 @@ import { CheckCircle2, AlertCircle, CopyX, Loader2, Pencil, Trash2, Undo2, Chevr
 import { INTAKE_CASE_TYPES, INTAKE_PROPERTY_TYPES, type CaseIntake } from '@/lib/insurance/caseIntake'
 import { CREATABLE_STAGES, stageLabel } from '@/lib/insurance/stages'
 import { FIELD_LABELS } from '@/lib/insurance/columnMatch'
+import { LEAD_SOURCES } from '@/lib/insurance/leadSources'
 import { reviewRows, rowsWithSameValue, type ReviewInput, type ReviewStatus } from '@/lib/insurance/importReview'
 
 /**
@@ -23,7 +24,7 @@ const CORE: Field[] = ['client_name', 'client_mobile', 'client_email']
 
 /** Editable fields in display order (= every HUB field the import can fill). */
 const EDIT_FIELDS: Field[] = [
-    'client_name', 'client_mobile', 'client_email', 'case_type', 'stage', 'loan_amount', 'current_bank',
+    'client_name', 'client_mobile', 'client_email', 'case_type', 'stage', 'lead_source', 'lead_source_other', 'loan_amount', 'current_bank',
     'lock_in_end_date', 'follow_up_date', 'property_type', 'property_address', 'remaining_tenure', 'current_rate',
     'property_value', 'year_of_purchase', 'subsidy', 'clawback_end_date', 'outstanding_equity_loan',
     'equity_loan_tenure', 'property_use', 'borrower_age', 'borrower_income', 'borrower_variable',
@@ -33,6 +34,7 @@ const EDIT_FIELDS: Field[] = [
 const SELECTS: Partial<Record<Field, { value: string; label: string }[]>> = {
     case_type: INTAKE_CASE_TYPES.map(t => ({ value: t.label, label: t.label })),
     stage: CREATABLE_STAGES.map(s => ({ value: s, label: stageLabel(s) })),
+    lead_source: LEAD_SOURCES.map(s => ({ value: s.label, label: s.label })),
     property_type: INTAKE_PROPERTY_TYPES.map(p => ({ value: p, label: p })),
     property_use: [{ value: 'Own stay', label: 'Own stay' }, { value: 'Investment', label: 'Investment' }],
     borrower_residency: [{ value: 'Singaporean', label: 'Singaporean' }, { value: 'PR', label: 'PR' }, { value: 'Foreigner', label: 'Foreigner' }],
@@ -96,6 +98,14 @@ export default function CaseImportReview({ initialRows, banks, existing, busy, e
 
     const visible = review.rows.map((r, i) => ({ r, i })).filter(({ r }) => filter === 'all' || r.status === filter)
 
+    // One tap for the common case: a whole upload came from one place.
+    // Only fills rows that don't already say where they came from.
+    const noSource = rows.filter(r => !r.removed && !String(r.raw.lead_source ?? '').trim()).length
+    const setSourceForBlank = (label: string) => {
+        if (!label) return
+        setRows(rs => rs.map(r => (!r.removed && !String(r.raw.lead_source ?? '').trim() ? { ...r, raw: { ...r.raw, lead_source: label } } : r)))
+    }
+
     return (
         <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
@@ -105,6 +115,20 @@ export default function CaseImportReview({ initialRows, banks, existing, busy, e
                 <Chip active={filter === 'duplicate'} onClick={() => setFilter('duplicate')} tone="dup" label={`Already in HUB ${counts.duplicate}`} />
                 {counts.removed > 0 && <Chip active={filter === 'removed'} onClick={() => setFilter('removed')} tone="dup" label={`Removed ${counts.removed}`} />}
             </div>
+
+            {noSource > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2.5">
+                    <p className="text-xs text-slate-700 flex-1 min-w-[200px]">
+                        <b>{noSource}</b> row{noSource === 1 ? '' : 's'} without a lead source. Set one for all of them
+                        <span className="text-slate-500"> (or leave blank: they&apos;ll show as &quot;Not set&quot; on your Dashboard)</span>:
+                    </p>
+                    <select value="" onChange={e => setSourceForBlank(e.target.value)} aria-label="Lead source for rows without one"
+                        className="h-9 px-2.5 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7]">
+                        <option value="">Choose lead source…</option>
+                        {LEAD_SOURCES.map(s => <option key={s.value} value={s.label}>{s.label}</option>)}
+                    </select>
+                </div>
+            )}
 
             <div className="rounded-xl border border-slate-200 overflow-auto max-h-[52vh]">
                 <table className="w-full text-sm">

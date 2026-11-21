@@ -102,3 +102,28 @@ describe('Inactive stage', () => {
         expect(commissionBucket({ stage: 'Touched Base', client_name: 'A' } as Case)).toBe('open')
     })
 })
+
+describe('lead source', () => {
+    const base = { client_name: 'A', client_mobile: '91234567' }
+    it('New Case requires one; mass upload may leave it blank', () => {
+        expect(validateIntake(base, [], { requireLeadSource: true }).ok).toBe(false)
+        const r = validateIntake(base, [])
+        expect(r.ok && r.value.lead_source).toBeUndefined()
+    })
+    it('maps what agents type', () => {
+        const pick = (v: string) => { const r = validateIntake({ ...base, lead_source: v }, []); return r.ok ? r.value.lead_source : 'ERR' }
+        expect(pick('Facebook')).toBe('social_media')
+        expect(pick('property agent')).toBe('professional_referral')
+        expect(pick('Existing Client')).toBe('existing_client')
+        expect(pick('google')).toBe('website_search')
+    })
+    it('keeps an unknown upload value as Others + detail instead of failing the row', () => {
+        const r = validateIntake({ ...base, lead_source: 'Nov Roadshow promo XYZ' }, [])
+        expect(r.ok).toBe(true)
+        // "roadshow" is recognised as an event
+        expect(r.ok && r.value.lead_source).toBe('networking_events')
+        const u = validateIntake({ ...base, lead_source: 'Campaign 42' }, [])
+        expect(u.ok && u.value.lead_source).toBe('others')
+        expect(u.ok && u.value.lead_source_other).toBe('Campaign 42')
+    })
+})

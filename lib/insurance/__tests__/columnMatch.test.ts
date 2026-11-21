@@ -25,7 +25,7 @@ describe('guessMapping — real-world layouts', () => {
         const m = fields(headers, rows)
         expect(m.slice(0, 3)).toEqual(['client_name', 'client_mobile', 'client_email'])
         expect(m[5]).toBe('remarks')
-        expect(m[3]).toBeNull()   // Source: nothing to import
+        expect(m[3]).toBe('lead_source')   // Source → Lead source ("Facebook" → Social Media)
     })
 
     it('a Google Contacts export (first + last name, "Phone 1 - Value")', () => {

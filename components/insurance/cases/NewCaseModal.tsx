@@ -9,6 +9,7 @@ import { formatMoneyInput } from '@/lib/utils/formatCurrency'
 import { INTAKE_CASE_TYPES, INTAKE_PROPERTY_TYPES } from '@/lib/insurance/caseIntake'
 import { CREATABLE_STAGES, INACTIVE_STAGE, stageLabel } from '@/lib/insurance/stages'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
+import { LEAD_SOURCES } from '@/lib/insurance/leadSources'
 import type { CaseType, PipelineStage } from '@/lib/types'
 
 /**
@@ -33,14 +34,18 @@ interface Form {
     lock_in_end_date: string
     follow_up_date: string
     remarks: string
+    lead_source: string
+    lead_source_other: string
 }
 
-const blankForm = (keep?: Pick<Form, 'case_type' | 'stage'>): Form => ({
+const blankForm = (keep?: Pick<Form, 'case_type' | 'stage' | 'lead_source'>): Form => ({
     client_name: '', client_mobile: '', client_email: '',
     case_type: keep?.case_type ?? 'Refinancing',
     stage: keep?.stage ?? 'Touched Base',
     loan_amount: '', current_bank: '', subsidy: '', property_address: '', property_type: '',
     remaining_tenure: '', lock_in_end_date: '', follow_up_date: '', remarks: '',
+    // Kept for "Save & add another": a batch usually comes from one source.
+    lead_source: keep?.lead_source ?? '', lead_source_other: '',
 })
 
 const inp = 'w-full px-3 py-2.5 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7] focus:ring-2 focus:ring-[#03a9e7]/10 bg-white transition-colors'
@@ -77,7 +82,7 @@ export default function NewCaseModal({ onClose, onCreated }: {
             setDuplicate(null)
             if (addAnother) {
                 setAddedCount(n => n + 1)
-                setForm(f => blankForm({ case_type: f.case_type, stage: f.stage }))
+                setForm(f => blankForm({ case_type: f.case_type, stage: f.stage, lead_source: f.lead_source }))
             } else {
                 onCreated(json.id)
             }
@@ -88,7 +93,8 @@ export default function NewCaseModal({ onClose, onCreated }: {
         }
     }
 
-    const canSave = form.client_name.trim() !== '' && form.client_mobile.trim() !== '' && !saving
+    const canSave = form.client_name.trim() !== '' && form.client_mobile.trim() !== '' && form.lead_source !== '' && !saving
+    const sourceInfo = LEAD_SOURCES.find(s => s.value === form.lead_source)
 
     return (
         <Modal title="New Case" onClose={onClose} size="lg">
@@ -138,6 +144,24 @@ export default function NewCaseModal({ onClose, onCreated }: {
                                 : 'Shows in your active cases.'}
                         </p>
                     </Field>
+                    {/* Feeds the Dashboard's lead-source analytics — required. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <Field label="Lead Source" required>
+                            <select className={inp} value={form.lead_source} onChange={e => set('lead_source', e.target.value)}>
+                                <option value="" disabled>Where did this lead come from?</option>
+                                {LEAD_SOURCES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                            </select>
+                            {sourceInfo && sourceInfo.value !== 'others' && (
+                                <p className="text-[11px] text-slate-400 mt-1">{sourceInfo.includes}</p>
+                            )}
+                        </Field>
+                        {form.lead_source === 'others' && (
+                            <Field label="Please specify">
+                                <input className={inp} value={form.lead_source_other} maxLength={100}
+                                    onChange={e => set('lead_source_other', e.target.value)} placeholder="e.g. Walk-in, flyer" />
+                            </Field>
+                        )}
+                    </div>
                 </Group>
 
                 {/* Loan & property */}

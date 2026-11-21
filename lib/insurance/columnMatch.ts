@@ -27,7 +27,7 @@ import { parseMoney, type RawIntake } from '@/lib/insurance/caseIntake'
 /**
  * A HUB field a column can feed. first/last name are combined into client_name.
  * 'extra_remarks' = "Add to remarks": any column with no HUB field of its own
- * (Status, Source, Occupation…) is kept as "Heading: value" lines in remarks, so
+ * (Status, Occupation…) is kept as "Heading: value" lines in remarks, so
  * nothing the agent recorded is thrown away. Unlike every other field it can be
  * picked for several columns.
  */
@@ -39,6 +39,8 @@ export const FIELD_LABELS: Record<MatchField, string> = {
     last_name: 'Last name',
     client_mobile: 'Mobile',
     client_email: 'Email',
+    lead_source: 'Lead source',
+    lead_source_other: 'Lead source (other)',
     case_type: 'Case type',
     stage: 'Stage',
     loan_amount: 'Loan amount',
@@ -73,7 +75,7 @@ export const MATCH_FIELDS: MatchField[] = [
     'property_value', 'year_of_purchase', 'subsidy', 'clawback_end_date',
     'outstanding_equity_loan', 'equity_loan_tenure', 'property_use',
     'borrower_age', 'borrower_income', 'borrower_variable', 'borrower_commitments', 'borrower_residency',
-    'case_type', 'stage', 'remarks', 'extra_remarks',
+    'lead_source', 'case_type', 'stage', 'remarks', 'extra_remarks',
 ]
 
 /**
@@ -86,6 +88,9 @@ const SYNONYMS: Record<MatchField, string[]> = {
     last_name: ['last name', 'surname', 'family name', 'lastname'],
     client_mobile: ['mobile', 'mobile no', 'mobile number', 'hp', 'hp no', 'h p', 'handphone', 'hand phone', 'phone', 'phone no', 'phone number', 'contact', 'contact no', 'contact number', 'tel', 'tel no', 'cell', 'whatsapp', 'phone 1 value', 'mobile phone'],
     client_email: ['email', 'e mail', 'email address', 'mail', 'e mail 1 value', 'email 1 value'],
+    // Not "referred by": that column usually holds a person's name, not a channel.
+    lead_source: ['lead source', 'source', 'lead', 'channel', 'lead channel', 'source of lead', 'how did you hear', 'how found us', 'origin'],
+    lead_source_other: [],   // never auto-matched
     case_type: ['case type', 'loan type', 'service', 'category', 'deal type'],
     // Not "status": in agents' own sheets that column holds their own labels
     // ("Hot", "Called", "Closed") — auto-mapping it would fail most rows. Leaving

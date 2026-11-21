@@ -18,6 +18,8 @@ export type CaseListRow = Case & {
     loan_value?: number
     /** Closed Won only: the day it was marked Closed Won (SGT), YYYY-MM-DD. */
     closed_on?: string | null
+    /** Closed Won only: the payouts recorded for this case, oldest first (negative = reversal). */
+    payouts?: { amount: number; paid_on: string }[] | null
     bucket?: 'open' | 'closed_unpaid' | 'closed_paid' | null
 }
 
