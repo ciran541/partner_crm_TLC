@@ -3,10 +3,11 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-    DndContext, DragOverlay, PointerSensor, useDraggable, useDroppable,
-    useSensor, useSensors, type DragEndEvent, type DragStartEvent,
+    DndContext, DragOverlay, MouseSensor, TouchSensor, useDraggable, useDroppable,
+    useSensor, useSensors, type DragEndEvent, type DragStartEvent, type TouchSensorOptions,
 } from '@dnd-kit/core'
-import { CalendarDays, GripVertical, Phone } from 'lucide-react'
+import type { TouchEvent as ReactTouchEvent } from 'react'
+import { ArrowRightLeft, CalendarDays, GripVertical, Phone } from 'lucide-react'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import { stageLabel } from '@/lib/insurance/stages'
@@ -30,12 +31,15 @@ import type { PipelineStage, ReferredBanker } from '@/lib/types'
  * the new status); moving into Pending Docs also offers an optional banker
  * picker. One save updates status + follow-up (+ bankers) together.
  *
- * Touch (iPad): each card has a grip strip on its left edge. The grip has
- * `touch-action: none`, so a finger on it drags IMMEDIATELY; anywhere else on
- * the card the browser keeps the touch for scrolling (it cancels the pointer,
- * so no drag starts) and a tap opens the case. An earlier press-and-hold
- * approach failed on iPad whenever the finger drifted during the hold — iOS
- * claimed it as a scroll. With a mouse the whole card drags after 6px.
+ * Touch (iPad) — three ways to move a card, none needing instructions:
+ *   • press and hold anywhere on the card (~¼ s) → it lifts, then drag;
+ *     a quick swipe still scrolls the board (the hold hasn't completed);
+ *   • the ⋮⋮ grip on its left edge drags immediately (touch-action: none);
+ *   • the ⇄ Move button → pick the column. No dragging at all.
+ * Two touch sensors split the work by WHERE the finger lands (grip vs card),
+ * so their activation rules never fight. A single press-and-hold sensor with a
+ * tiny tolerance failed on iPad: any wobble during the hold became a scroll.
+ * With a mouse the whole card drags after 6px.
  */
 
 const REVENUE_RATE = 0.0015
@@ -49,21 +53,56 @@ const COLUMNS: Col[] = [
     { stage: 'Pending Signature', head: '#86efac', body: '#e7f8ee', accent: '#14532d' },   // deep green
 ]
 
+/** Time of the last drag start/end — a click right after one is the drop, not a tap. */
+let lastDragAt = 0
+
+const onlyOneFinger = (event: TouchEvent) => event.touches.length <= 1
+const onGrip = (event: TouchEvent) => !!(event.target as HTMLElement | null)?.closest?.('[data-drag-grip]')
+
+/** Touch that starts on the ⋮⋮ grip: drags immediately. */
+class GripTouchSensor extends TouchSensor {
+    static activators = [{
+        eventName: 'onTouchStart' as const,
+        handler: ({ nativeEvent }: ReactTouchEvent, { onActivation }: TouchSensorOptions) => {
+            if (!onlyOneFinger(nativeEvent) || !onGrip(nativeEvent)) return false
+            onActivation?.({ event: nativeEvent })
+            return true
+        },
+    }]
+}
+
+/** Touch anywhere else on the card: lifts after a short hold, so swipes still scroll. */
+class HoldTouchSensor extends TouchSensor {
+    static activators = [{
+        eventName: 'onTouchStart' as const,
+        handler: ({ nativeEvent }: ReactTouchEvent, { onActivation }: TouchSensorOptions) => {
+            if (!onlyOneFinger(nativeEvent) || onGrip(nativeEvent)) return false
+            onActivation?.({ event: nativeEvent })
+            return true
+        },
+    }]
+}
+
 const fmtShort = (d: string) => new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: '2-digit' })
 
 export default function TrackBoard({ search, agent }: { search: string; agent?: string }) {
     const today = todaySgt()
     const [dragging, setDragging] = useState<CaseListRow | null>(null)
-    const [move, setMove] = useState<{ c: CaseListRow; to: PipelineStage } | null>(null)
+    // `to` unset = opened from the Move button: pick the column first.
+    const [move, setMove] = useState<{ c: CaseListRow; to?: PipelineStage } | null>(null)
 
-    // One pointer sensor for mouse, pen and touch. Touch only reaches it from
-    // the grip (touch-action: none); elsewhere iOS takes the touch for scrolling.
     const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+        useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+        useSensor(GripTouchSensor, { activationConstraint: { distance: 4 } }),
+        useSensor(HoldTouchSensor, { activationConstraint: { delay: 250, tolerance: 14 } }),
     )
 
-    const onDragStart = (e: DragStartEvent) => setDragging((e.active.data.current?.c as CaseListRow) ?? null)
+    const onDragStart = (e: DragStartEvent) => {
+        lastDragAt = Date.now()
+        setDragging((e.active.data.current?.c as CaseListRow) ?? null)
+    }
     const onDragEnd = (e: DragEndEvent) => {
+        lastDragAt = Date.now()
         setDragging(null)
         const c = e.active.data.current?.c as CaseListRow | undefined
         const to = e.over?.id as PipelineStage | undefined
@@ -72,10 +111,11 @@ export default function TrackBoard({ search, agent }: { search: string; agent?: 
 
     return (
         <>
-            <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragging(null)}>
+            <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => { lastDragAt = Date.now(); setDragging(null) }}>
                 <div className="grid grid-flow-col auto-cols-[minmax(232px,1fr)] gap-3 overflow-x-auto pb-2 -mx-1 px-1">
                     {COLUMNS.map(col => (
-                        <Column key={col.stage} col={col} search={search} agent={agent} today={today} draggingId={dragging?.id} />
+                        <Column key={col.stage} col={col} search={search} agent={agent} today={today} draggingId={dragging?.id}
+                            onMove={c => setMove({ c })} />
                     ))}
                 </div>
                 <DragOverlay dropAnimation={null}>
@@ -90,8 +130,9 @@ export default function TrackBoard({ search, agent }: { search: string; agent?: 
     )
 }
 
-function Column({ col, search, agent, today, draggingId }: {
+function Column({ col, search, agent, today, draggingId, onMove }: {
     col: Col; search: string; agent?: string; today: string; draggingId?: string
+    onMove: (c: CaseListRow) => void
 }) {
     const q = usePagedCases({ stage: col.stage, search, agent, sort: 'follow_up_date', dir: 'asc', limit: PAGE })
     const { setNodeRef, isOver } = useDroppable({ id: col.stage })
@@ -117,7 +158,7 @@ function Column({ col, search, agent, today, draggingId }: {
                         {search ? 'No matches' : 'Drag a case here'}
                     </p>
                 ) : q.rows.map(c => (
-                    <DraggableCard key={c.id} c={c} today={today} hidden={draggingId === c.id} />
+                    <DraggableCard key={c.id} c={c} today={today} hidden={draggingId === c.id} onMove={() => onMove(c)} />
                 ))}
                 {q.hasMore && (
                     <button onClick={q.loadMore} disabled={q.loadingMore}
@@ -130,20 +171,21 @@ function Column({ col, search, agent, today, draggingId }: {
     )
 }
 
-function DraggableCard({ c, today, hidden }: { c: CaseListRow; today: string; hidden: boolean }) {
+function DraggableCard({ c, today, hidden, onMove }: { c: CaseListRow; today: string; hidden: boolean; onMove: () => void }) {
     const router = useRouter()
     const { setNodeRef, attributes, listeners } = useDraggable({ id: c.id, data: { c } })
     return (
         <div ref={setNodeRef} {...attributes} {...listeners}
-            onClick={() => router.push(`/insurance/dashboard/cases/${c.id}`)}
+            // A drop (or a hold that lifted the card) also ends in a click — ignore it.
+            onClick={() => { if (Date.now() - lastDragAt > 400) router.push(`/insurance/dashboard/cases/${c.id}`) }}
             className="select-none"
             style={{ opacity: hidden ? 0.3 : 1, WebkitTouchCallout: 'none' }}>
-            <CardBody c={c} today={today} showBanker={c.stage !== 'Touched Base'} />
+            <CardBody c={c} today={today} showBanker={c.stage !== 'Touched Base'} onMove={onMove} />
         </div>
     )
 }
 
-function CardBody({ c, today, showBanker, lifted }: { c: CaseListRow; today: string; showBanker: boolean; lifted?: boolean }) {
+function CardBody({ c, today, showBanker, lifted, onMove }: { c: CaseListRow; today: string; showBanker: boolean; lifted?: boolean; onMove?: () => void }) {
     const fu = c.follow_up_date?.slice(0, 10)
     const overdue = !fu || fu < today
     const dueToday = fu === today
@@ -153,7 +195,7 @@ function CardBody({ c, today, showBanker, lifted }: { c: CaseListRow; today: str
         <div className={`bg-white rounded-xl border border-slate-200 flex cursor-grab ${lifted ? 'shadow-xl rotate-1 cursor-grabbing' : 'hover:border-slate-300 hover:shadow-sm'}`}>
             {/* Drag grip — touch-action: none makes a finger here drag at once on iPad.
                 A tap on it doesn't open the case. */}
-            <span aria-hidden onClick={e => e.stopPropagation()}
+            <span aria-hidden data-drag-grip onClick={e => e.stopPropagation()}
                 className="w-8 shrink-0 flex items-center justify-center rounded-l-xl bg-slate-50 border-r border-slate-100 text-slate-400 cursor-grab"
                 style={{ touchAction: 'none' }}>
                 <GripVertical size={16} />
@@ -173,15 +215,45 @@ function CardBody({ c, today, showBanker, lifted }: { c: CaseListRow; today: str
             )}
             <p className={`text-xs font-semibold flex items-center gap-1 mt-1 ${overdue ? 'text-red-600' : dueToday ? 'text-amber-600' : 'text-slate-500'}`}>
                 <CalendarDays size={11} /> {fu ? `FU ${fmtShort(fu)}` : 'No follow-up'}{dueToday ? ' · today' : ''}
+                {onMove && (
+                    // Move without dragging. Stops its own touches so it never starts a drag.
+                    <button type="button" aria-label="Move to another column" title="Move to another column"
+                        onClick={e => { e.stopPropagation(); onMove() }}
+                        onPointerDown={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}
+                        className="ml-auto -my-1 -mr-1 h-8 px-2 rounded-lg flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:bg-slate-100 hover:text-[#03a9e7]">
+                        <ArrowRightLeft size={13} /> Move
+                    </button>
+                )}
             </p>
             </div>
         </div>
     )
 }
 
-function MoveModal({ c, to, onClose }: { c: CaseListRow; to: PipelineStage; onClose: () => void }) {
+function MoveModal({ c, to: initialTo, onClose }: { c: CaseListRow; to?: PipelineStage; onClose: () => void }) {
+    const [to, setTo] = useState<PipelineStage | undefined>(initialTo)
     const [bankers, setBankers] = useState<ReferredBanker[]>(c.referred_bankers ?? [])
     const askBanker = to === 'Pending Docs'
+    if (!to) {
+        return (
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ background: 'rgba(5,45,74,0.55)', backdropFilter: 'blur(3px)' }}
+                onClick={onClose}>
+                <div className="card w-full max-w-sm p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <p className="text-sm font-bold text-[#052d4a] mb-3">Move {c.client_name || 'case'} to…</p>
+                    <div className="space-y-2">
+                        {COLUMNS.filter(col => col.stage !== c.stage).map(col => (
+                            <button key={col.stage} type="button" onClick={() => setTo(col.stage)}
+                                className="w-full h-12 px-4 rounded-xl text-left text-sm font-bold flex items-center justify-between border border-slate-200 hover:border-[#03a9e7]"
+                                style={{ background: col.head, color: col.accent }}>
+                                {stageLabel(col.stage)} <span aria-hidden>→</span>
+                            </button>
+                        ))}
+                    </div>
+                    <button type="button" onClick={onClose} className="mt-3 w-full h-10 text-sm font-semibold text-slate-500 rounded-xl hover:bg-slate-50">Cancel</button>
+                </div>
+            </div>
+        )
+    }
     return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ background: 'rgba(5,45,74,0.55)', backdropFilter: 'blur(3px)' }}
             onClick={onClose}>

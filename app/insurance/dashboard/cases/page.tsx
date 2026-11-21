@@ -115,7 +115,8 @@ function CasesList() {
         from: dateMode === 'range' ? fromDate || undefined : undefined,
         to: dateMode === 'range' ? toDate || undefined : undefined,
         month: dateMode === 'month' ? month || undefined : undefined,
-        closedMonth: isClosedWon ? closedMonth : undefined,
+        // 'all' = every closed case (All time); otherwise a month or a year.
+        closedMonth: isClosedWon && closedMonth !== 'all' ? closedMonth : undefined,
     }, { enabled: !isTrack })   // the board loads its own four columns
 
     // Admin-only: load the full agent roster for the agent filter. Gated on

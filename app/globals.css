@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@plugin "@tailwindcss/typography";
 
 :root {
   /* Brand Colors - The Loan Connection */
@@ -67,6 +66,7 @@ body {
 /* Prevent iOS Safari from auto-zooming when a sub-16px input is
    focused. Inline fontSize:14 styles are overridden with !important. */
 @media (max-width: 767px) {
+
   input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea {
@@ -395,12 +395,27 @@ a.card:active {
   --bg-page: #0b3a5e;
   background: var(--bg-page);
 }
-.theme-internal .ios-page-title { color: #ffffff; }
-.theme-internal .page-subtitle { color: #a9c4da; }
-.theme-internal .on-navy-muted { color: #a9c4da; }
-.theme-internal .on-navy-strong { color: #e6f0f8; }
+
+.theme-internal .ios-page-title {
+  color: #ffffff;
+}
+
+.theme-internal .page-subtitle {
+  color: #a9c4da;
+}
+
+.theme-internal .on-navy-muted {
+  color: #a9c4da;
+}
+
+.theme-internal .on-navy-strong {
+  color: #e6f0f8;
+}
+
 /* Navy buttons would vanish on the navy page: primary actions go brand cyan here. */
-.theme-internal .btn-primary { background: var(--brand-cyan); }
+.theme-internal .btn-primary {
+  background: var(--brand-cyan);
+}
 
 .metric-value {
   font-size: var(--text-metric);
@@ -450,11 +465,12 @@ a.card:active {
    table room for its columns, so the rest is a swipe away rather than the
    columns being squashed until figures are clipped. Desktop is unchanged. */
 @media (max-width: 1199px) {
-  .table-scroll > table,
-  .overflow-x-auto > table,
-  .overflow-auto > table,
-  [style*="overflow-x: auto"] > table,
-  [style*="overflow: auto"] > table {
+
+  .table-scroll>table,
+  .overflow-x-auto>table,
+  .overflow-auto>table,
+  [style*="overflow-x: auto"]>table,
+  [style*="overflow: auto"]>table {
     min-width: 640px;
   }
 
@@ -471,10 +487,12 @@ a.card:active {
   display: flex;
   align-items: stretch;
 }
-[data-overflow="1"] > table {
+
+[data-overflow="1"]>table {
   flex: none;
   width: 100%;
 }
+
 [data-overflow="1"]::after {
   content: '';
   flex: none;
@@ -486,6 +504,7 @@ a.card:active {
   background: linear-gradient(to right, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.95));
   transition: opacity 0.15s;
 }
+
 [data-overflow="1"][data-end="1"]::after {
   opacity: 0;
 }
@@ -493,7 +512,9 @@ a.card:active {
 /* ─── Spinner ─────────────────────────────────────────────── */
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spinner {
@@ -508,8 +529,13 @@ a.card:active {
 /* ─── Skeleton (loading placeholders) ─────────────────────── */
 
 @keyframes skeleton-shimmer {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .skeleton {

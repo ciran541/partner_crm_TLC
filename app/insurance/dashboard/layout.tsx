@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
 import { useRouter, usePathname } from 'next/navigation'
@@ -34,6 +34,8 @@ import {
     BarChart2,
     DollarSign,
     Landmark,
+    PanelLeftClose,
+    PanelLeftOpen,
 } from 'lucide-react'
 
 type NavChild = { name: string; href: string }
@@ -129,6 +131,41 @@ function isGroupActive(pathname: string | null, item: NavItem) {
     return isActiveHref(pathname, item.href)
 }
 
+// ── Collapsible sidebar ("rail") ─────────────────────────────────────────────
+// On iPad the full 260px sidebar eats ~a third of a portrait screen, so it can
+// collapse to a 72px icon rail. The choice is remembered per device; with no
+// saved choice it starts collapsed below 1024px (iPad portrait) and open on
+// wider screens — and follows rotation until the agent picks. Read through
+// useSyncExternalStore (localStorage doesn't exist during the server render).
+const RAIL_KEY = 'hub-sidebar-collapsed'
+const RAIL_WIDTH = 72
+const SIDEBAR_WIDTH = 260
+const railStore = {
+    listeners: new Set<() => void>(),
+    subscribe(cb: () => void): () => void {
+        railStore.listeners.add(cb)
+        window.addEventListener('storage', cb)
+        window.addEventListener('resize', cb)
+        return () => {
+            railStore.listeners.delete(cb)
+            window.removeEventListener('storage', cb)
+            window.removeEventListener('resize', cb)
+        }
+    },
+    get(): boolean {
+        try {
+            const saved = localStorage.getItem(RAIL_KEY)
+            if (saved !== null) return saved === '1'
+        } catch { /* private mode: fall through to the width default */ }
+        return window.innerWidth < 1024
+    },
+    serverGet(): boolean { return false },
+    set(collapsed: boolean) {
+        try { localStorage.setItem(RAIL_KEY, collapsed ? '1' : '0') } catch { /* ignore */ }
+        railStore.listeners.forEach(l => l())
+    },
+}
+
 export default function DashboardLayout({ children }: { children: ReactNode }) {
     const router = useRouter()
     const pathname = usePathname()
@@ -159,6 +196,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
             .catch(() => {})
     }, [pathname])
     const internalExpanded = internalOpen || internalActive
+    const rail = useSyncExternalStore(railStore.subscribe, railStore.get, railStore.serverGet)
     const [moreOpen, setMoreOpen] = useState(false)
 
     // Which Calculators/Resources-style groups are manually expanded. A group
@@ -268,6 +306,29 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
     const renderToolLink = (item: NavItem) => {
         const hasChildren = !!item.children?.length
+        if (rail) {
+            const active = hasChildren ? isGroupActive(pathname, item) : isActiveHref(pathname, item.href)
+            const showDot = item.href === ACTION_CENTRE_HREF && overdueCount > 0
+            return (
+                <li key={item.name}>
+                    <Link
+                        href={item.href}
+                        prefetch
+                        title={item.name}
+                        aria-label={item.name}
+                        className={`sidebar-link relative justify-center ${active ? 'active' : ''}`}
+                        style={{ paddingLeft: active ? 0 : 3, paddingRight: 0 }}
+                    >
+                        <item.icon size={22} />
+                        {showDot && (
+                            <span className="absolute top-1.5 right-3 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-4 text-center">
+                                {overdueCount > 9 ? '9+' : overdueCount}
+                            </span>
+                        )}
+                    </Link>
+                </li>
+            )
+        }
         if (!hasChildren) {
             return (
                 <li key={item.name}>
@@ -339,44 +400,90 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     return (
         <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
             {/* Desktop Sidebar */}
-            <aside className="hidden md:flex flex-col fixed inset-y-0 left-0 w-[260px] z-40 sidebar-container">
-                {/* Brand */}
-                <div className="p-6 border-b border-white/10">
-                    <div className="flex items-center gap-3">
-                        <img
-                            src="/brand/tlc-logo.png"
-                            alt="The Loan Connection Logo"
-                            className="w-10 h-10 rounded"
-                        />
-                        <div>
-                            <p className="text-base font-bold text-white leading-tight">The Loan Connection</p>
-                            <div className="flex items-center gap-1.5 mt-1">
-                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#03a9e7]" />
-                                <p className="text-[10px] font-semibold text-[#7dd3fc] tracking-wider">TLC HUB</p>
+            <aside
+                className="hidden md:flex flex-col fixed inset-y-0 left-0 z-40 sidebar-container transition-[width] duration-200"
+                style={{ width: rail ? RAIL_WIDTH : SIDEBAR_WIDTH }}
+            >
+                {/* Brand + collapse / expand */}
+                {rail ? (
+                    <div className="py-5 border-b border-white/10 flex flex-col items-center gap-3">
+                        <img src="/brand/tlc-logo.png" alt="The Loan Connection Logo" className="w-9 h-9 rounded" />
+                        <button
+                            type="button"
+                            onClick={() => railStore.set(false)}
+                            title="Expand sidebar"
+                            aria-label="Expand sidebar"
+                            className="w-11 h-11 rounded-xl flex items-center justify-center text-slate-300 bg-white/5 hover:bg-white/15 hover:text-white transition-colors"
+                        >
+                            <PanelLeftOpen size={22} />
+                        </button>
+                    </div>
+                ) : (
+                    <div className="p-6 pr-3 border-b border-white/10">
+                        <div className="flex items-center gap-3">
+                            <img
+                                src="/brand/tlc-logo.png"
+                                alt="The Loan Connection Logo"
+                                className="w-10 h-10 rounded"
+                            />
+                            <div className="flex-1 min-w-0">
+                                <p className="text-base font-bold text-white leading-tight">The Loan Connection</p>
+                                <div className="flex items-center gap-1.5 mt-1">
+                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#03a9e7]" />
+                                    <p className="text-[10px] font-semibold text-[#7dd3fc] tracking-wider">TLC HUB</p>
+                                </div>
                             </div>
+                            <button
+                                type="button"
+                                onClick={() => railStore.set(true)}
+                                title="Collapse sidebar"
+                                aria-label="Collapse sidebar"
+                                className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+                            >
+                                <PanelLeftClose size={20} />
+                            </button>
                         </div>
                     </div>
-                </div>
+                )}
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3 py-6 overflow-y-auto">
-                    <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                        Tools
-                    </p>
+                <nav className={`flex-1 py-6 overflow-y-auto ${rail ? 'px-2' : 'px-3'}`}>
+                    {!rail && (
+                        <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
+                            Tools
+                        </p>
+                    )}
                     <ul className="space-y-1">
                         {toolsNav.map(renderToolLink)}
                     </ul>
 
                     {/* Internal — collapsed back-of-house section */}
-                    <button
-                        type="button"
-                        onClick={() => setInternalOpen(o => !o)}
-                        className="w-full mt-6 mb-2 px-3 flex items-center gap-2 text-[11px] font-semibold text-slate-400 uppercase tracking-widest hover:text-slate-200 transition-colors"
-                    >
-                        <Lock size={11} />
-                        <span className="flex-1 text-left">Internal</span>
-                        {internalExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    </button>
+                    {rail ? (
+                        // Rail: a lock button opens/closes the Internal icons; a line separates them.
+                        <button
+                            type="button"
+                            onClick={() => setInternalOpen(o => !o)}
+                            title={internalExpanded ? 'Hide Internal' : 'Show Internal'}
+                            aria-label={internalExpanded ? 'Hide Internal' : 'Show Internal'}
+                            aria-expanded={internalExpanded}
+                            className={`w-full mt-5 mb-2 h-10 rounded-lg flex items-center justify-center gap-0.5 border-t border-white/10 pt-3 transition-colors ${
+                                internalExpanded ? 'text-slate-200' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                        >
+                            <Lock size={14} />
+                            {internalExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => setInternalOpen(o => !o)}
+                            className="w-full mt-6 mb-2 px-3 flex items-center gap-2 text-[11px] font-semibold text-slate-400 uppercase tracking-widest hover:text-slate-200 transition-colors"
+                        >
+                            <Lock size={11} />
+                            <span className="flex-1 text-left">Internal</span>
+                            {internalExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                    )}
                     {internalExpanded && (
                         <ul className="space-y-1">
                             {internalItems.map(renderToolLink)}
@@ -385,6 +492,28 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                 </nav>
 
                 {/* User Footer */}
+                {rail ? (
+                    <div className="py-4 border-t border-white/10 bg-black/10 flex flex-col items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => railStore.set(false)}
+                            title={displayName || email || 'Account'}
+                            aria-label="Open sidebar to switch account"
+                            className="w-9 h-9 rounded-full bg-[#03a9e7] text-white text-sm font-bold flex items-center justify-center"
+                        >
+                            {(displayName || email || '?').trim().charAt(0).toUpperCase()}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSignOut}
+                            title="Sign out"
+                            aria-label="Sign out"
+                            className="w-9 h-9 rounded-lg flex items-center justify-center text-[#ee3238] hover:bg-white/10 transition-colors"
+                        >
+                            <LogOut size={18} />
+                        </button>
+                    </div>
+                ) : (
                 <div className="p-5 border-t border-white/10 bg-black/10">
                     <div className="mb-4">
                         <AccountSwitcher
@@ -408,6 +537,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                         Sign Out
                     </button>
                 </div>
+                )}
             </aside>
 
             {/* Mobile Top Bar — brand + sign out */}
@@ -526,7 +656,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
             {/* Page Content */}
             {/* Internal screens get the navy theme (globals.css .theme-internal). */}
-            <div className={`md:pl-[260px] ${internalActive ? 'theme-internal' : ''}`}>
+            <div
+                className={`md:pl-[var(--sidebar-w)] transition-[padding] duration-200 ${internalActive ? 'theme-internal' : ''}`}
+                style={{ ['--sidebar-w' as string]: `${rail ? RAIL_WIDTH : SIDEBAR_WIDTH}px` }}
+            >
                 <div
                     className="px-4 pt-[calc(64px+env(safe-area-inset-top))] pb-[calc(72px+env(safe-area-inset-bottom))] md:px-8 md:py-7"
                     style={{ minHeight: '100dvh' }}
