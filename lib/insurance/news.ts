@@ -481,28 +481,89 @@ export async function ingestAll(): Promise<{ inserted: number } | null> {
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 
+/** One page of articles plus the total matching the same filters (for "N remaining"). */
+export interface NewsPage {
+    data: NewsArticle[]
+    total: number
+}
+
+export const NEWS_STATUS_FILTERS = ['relevant', 'not_relevant', 'unclassified', 'hidden'] as const
+export type NewsStatusFilter = (typeof NEWS_STATUS_FILTERS)[number]
+
+export interface NewsPageQuery {
+    offset?: number
+    limit?: number
+    source?: string                 // feed_key
+    search?: string                 // title substring (admin only)
+    status?: NewsStatusFilter       // admin only — the agent feed is always "relevant, not hidden"
+}
+
+const MAX_PAGE = 50
+
+/** Clamp paging input from a query string so a bad/huge value can't pull the whole table. */
+export function parseNewsPageQuery(params: URLSearchParams, defaultLimit: number): NewsPageQuery {
+    const int = (v: string | null, d: number) => {
+        const n = Number.parseInt(v ?? '', 10)
+        return Number.isFinite(n) && n >= 0 ? n : d
+    }
+    const status = params.get('status')
+    return {
+        offset: int(params.get('offset'), 0),
+        limit: Math.min(Math.max(int(params.get('limit'), defaultLimit), 1), MAX_PAGE),
+        source: params.get('source')?.trim() || undefined,
+        search: params.get('search')?.trim().slice(0, 100) || undefined,
+        status: (NEWS_STATUS_FILTERS as readonly string[]).includes(status ?? '') ? status as NewsStatusFilter : undefined,
+    }
+}
+
+/**
+ * ilike treats % and _ (and PostgREST also *) as wildcards. Backslash-escaping
+ * them works in raw SQL but was confirmed live NOT to survive PostgREST (a search
+ * for "50%_" still matched 101 titles), so they are replaced with a space
+ * instead — a headline search never genuinely needs a literal % or _.
+ */
+const likeEscape = (s: string) => s.replace(/[\\%_*]/g, ' ').replace(/\s+/g, ' ').trim()
+
 /** Agent-facing feed: relevant, non-hidden articles, most recent first. */
-export async function getPublishedArticles(): Promise<NewsArticle[]> {
-    const admin = createAdminClient()
-    const { data } = await admin
+export async function getPublishedArticles(q: NewsPageQuery = {}): Promise<NewsPage> {
+    const offset = q.offset ?? 0
+    const limit = q.limit ?? 20
+    let query = createAdminClient()
         .from('mortgage_news_articles')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('is_relevant', true)
         .eq('hidden', false)
+    if (q.source) query = query.eq('feed_key', q.source)
+    const { data, count, error } = await query
         .order('published_at', { ascending: false })
-        .limit(100)
-    return (data ?? []) as NewsArticle[]
+        .range(offset, offset + limit - 1)
+    if (error) console.error('[news] published page failed:', error.message)
+    return { data: (data ?? []) as NewsArticle[], total: count ?? 0 }
 }
 
 /** Admin view: everything, including unclassified/irrelevant/hidden. */
-export async function getAllArticles(): Promise<NewsArticle[]> {
-    const admin = createAdminClient()
-    const { data } = await admin
+export async function getAllArticles(q: NewsPageQuery = {}): Promise<NewsPage> {
+    const offset = q.offset ?? 0
+    const limit = q.limit ?? 25
+    let query = createAdminClient()
         .from('mortgage_news_articles')
-        .select('*')
+        .select('*', { count: 'exact' })
+    if (q.source) query = query.eq('feed_key', q.source)
+    const search = q.search ? likeEscape(q.search) : ''
+    if (search) query = query.ilike('title', `%${search}%`)
+    // Mirrors the status badge in NewsAdminView: Hidden wins over the relevance state.
+    if (q.status === 'hidden') query = query.eq('hidden', true)
+    else if (q.status) {
+        query = query.eq('hidden', false)
+        if (q.status === 'relevant') query = query.eq('is_relevant', true)
+        else if (q.status === 'not_relevant') query = query.eq('is_relevant', false)
+        else query = query.is('is_relevant', null)
+    }
+    const { data, count, error } = await query
         .order('published_at', { ascending: false })
-        .limit(300)
-    return (data ?? []) as NewsArticle[]
+        .range(offset, offset + limit - 1)
+    if (error) console.error('[news] admin page failed:', error.message)
+    return { data: (data ?? []) as NewsArticle[], total: count ?? 0 }
 }
 
 export async function getArticleById(id: string): Promise<NewsArticle | null> {

@@ -1,21 +1,22 @@
 import { NextResponse } from 'next/server'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
-import { getAllArticles, createManualArticle, setHidden, setRelevant, deleteArticle } from '@/lib/insurance/news'
+import { getAllArticles, parseNewsPageQuery, createManualArticle, setHidden, setRelevant, deleteArticle } from '@/lib/insurance/news'
 import type { NewsArticleInput } from '@/lib/types/news'
 
 // Admin QA for mortgage news. Guarded by requireAdminUser().
-//   GET                                → list all articles (incl. unclassified/hidden)
+//   GET ?offset&limit&source&search&status → one page of all articles (incl. unclassified/hidden) + total
 //   POST   { input }                   → one-off manual addition (QA use only — not the ingestion path)
 //   PATCH  { id, hidden }               → hide/unhide
 //   PATCH  { id, isRelevant }           → override a wrong/missed AI relevance call
 //   DELETE ?id=                        → delete
 
-export async function GET() {
+export async function GET(request: Request) {
     const auth = await requireAdminUser()
     if (!auth.authorized) return auth.response
 
-    const data = await getAllArticles()
-    return NextResponse.json({ data })
+    const { searchParams } = new URL(request.url)
+    const page = await getAllArticles(parseNewsPageQuery(searchParams, 25))
+    return NextResponse.json(page)
 }
 
 export async function POST(request: Request) {

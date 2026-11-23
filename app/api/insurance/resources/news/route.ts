@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { getServerUser } from '@/lib/auth/getUser'
 import { canAccessInsurance, canAccessProperty } from '@/lib/permissions'
-import { getPublishedArticles } from '@/lib/insurance/news'
+import { getPublishedArticles, parseNewsPageQuery } from '@/lib/insurance/news'
 
 // GET /api/insurance/resources/news — agent-facing feed.
 // Shared resource: any authenticated insurance OR property user can read.
 // Only relevant, non-hidden articles are returned.
-export async function GET() {
+// Paged: ?offset=&limit=(≤50, default 20)&source=<feed_key> → { data, total }
+export async function GET(request: Request) {
     const { user, profile } = await getServerUser()
     if (!user || !profile) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -18,6 +19,7 @@ export async function GET() {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const data = await getPublishedArticles()
-    return NextResponse.json({ data })
+    const { searchParams } = new URL(request.url)
+    const page = await getPublishedArticles(parseNewsPageQuery(searchParams, 20))
+    return NextResponse.json(page)
 }

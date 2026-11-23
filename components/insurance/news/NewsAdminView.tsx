@@ -8,34 +8,50 @@ import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
+import { usePagedNews, LoadMoreButton } from '@/components/insurance/news/usePagedNews'
 
 // Admin QA console. Ingestion is fully automated via the daily cron
 // (/api/cron/news) + "Refresh now" here — this view is for hiding bad
 // articles, deleting, and one-off manual adds, never a required data-entry step.
+const PAGE_SIZE = 25
+
+const STATUS_OPTIONS: { value: string; label: string }[] = [
+    { value: '', label: 'All statuses' },
+    { value: 'relevant', label: 'Relevant' },
+    { value: 'not_relevant', label: 'Not relevant' },
+    { value: 'unclassified', label: 'Unclassified' },
+    { value: 'hidden', label: 'Hidden' },
+]
+
 export default function NewsAdminView() {
-    const [articles, setArticles] = useState<NewsArticle[]>([])
-    const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState('')
+    const [debouncedSearch, setDebouncedSearch] = useState('')
     const [sourceFilter, setSourceFilter] = useState('')
+    const [statusFilter, setStatusFilter] = useState('')
     const [modalOpen, setModalOpen] = useState(false)
     const [saving, setSaving] = useState(false)
     const [refreshing, setRefreshing] = useState(false)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-    const load = async () => {
-        setLoading(true)
-        const res = await fetch('/api/admin/insurance/news')
-        const json = await res.json()
-        setArticles(json.data ?? [])
-        setLoading(false)
-    }
-    useEffect(() => { load() }, [])
+    // Search runs on the server now, so wait for a pause in typing rather than
+    // firing a request per keystroke.
+    useEffect(() => {
+        const t = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+        return () => clearTimeout(t)
+    }, [search])
 
-    const filtered = articles.filter(a => {
-        if (sourceFilter && a.feed_key !== sourceFilter) return false
-        if (search) return a.title.toLowerCase().includes(search.toLowerCase())
-        return true
-    })
+    const list = usePagedNews('/api/admin/insurance/news', {
+        source: sourceFilter || undefined,
+        search: debouncedSearch || undefined,
+        status: statusFilter || undefined,
+    }, PAGE_SIZE)
+    const filtered = list.rows
+    const load = list.reload
+
+    // Row actions patch the loaded row in place instead of re-fetching every page
+    // the admin has already scrolled through (and losing their place).
+    const patchRow = (id: string, patch: Partial<NewsArticle>) =>
+        list.setRows(rows => rows.map(r => r.id === id ? { ...r, ...patch } : r))
 
     const handleRefresh = async () => {
         setRefreshing(true)
@@ -57,7 +73,7 @@ export default function NewsAdminView() {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: a.id, hidden: !a.hidden }),
         })
-        if (res.ok) await load()
+        if (res.ok) patchRow(a.id, { hidden: !a.hidden })
         else setAlert({ type: 'error', message: 'Update failed.' })
     }
 
@@ -67,14 +83,18 @@ export default function NewsAdminView() {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: a.id, isRelevant: a.is_relevant !== true }),
         })
-        if (res.ok) await load()
+        if (res.ok) patchRow(a.id, { is_relevant: a.is_relevant !== true, relevance_reason: 'Manually overridden by admin' })
         else setAlert({ type: 'error', message: 'Update failed.' })
     }
 
     const handleDelete = async (a: NewsArticle) => {
         if (!confirm(`Delete "${a.title}"? This cannot be undone.`)) return
         const res = await fetch(`/api/admin/insurance/news?id=${a.id}`, { method: 'DELETE' })
-        if (res.ok) { setAlert({ type: 'success', message: 'Article deleted.' }); await load() }
+        if (res.ok) {
+            setAlert({ type: 'success', message: 'Article deleted.' })
+            list.setRows(rows => rows.filter(r => r.id !== a.id))
+            list.setTotal(t => Math.max(0, t - 1))
+        }
         else setAlert({ type: 'error', message: 'Delete failed.' })
     }
 
@@ -129,9 +149,19 @@ export default function NewsAdminView() {
                     <option value="">All sources</option>
                     {NEWS_SOURCES.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}
                 </select>
+                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                    className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7]">
+                    {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
             </div>
 
-            {loading ? (
+            {!list.loading && list.total > 0 && (
+                <p className="text-xs text-slate-400 -mt-2">Showing {filtered.length} of {list.total} article{list.total === 1 ? '' : 's'}</p>
+            )}
+
+            {list.error && filtered.length === 0 ? (
+                <div className="card text-center py-12 text-sm text-red-500">{list.error}</div>
+            ) : list.loading ? (
                 <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={44} radius={10} />)}
                 </div>
@@ -139,8 +169,8 @@ export default function NewsAdminView() {
                 <EmptyState
                     icon={Newspaper}
                     iconColor="#03a9e7"
-                    title={search || sourceFilter ? 'No articles match' : 'No articles yet'}
-                    description={search || sourceFilter ? 'Try a different search term or source filter.' : 'Click "Refresh now" to run the first ingestion, or wait for the daily cron.'}
+                    title={debouncedSearch || sourceFilter || statusFilter ? 'No articles match' : 'No articles yet'}
+                    description={debouncedSearch || sourceFilter || statusFilter ? 'Try a different search term, source or status filter.' : 'Click "Refresh now" to run the first ingestion, or wait for the daily cron.'}
                 />
             ) : (
                 <div className="card overflow-hidden">
@@ -197,6 +227,13 @@ export default function NewsAdminView() {
                     </table>
                     </div>
                 </div>
+            )}
+
+            {!list.loading && filtered.length > 0 && (
+                <>
+                    <LoadMoreButton remaining={list.total - filtered.length} loading={list.loadingMore} onClick={list.loadMore} />
+                    {list.error && <p className="text-xs text-red-500 text-center">{list.error}</p>}
+                </>
             )}
 
             {modalOpen && (
