@@ -11,6 +11,7 @@ import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import type { CommissionBucket, AgentCommissionRow } from '@/lib/insurance/commission'
 import EarningsOverview from '@/components/insurance/earnings/EarningsOverview'
 import MonthPicker, { compact } from '@/components/insurance/shared/MonthPicker'
+import StatementButton from '@/components/insurance/earnings/StatementButton'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { loUploadedAt } from '@/lib/insurance/closedWon'
 
@@ -215,6 +216,7 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
                                 return { weight: earned, main: compact(earned), sub: t ? `${t.cases} case${t.cases === 1 ? '' : 's'}` : '' }
                             }}
                         />
+                        {scope !== 'all' && <StatementButton key={scope} period={scope} agentId={agentId} />}
                     </div>
                     <div className="scroll-x transition-opacity duration-150" style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4, opacity: refreshing ? 0.55 : 1 }}>
                         {tabs.map(t => {

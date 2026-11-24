@@ -11,7 +11,7 @@ import type { BankIntelligenceReportInput } from '@/lib/types/bankIntelligence'
 //   PATCH  { id, isPublished }           → publish/unpublish (the review gate)
 //   PATCH  { id, hidden }                → hide/unhide
 //   PATCH  { id, summary }               → edit the AI-extracted summary before publishing
-//   PATCH  { id, reExtract: true }       → re-run Gemini extraction (e.g. after a prior failure)
+//   PATCH  { id, reExtract: true }       → re-run Claude extraction (e.g. after a prior failure)
 //   DELETE ?id=                          → delete
 
 export async function GET() {

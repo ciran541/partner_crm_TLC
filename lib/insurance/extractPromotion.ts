@@ -1,6 +1,6 @@
 /**
  * Promotion ingestion extractor — turns a bank's pasted partner blast into
- * structured promotion rows via DeepSeek (JSON mode, temperature 0).
+ * structured promotion rows via Claude (JSON mode, temperature 0).
  *
  * These messages arrive as WhatsApp/email prose ("Dear Partners, … Loan Size $1m
  * to $1.5m, Cash Rebate $800 … 0.2% agent referral will be extended to 31
@@ -23,7 +23,7 @@
 import type { CaseType } from '@/lib/types/insurance'
 import type { ExtractedPromotion, PromotionTier } from '@/lib/types/promotions'
 import { PROMO_AUDIENCES, BENEFIT_TYPES, WINDOW_BASES } from '@/lib/types/promotions'
-import { callDeepSeek } from '@/lib/insurance/deepseek'
+import { callClaude } from '@/lib/ai/claude'
 
 const SYSTEM_INSTRUCTION = `You convert a Singapore bank's promotion message (sent to mortgage broker partners over email or WhatsApp) into STRUCTURED promotion data.
 
@@ -85,22 +85,20 @@ const ALLOWED_CASE_TYPES: CaseType[] = ['Purchase', 'Refinancing', 'Decouple', '
 export async function extractPromotions(text: string, bank: string): Promise<ExtractedPromotion[] | null> {
     if (!text.trim() || !bank.trim()) return null
 
-    const raw = await callDeepSeek({
+    const { text: raw } = await callClaude({
         label: 'extractPromotions',
         system: SYSTEM_INSTRUCTION,
         user: `Bank: ${bank}\nToday's date: ${new Date().toISOString().slice(0, 10)}\n\nPaste:\n${text.trim()}`,
-        temperature: 0,
-        maxTokens: 4096,
-        json: true,
-        timeoutMs: 60000,
+        maxTokens: 12000,   // includes thinking
+        thinking: 'medium',
+        timeoutMs: 55000,
     })
     if (!raw) return null
 
     try {
         const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
         const parsed = JSON.parse(cleaned)
-        // DeepSeek's json mode guarantees the response PARSES, not that it
-        // matches the shape asked for, so tolerate the array arriving at the top
+        // No schema is enforced on this call, so tolerate the array arriving at the top
         // level or under a stray key — a real read elsewhere in this codebase
         // came back nested one level deeper than requested.
         const promotions = Array.isArray(parsed) ? parsed

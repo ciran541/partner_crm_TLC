@@ -10,8 +10,8 @@
  * fetchHsbcReports). All three are fragile to a frontend/URL-scheme redesign,
  * same trade-off already accepted for URA/HDB's news sourcing.
  *
- * Extraction (extractSummary): DeepSeek (paid plan) reads the report's text
- * primarily, Gemini is the fallback on a hard failure — see the longer note
+ * Extraction (extractSummary): AI reads the report's text, or the PDF
+ * itself when that fails — see the longer note
  * above SUMMARY_SYSTEM for why and what that trades off. PDF sources
  * (OCBC/UOB) go through pdf-parse to get that text; HSBC's article page is
  * already clean HTML, so its text comes straight from stripping tags. The
@@ -22,6 +22,7 @@
  * AI reads a messy source, a human confirms before agents see it.
  */
 
+import { callFreeFirst } from '@/lib/ai/freeFirst'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { BANK_SOURCES, isPdfUrl } from '@/lib/types/bankIntelligence'
 import type { BankIntelligenceReport, BankIntelligenceReportInput } from '@/lib/types/bankIntelligence'
@@ -969,167 +970,46 @@ export async function discoverReports(): Promise<{ inserted: number; extracted: 
     return { inserted, extracted, pending }
 }
 
-// ── Summary extraction: DeepSeek (paid plan, primary) + Gemini (fallback) ─────
+// ── Summary extraction (free Gemini, then Claude) ───────────────────────────
 //
-// DeepSeek's hosted API (deepseek-v4-flash/-pro) is confirmed text-only — no
-// PDF/image/document input at all (checked directly against their own API
-// docs while building this: every message role's "content" is documented as
-// plain string, no multimodal content-part shape exists). So the PDF is
-// converted to plain text first (pdf-parse) and that text is what DeepSeek
-// reads — unlike Gemini, which reads the PDF's actual visual/table layout.
-//
-// This has a real, confirmed accuracy trade-off, checked against the two
-// bank sources this feature actually uses: OCBC's report is a dense data
-// table (SORA/SOFR/GDP grids) and its extracted text preserved row order
-// perfectly (verified: extracted "SORA 1.25 1.40 1.40 1.45 1.50" matched the
-// PDF exactly). UOB's report is chart/graphic-heavy, and its extracted text
-// interleaves chart axis-labels and legend text into meaningless number
-// sequences near those charts — the surrounding narrative prose still comes
-// out clean, but a model reading the raw text has to recognize and discard
-// that noise itself. The prompt below tells it to. The Gemini fallback below
-// only fires on a hard failure (no key / network / API error / empty
-// response) — it cannot detect "DeepSeek silently misread a garbled table,"
-// which no automated check can catch. The admin-review-before-publish gate
-// (is_published) is the real backstop for that residual risk, same role it
-// already plays for extractPackages.ts's rate-sheet ingestion.
+// The report's text (pdf-parse) is sent rather than the PDF: cheaper, and long
+// PDFs could pass Haiku's 100K-token price line. Chart-heavy reports extract with
+// axis labels mixed into the text, so the prompt says to discard that. The PDF
+// itself is read only when text extraction fails. No automated check catches a
+// silently misread table: admin review before publish (is_published) does.
 const SUMMARY_SYSTEM = `You are summarizing a bank's monthly research report (a "house view") for mortgage/loan advisory agents in Singapore. You are given the report's text, extracted from its PDF or web page — PDF extraction sometimes interleaves chart axis-labels or legend text into meaningless number fragments near where a chart appeared in the original document. Recognize and silently ignore any such garbled fragments; do not try to interpret or summarize them. Only use text that reads as genuine sentences, headings, or a real data table (a table has a clear row label followed by a consistent number of aligned values, e.g. "SORA 1.25 1.40 1.40 1.45 1.50" under column headers like "3Q26 4Q26 1Q27 2Q27 3Q27").
 
 Write a comprehensive but readable summary covering whatever sections the report actually contains — typically some mix of: macro/growth outlook, inflation outlook, interest rate forecast (especially SORA, SOFR, or other rate benchmarks — call out specific forecast figures and quarters when the report gives them), FX view, and any other market commentary (credit, equities, sustainability, etc.) present.
 
-Use clear section headers (plain text, e.g. "Rates Outlook:", "Macro View:") and short paragraphs or bullet points under each. Do not invent figures — only report what the document states. If the report has a rates forecast table, transcribe the key figures (e.g. SORA by quarter) rather than just describing that a table exists. Aim for genuinely useful density — a mortgage agent should be able to read this instead of opening the PDF, not just get a vague gist.`
+Use clear section headers (plain text, e.g. "Rates Outlook:", "Macro View:") and short paragraphs or bullet points under each. Do not invent figures — only report what the document states. If the report has a rates forecast table, transcribe the key figures (e.g. SORA by quarter) rather than just describing that a table exists. Aim for genuinely useful density — a mortgage agent should be able to read this instead of opening the PDF, not just get a vague gist. Start directly with the first section header: no introduction or closing remarks.`
 
-// Same OpenAI-compatible call shape as news.ts's callDeepSeek — duplicated
-// per-file rather than shared, matching that file's own established convention.
-const DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
-
-async function callDeepSeekWithText(reportText: string): Promise<string | null> {
-    const apiKey = process.env.DEEPSEEK_API_KEY
-    if (!apiKey) return null
-
-    const body = JSON.stringify({
-        model: DEEPSEEK_MODELS[0],
-        messages: [
-            { role: 'system', content: SUMMARY_SYSTEM },
-            { role: 'user', content: `Report text:\n${reportText.slice(0, 60000)}` },
-        ],
-        temperature: 0,
-        max_tokens: 4096,
-        thinking: { type: 'disabled' },
+// Published research, so free Gemini may read it. Timeouts: both must fit in 60s.
+function summarizeText(reportText: string): Promise<string | null> {
+    return callFreeFirst({
+        label: 'bankIntelligence',
+        system: SUMMARY_SYSTEM,
+        user: `Report text:\n${reportText.slice(0, 60000)}`,
+        maxTokens: 8000,
+        freeTimeoutMs: 20000,
+        timeoutMs: 30000,
     })
-
-    for (const model of DEEPSEEK_MODELS) {
-        const modelBody = model === DEEPSEEK_MODELS[0] ? body : body.replace(`"model":"${DEEPSEEK_MODELS[0]}"`, `"model":"${model}"`)
-        try {
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                res = await fetch('https://api.deepseek.com/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-                    body: modelBody,
-                    signal: AbortSignal.timeout(45000),
-                })
-                if (res.ok || (res.status !== 503 && res.status !== 429)) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 800))
-            }
-            if (!res || !res.ok) {
-                console.error(`[bankIntelligence] ${model} HTTP ${res?.status}`)
-                continue
-            }
-            const json = await res.json()
-            const text = json?.choices?.[0]?.message?.content
-            if (typeof text === 'string' && text.trim()) return text.trim()
-        } catch (err) {
-            console.error(`[bankIntelligence] ${model} threw: ${String(err)}`)
-        }
-    }
-    return null
 }
 
-// gemini-3.0-flash (extractPackages.ts's primary) was checked live against
-// Gemini's own ListModels endpoint while building this and confirmed NOT to
-// exist. Not repeating that mistake here: gemini-2.5-flash is the
-// confirmed-available choice (same as askGemini.ts's working chain).
-interface ModelDef { id: string; genExtra?: Record<string, unknown> }
-const GEMINI_MODELS: ModelDef[] = [
-    { id: 'gemini-2.5-flash',      genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-    { id: 'gemini-2.5-flash-lite', genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-]
-
-type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } }
-
-async function callGemini(parts: GeminiPart[]): Promise<string | null> {
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) return null
-
-    const basePayload = {
-        system_instruction: { parts: [{ text: SUMMARY_SYSTEM }] },
-        contents: [{ role: 'user', parts }],
-        generationConfig: { temperature: 0, maxOutputTokens: 4096 },
-    }
-
-    // Auditable outbound log, matching deepseek.ts's — every part sent to
-    // Gemini here is either a bank's own public PDF/article text or the
-    // extracted text of it; never anything from lib/google/*. Binary PDF
-    // bytes are summarized by size, not dumped, so the log stays readable.
-    console.log(`[Gemini OUTBOUND bankIntelligence] parts=${JSON.stringify(parts.map(p =>
-        'text' in p ? { text: p.text.slice(0, 300) } : { inlineData: `[pdf bytes, ${p.inlineData.data.length} base64 chars]` }
-    ))}`)
-
-    for (const { id: model, genExtra } of GEMINI_MODELS) {
-        const body = JSON.stringify(genExtra
-            ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }
-            : basePayload
-        )
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-        try {
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                res = await fetch(url, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-                    signal: AbortSignal.timeout(45000),   // PDFs take longer than a text prompt
-                })
-                // Retry only a transient 503. A 429 is Gemini's daily quota and
-                // will not recover in 800ms — retrying the SAME model just
-                // spends another unit of what ran out. This cron runs over
-                // every bank daily, so the waste compounded: with pdf-parse
-                // broken on Vercel every report fell through to here, and each
-                // burned four calls to fail four times, draining the shared key
-                // before LO extraction could touch it. Falling through to the
-                // NEXT model is still worth doing — free-tier quota is metered
-                // per model, so flash-lite can answer when flash cannot.
-                if (res.ok || res.status !== 503) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 800))
-            }
-            if (!res || !res.ok) {
-                console.error(`[bankIntelligence] ${model} HTTP ${res?.status}`)
-                // Free-tier quota is metered per MODEL, so a 429 on one does
-                // not block the next — keep going down the chain. Only the
-                // same-model retry above is skipped.
-                continue
-            }
-            const json = await res.json()
-            const text = json?.candidates?.[0]?.content?.parts?.[0]?.text
-            if (typeof text === 'string' && text.trim()) return text.trim()
-        } catch (err) {
-            console.error(`[bankIntelligence] ${model} threw: ${String(err)}`)
-        }
-    }
-    return null
+/** Reads the PDF itself, for a report whose text layer couldn't be extracted. */
+function summarizePdf(buffer: Buffer): Promise<string | null> {
+    return callFreeFirst({
+        label: 'bankIntelligence-pdf',
+        system: SUMMARY_SYSTEM,
+        user: 'Summarize this report per the instructions.',
+        files: [{ buffer, mime: 'application/pdf' }],
+        maxTokens: 8000,
+        freeTimeoutMs: 20000,
+        timeoutMs: 30000,
+    })
 }
 
-function callGeminiWithPdf(pdfBase64: string): Promise<string | null> {
-    return callGemini([
-        { inlineData: { mimeType: 'application/pdf', data: pdfBase64 } },
-        { text: 'Summarize this report per the instructions.' },
-    ])
-}
-
-function callGeminiWithText(reportText: string): Promise<string | null> {
-    return callGemini([{ text: `Report text:\n${reportText.slice(0, 60000)}` }])
-}
-
-/** Extracts a summary (DeepSeek from the report's text primarily, Gemini as
- *  fallback), stores the result. PDF sources go through pdf-parse; HSBC's
+/** Extracts a summary (from the report's text, or the PDF itself when that fails)
+ *  and stores the result. PDF sources go through pdf-parse; HSBC's
  *  plain article page is already clean HTML, no PDF step needed. */
 export async function extractSummary(reportId: string): Promise<boolean> {
     const admin = createAdminClient()
@@ -1169,30 +1049,26 @@ export async function extractSummary(reportId: string): Promise<boolean> {
         }
 
         if (!buf) {
-            if (pageText) {
-                summary = await callDeepSeekWithText(pageText)
-                if (!summary) summary = await callGeminiWithText(pageText)
-            }
+            if (pageText) summary = await summarizeText(pageText)
         } else {
             try {
                 const { PDFParse } = await import('pdf-parse')
                 const parser = new PDFParse({ data: Buffer.from(buf) })
                 const { text } = await parser.getText()
                 await parser.destroy()
-                if (text.trim()) summary = await callDeepSeekWithText(text)
+                if (text.trim()) summary = await summarizeText(text)
             } catch (err) {
-                console.error('[bankIntelligence] pdf-parse/DeepSeek path threw:', String(err))
+                console.error('[bankIntelligence] pdf-parse path threw:', String(err))
             }
 
             if (!summary) {
-                const base64 = Buffer.from(buf).toString('base64')
-                summary = await callGeminiWithPdf(base64)
+                summary = await summarizePdf(Buffer.from(buf))
             }
         }
 
         if (!summary) {
             await admin.from('bank_intelligence_reports')
-                .update({ extraction_error: 'Both DeepSeek and Gemini extraction failed or returned empty', updated_at: new Date().toISOString() })
+                .update({ extraction_error: 'AI summary failed or returned empty', updated_at: new Date().toISOString() })
                 .eq('id', reportId)
             return false
         }

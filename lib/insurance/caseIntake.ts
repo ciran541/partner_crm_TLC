@@ -13,7 +13,7 @@
 import type { CaseType, PipelineStage } from '@/lib/types'
 import { CREATABLE_STAGES, OPEN_STAGES } from '@/lib/insurance/stages'
 import { todaySgt } from '@/lib/insurance/promotions'
-import { defaultNewCaseFollowUp } from '@/lib/insurance/followUps'
+import { defaultNewCaseFollowUp, followUpLimit } from '@/lib/insurance/followUps'
 import { LEAD_SOURCES, matchLeadSource, type LeadSource } from '@/lib/insurance/leadSources'
 
 // ─── Options ─────────────────────────────────────────────────────────────────
@@ -346,6 +346,10 @@ export function validateIntake(
     }
     const lock_in_end_date = date('lock_in_end_date', 'Lock-in end date')
     const follow_up_date = date('follow_up_date', 'Follow-up date')
+    const fuLimit = followUpLimit({ stage: stage ?? DEFAULT_STAGE, lock_in_end_date }, todaySgt())
+    if (follow_up_date && fuLimit && follow_up_date > fuLimit) {
+        fail('follow_up_date', `Follow-up can't be later than ${fuLimit.split('-').reverse().join('/')} (2 months before the lock-in ends)`)
+    }
 
     const property_type = matchPropertyType(raw.property_type)
     if (property_type === null) fail('property_type', `Property type "${text(raw.property_type)}" isn't one of: ${INTAKE_PROPERTY_TYPES.join(', ')}`)

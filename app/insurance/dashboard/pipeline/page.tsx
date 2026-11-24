@@ -6,7 +6,7 @@ import Skeleton from '@/components/shared/Skeleton'
 import MonthPicker, { YearPicker, compact } from '@/components/insurance/shared/MonthPicker'
 import { todaySgt } from '@/lib/insurance/promotions'
 import {
-    performance, monthPerformance, monthlyTrend, sourceBreakdown, cohort,
+    performance, monthPerformance, monthlyTrend, sourceBreakdown, laterClosingsLabel, cohort, lostReasons, comingDue,
     type DashboardData, type TrendMetric,
 } from '@/lib/insurance/dashboardStats'
 
@@ -20,14 +20,19 @@ import {
  *                             LINKED: tapping a month's bar switches section 1 to
  *                             that month (vs the same month last year); "Show all
  *                             of <year>" goes back. No second month control.
- *   3. Lead sources         — one ranked list: closings per source (bar) + the
- *                             same-cohort leads / won / conversion beside it.
+ *   3. Lead sources         — one ranked list of the year's leads: bar = won (blue =
+ *                             closed that year, red = closed later), with leads /
+ *                             won / open / conversion beside it.
  *                             Replaces the concept's pie + table: 8 slices can't be
  *                             compared or told apart (colour-blind agents), a
  *                             ranked bar per source can.
  *   4. Conversion           — leads by the month they were first activated
  *                             (month tiles, same picker as Closed Won / Earnings),
  *                             won / lost / still open; provisional while open.
+ *
+ *   5. Why deals are lost   — Closed Lost reasons, ranked (all time or the page's year)
+ *   6. Business coming due  — past clients' loans by lock-in end month, next 12 months
+ *                             (always from today, so it ignores the year picker)
  *
  * All maths: lib/insurance/dashboardStats.ts (tested). Data: GET /api/insurance/dashboard.
  */
@@ -40,6 +45,7 @@ const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 const C = {
     thisYear: '#03a9e7',     // brand cyan
     lastYear: '#cbd5e1',     // recessive ghost
+    later: '#e34948',        // this year's leads closed in a later year
     won: '#1baf7a',
     lost: '#eb6834',
     open: '#cbd5e1',
@@ -64,7 +70,7 @@ export default function DashboardPage() {
         let alive = true
         fetch('/api/insurance/dashboard')
             .then(r => (r.ok ? r.json() : Promise.reject(new Error('load'))))
-            .then(d => { if (alive) setData({ closed: d.closed ?? [], leads: d.leads ?? [] }) })
+            .then(d => { if (alive) setData({ won_by_year: d.won_by_year ?? [], closed: d.closed ?? [], leads: d.leads ?? [], lost: d.lost ?? [], coming_due: d.coming_due ?? [] }) })
             .catch(() => { if (alive) setError('Could not load your dashboard. Please refresh.') })
         return () => { alive = false }
     }, [])
@@ -82,7 +88,7 @@ export default function DashboardPage() {
             <div className="flex items-end justify-between gap-3 flex-wrap">
                 <div>
                     <h1 className="ios-page-title flex items-center gap-2"><BarChart3 size={24} /> Dashboard</h1>
-                    <p className="page-subtitle">How your business is doing: production, lead sources and conversion.</p>
+                    <p className="page-subtitle">How your business is doing, and what&apos;s coming.</p>
                 </div>
                 <div className="card px-2 py-1"><YearPicker year={year} years={years} maxYear={thisYear} onChange={pickYear} /></div>
             </div>
@@ -101,6 +107,8 @@ export default function DashboardPage() {
                     <Sources data={data} year={year} />
                     <Conversion data={data} year={year} currentMonth={currentMonth} years={years}
                         scope={cohortScope} onScope={s => { setCohortScope(s); if (s !== 'all') setYear(Number(s.slice(0, 4))) }} />
+                    <Lost data={data} year={year} />
+                    <ComingDue data={data} currentMonth={currentMonth} />
                 </>
             )}
         </div>
@@ -263,30 +271,39 @@ function bar(x: number, yTop: number, w: number, h: number): string {
 
 function Sources({ data, year }: { data: DashboardData; year: number }) {
     const rows = sourceBreakdown(data, year)
-    const maxClosed = Math.max(1, ...rows.map(r => r.closedCases))
-    const totalClosed = rows.reduce((s, r) => s + r.closedCases, 0)
+    const maxWon = Math.max(1, ...rows.map(r => r.closedCases + r.laterCases))
+    const laterLabel = laterClosingsLabel(data, year)
     const notSet = rows.find(r => r.source === 'not_set')
 
     return (
         <Section title={`Lead sources · ${year}`} subtitle="Which channels bring you business, and how well each one converts.">
             {rows.length === 0 ? (
-                <p className="text-sm text-slate-500 py-4 text-center">No leads or closings in {year} yet.</p>
+                <p className="text-sm text-slate-500 py-4 text-center">No leads in {year} yet.</p>
             ) : (
                 <div>
                     <div className="hidden md:grid grid-cols-[1.3fr_2fr_70px_70px_60px_90px] gap-3 px-1 pb-2 text-[11px] font-bold text-slate-500 uppercase tracking-wide border-b border-slate-100">
-                        <span>Source</span><span>Closed in {year}</span><span className="text-right">Leads</span><span className="text-right">Won</span><span className="text-right">Open</span><span className="text-right">Conversion</span>
+                        <span>Source</span><span className="flex gap-4">
+                            <span className="text-[#0369a1]">Closed in {year}</span>
+                            {laterLabel && <span className="text-red-600">{laterLabel}</span>}
+                        </span><span className="text-right">Leads</span><span className="text-right">Won</span><span className="text-right">Open</span><span className="text-right">Conversion</span>
                     </div>
+                    <p className="md:hidden flex gap-4 pb-1 text-xs font-bold">
+                        <span className="text-[#0369a1]">Closed in {year}</span>
+                        {laterLabel && <span className="text-red-600">{laterLabel}</span>}
+                    </p>
                     {rows.map(r => (
                         <div key={r.source} className="grid grid-cols-[1fr_auto] md:grid-cols-[1.3fr_2fr_70px_70px_60px_90px] gap-x-3 gap-y-1.5 items-center px-1 py-3 border-b border-slate-50 last:border-b-0">
                             <p className={`text-sm font-semibold ${r.source === 'not_set' ? 'text-slate-400' : 'text-slate-800'}`}>{r.label}</p>
                             {/* conversion sits top-right on narrow screens */}
                             <p className="md:hidden text-right text-sm font-bold text-[#052d4a]">{pct(r.conversionPct)}</p>
                             <div className="col-span-2 md:col-span-1 flex items-center gap-2">
-                                <div className="flex-1 h-2.5 rounded-full bg-slate-100 overflow-hidden">
-                                    <div className="h-full rounded-full" style={{ width: `${(r.closedCases / maxClosed) * 100}%`, background: r.source === 'not_set' ? '#cbd5e1' : C.thisYear }} />
+                                <div className="flex-1 h-2.5 rounded-full bg-slate-100 overflow-hidden flex gap-[2px]">
+                                    {r.closedCases > 0 && <div className="h-full" title={`Closed in ${year}: ${r.closedCases}`} style={{ width: `${(r.closedCases / maxWon) * 100}%`, background: r.source === 'not_set' ? '#94a3b8' : C.thisYear }} />}
+                                    {r.laterCases > 0 && <div className="h-full" title={`${laterLabel}: ${r.laterCases}`} style={{ width: `${(r.laterCases / maxWon) * 100}%`, background: C.later }} />}
                                 </div>
-                                <span className="text-xs text-slate-600 w-[92px] text-right tabular-nums">
-                                    {r.closedCases} · {r.closedVolume > 0 ? compact(r.closedVolume) : '$0'}
+                                <span className="text-xs w-[92px] text-right tabular-nums">
+                                    <span className="block text-slate-600">{r.closedCases} · {r.closedVolume > 0 ? compact(r.closedVolume) : '$0'}</span>
+                                    {r.laterCases > 0 && <span className="block text-red-600">{r.laterCases} · {compact(r.laterVolume)}</span>}
                                 </span>
                             </div>
                             <p className="md:hidden col-span-2 text-xs text-slate-500">{r.leads} leads · {r.won} won · {r.open} still open</p>
@@ -299,8 +316,8 @@ function Sources({ data, year }: { data: DashboardData; year: number }) {
                     <div className="mt-3 rounded-xl bg-slate-50 px-3.5 py-2.5 text-[11px] text-slate-600 leading-relaxed flex gap-2">
                         <Info size={13} className="shrink-0 mt-0.5 text-slate-400" />
                         <span>
-                            <b>Closed in {year}</b>: {totalClosed} case{totalClosed === 1 ? '' : 's'} marked Closed Won this year, by source.{' '}
-                            <b>Leads / Won / Conversion</b>: leads first activated in {year}, and how many of those same leads have been won so far.
+                            All figures follow leads first activated in {year}. <b className="text-[#0369a1]">Blue</b>: closed in {year}.{' '}
+                            <b className="text-red-600">Red</b>: closed in a later year, still counted towards {year}&apos;s conversion.
                             {notSet && <> &ldquo;Not set&rdquo; are cases without a lead source; add one on the case page to sharpen these figures.</>}
                         </span>
                     </div>
@@ -386,4 +403,74 @@ function Conversion({ data, year, currentMonth, years, scope, onScope }: {
 
 function Legend({ color, text }: { color: string; text: string }) {
     return <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: color }} /> {text}</span>
+}
+
+// ─── 5. Why deals are lost ───────────────────────────────────────────────────
+
+function Lost({ data, year }: { data: DashboardData; year: number }) {
+    const [allTime, setAllTime] = useState(true)
+    const lost = data.lost ?? []
+    const rows = lostReasons(lost, allTime ? null : year)
+    const total = rows.reduce((s, r) => s + r.cases, 0)
+    const undated = lost.filter(r => !r.month).reduce((s, r) => s + Number(r.cases), 0)
+    return (
+        <Section title="Why deals are lost" subtitle={`${total} case${total === 1 ? '' : 's'} marked Closed Lost${allTime ? '' : ` in ${year}`}, by reason.`}
+            action={
+                <div className="flex gap-1 p-1 rounded-xl bg-slate-100">
+                    {[true, false].map(v => (
+                        <button key={String(v)} type="button" onClick={() => setAllTime(v)} aria-pressed={allTime === v}
+                            className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${allTime === v ? 'bg-white text-[#052d4a] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                            {v ? 'All time' : year}
+                        </button>
+                    ))}
+                </div>
+            }>
+            {rows.length === 0 ? (
+                <p className="text-sm text-slate-500 py-4 text-center">No lost deals{allTime ? '' : ` recorded in ${year}`}.</p>
+            ) : rows.map(r => (
+                <div key={r.reason} className="grid grid-cols-[1fr_auto] md:grid-cols-[1.4fr_2fr_150px] gap-x-3 gap-y-1.5 items-center">
+                    <p className="text-sm font-semibold text-slate-800">{r.reason}</p>
+                    <p className="text-sm text-right tabular-nums text-slate-700 md:order-3"><b className="text-[#052d4a]">{r.cases}</b> ({r.pct.toFixed(0)}%) · {compact(r.loanVolume)}</p>
+                    <div className="col-span-2 md:col-span-1 md:order-2 h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${(r.cases / rows[0].cases) * 100}%`, background: C.lost }} />
+                    </div>
+                </div>
+            ))}
+            {!allTime && undated > 0 && (
+                <p className="text-[11px] text-slate-500 flex gap-2"><Info size={13} className="shrink-0 mt-0.5 text-slate-400" />{undated} case{undated === 1 ? ' was' : 's were'} lost before HUB recorded the date, so {undated === 1 ? 'it shows' : 'they show'} under All time only.</p>
+            )}
+        </Section>
+    )
+}
+
+// ─── 6. Business coming due ──────────────────────────────────────────────────
+
+function ComingDue({ data, currentMonth }: { data: DashboardData; currentMonth: string }) {
+    const rows = comingDue(data.coming_due ?? [], currentMonth)
+    const total = rows.reduce((s, r) => s + r.loan_volume, 0)
+    const cases = rows.reduce((s, r) => s + r.cases, 0)
+    const max = Math.max(1, ...rows.map(r => r.loan_volume))
+    return (
+        <Section title="Business coming due" subtitle="Past clients (Closed Won and Inactive) by the month their lock-in ends, next 12 months.">
+            {cases === 0 ? (
+                <p className="text-sm text-slate-500 py-4 text-center">No lock-ins ending in the next 12 months.</p>
+            ) : (
+                <>
+                    <p className="text-sm text-slate-600"><b className="text-2xl font-extrabold text-[#052d4a] mr-1.5">{compact(total)}</b>across {cases} client{cases === 1 ? '' : 's'}</p>
+                    <div className="space-y-2">
+                        {rows.map(r => (
+                            <div key={r.month} className="grid grid-cols-[72px_1fr_118px] gap-3 items-center">
+                                <p className={`text-sm ${r.cases ? 'font-semibold text-slate-800' : 'text-slate-400'}`}>{MONTHS[Number(r.month.slice(5)) - 1]} {r.month.slice(0, 4)}</p>
+                                <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+                                    <div className="h-full rounded-full" style={{ width: `${(r.loan_volume / max) * 100}%`, background: C.thisYear }} />
+                                </div>
+                                <p className={`text-sm text-right tabular-nums ${r.cases ? 'text-slate-700' : 'text-slate-300'}`}>{r.cases ? <><b className="text-[#052d4a]">{compact(r.loan_volume)}</b> · {r.cases} client{r.cases === 1 ? '' : 's'}</> : '—'}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-[11px] text-slate-500 flex gap-2"><Info size={13} className="shrink-0 mt-0.5 text-slate-400" />Closed Won clients use the projected balance at lock-in end. Live cases and clients already revisited aren&apos;t counted.</p>
+                </>
+            )}
+        </Section>
+    )
 }

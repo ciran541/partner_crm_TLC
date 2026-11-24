@@ -22,7 +22,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { sendToPrivyr } from '@/lib/privyr/sendToPrivyr'
 import { sendClientLoanReminder } from '@/lib/email/sendClientLoanReminder'
 import { todaySgt } from '@/lib/insurance/promotions'
-import { addDays, addMonths, reminderDue, REMINDER_CATCH_UP_DAYS } from '@/lib/insurance/followUps'
+import { addDays, caseLockInEnd, reminderDue, REMINDER_CATCH_UP_DAYS } from '@/lib/insurance/followUps'
 import type { ClosedWonData } from '@/lib/types'
 
 export interface InsuranceFollowUpResult {
@@ -79,9 +79,7 @@ export async function processInsuranceFollowUps(): Promise<InsuranceFollowUpResu
         result.processed++
 
         const cw = (c.closed_won_data ?? {}) as ClosedWonData
-        const lockInEnd = cw.closed_at && cw.package?.lockin_years
-            ? addMonths(cw.closed_at, cw.package.lockin_years * 12)
-            : c.lock_in_end_date ?? null
+        const lockInEnd = caseLockInEnd(c)
         const bank = cw.bank ?? c.current_bank ?? null
         let delivered = false
 

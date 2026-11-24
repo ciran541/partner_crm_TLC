@@ -45,6 +45,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
  *   followUpTo=      follow_up_date <= YYYY-MM-DD  (the "overdue" half)
  *   followUpAfter=   follow_up_date >  YYYY-MM-DD  (the "upcoming" half)
  *   missingFollowUp= 'true' for cases that still need a follow-up date (Action Centre)
+ *   bankerName= / bankerBank=  only cases referred to this banker (Track)
  *   closedMonth=     YYYY-MM or YYYY — Closed Won cases closed in that month / year (SGT)
  *   lockInFrom= / lockInTo=  lock_in_end_date window, YYYY-MM-DD
  *   bucket=          'all' (any case with a commission bucket) | open |
@@ -125,6 +126,10 @@ export async function GET(request: Request) {
         p_follow_up_after: param(searchParams, 'followUpAfter'),
         p_missing_follow_up: searchParams.get('missingFollowUp') === 'true',
         p_closed_month: param(searchParams, 'closedMonth'),
+        ...(param(searchParams, 'bankerName') ? {
+            p_banker_name: param(searchParams, 'bankerName'),
+            p_banker_bank: searchParams.get('bankerBank') ?? '',
+        } : {}),
         p_lock_in_from: param(searchParams, 'lockInFrom'),
         p_lock_in_to: param(searchParams, 'lockInTo'),
         p_bucket: param(searchParams, 'bucket'),

@@ -32,12 +32,14 @@
  * client's mortgage, not just a display value.
  *
  * TWO LANES, chosen by whether real text comes out — not by file extension:
- *   PDF with a text layer  -> pdf-parse -> DeepSeek   (primary)
- *   image, or PDF that parsed empty -> Gemini vision (only lane that can read it)
+ *   PDF with a text layer  -> pdf-parse -> Claude reads the text   (primary)
+ *   image, or PDF that parsed empty -> Claude reads the pages
  *
  * Returns null on any failure so the caller can surface a clean error and the
  * agent just fills the form by hand — extraction never blocks submission.
  */
+
+import { callClaude, CLAUDE_MODEL, CLAUDE_VISION_MODEL } from '@/lib/ai/claude'
 
 export const LO_ACCEPTED_MIME = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] as const
 
@@ -143,47 +145,6 @@ OUTPUT SHAPE — return exactly this structure. A single-facility LO still uses 
   "notes": []
 }`
 
-const RESPONSE_SCHEMA = {
-    type: 'object',
-    properties: {
-        loans: {
-            type: 'array',
-            items: {
-                type: 'object',
-                properties: {
-                    label: { type: 'string' },
-                    amount: { type: 'string' },
-                    tenure: { type: 'string' },
-                },
-                required: ['amount'],
-            },
-        },
-        schedule: {
-            type: 'array',
-            items: {
-                type: 'object',
-                properties: {
-                    year: { type: 'integer' },
-                    thereafter: { type: 'boolean' },
-                    type: { type: 'string', enum: ['fixed', 'floating'] },
-                    rate_text: { type: 'string' },
-                    rate: { type: 'number' },
-                    reference: { type: 'string' },
-                    spread: { type: 'number' },
-                },
-                required: ['type', 'rate_text'],
-            },
-        },
-        lockin_years: { type: 'integer' },
-        bank: { type: 'string' },
-        property_address: { type: 'string' },
-        lo_date: { type: 'string' },
-        subsidy: { type: 'string' },
-        notes: { type: 'array', items: { type: 'string' } },
-    },
-    required: ['schedule'],
-}
-
 const USER_PREFIX = 'Transcribe this Letter of Offer per the instructions. Return JSON only.'
 
 // ─── Wall-clock budget ────────────────────────────────────────────────────────
@@ -203,125 +164,37 @@ function callTimeout(deadline: number, cap: number): number | null {
     return Math.min(cap, left)
 }
 
-// ─── Lane 1: DeepSeek (text) ──────────────────────────────────────────────────
-const DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
-
-async function callDeepSeek(loText: string, deadline: number): Promise<string | null> {
-    const apiKey = process.env.DEEPSEEK_API_KEY
-    if (!apiKey) return null
-
-    for (const model of DEEPSEEK_MODELS) {
-        const body = JSON.stringify({
-            model,
-            messages: [
-                { role: 'system', content: SYSTEM_INSTRUCTION },
-                { role: 'user', content: `${USER_PREFIX}\n\nLetter of Offer text:\n${loText.slice(0, 60000)}` },
-            ],
-            temperature: 0,
-            max_tokens: 4096,
-            thinking: { type: 'disabled' },
-            response_format: { type: 'json_object' },
-        })
-        try {
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const timeout = callTimeout(deadline, 20000)
-                if (timeout == null) return null
-                res = await fetch('https://api.deepseek.com/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-                    body,
-                    signal: AbortSignal.timeout(timeout),
-                })
-                if (res.ok || (res.status !== 503 && res.status !== 429)) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 800))
-            }
-            if (!res || !res.ok) {
-                console.error(`[extractLetterOfOffer] deepseek ${model} HTTP ${res?.status}`)
-                continue
-            }
-            const json = await res.json()
-            const text = json?.choices?.[0]?.message?.content
-            if (typeof text === 'string' && text.trim()) return text
-        } catch (err) {
-            console.error(`[extractLetterOfOffer] deepseek ${model} threw: ${String(err)}`)
-        }
+// ─── Model call ───────────────────────────────────────────────────────────────
+// Both lanes: the text lane sends extracted text, the vision lane sends the
+// pages themselves. Marked sensitive because an LO is client data.
+async function readLo(
+    input: { text: string } | { files: LoFile[] },
+    deadline: number,
+    cap: number,
+): Promise<string | null> {
+    const timeoutMs = callTimeout(deadline, cap)
+    if (timeoutMs == null) return null
+    const files = 'files' in input ? input.files : []
+    let user = USER_PREFIX
+    if ('text' in input) {
+        user = `${USER_PREFIX}\n\nLetter of Offer text:\n${input.text.slice(0, 60000)}`
+    } else if (files.length > 1) {
+        user = `${USER_PREFIX}\n\nThe ${files.length} images above are consecutive pages of ONE Letter of Offer, in order. Read them together as a single document.`
     }
-    return null
-}
-
-// ─── Lane 2: Gemini (vision) ──────────────────────────────────────────────────
-interface ModelDef { id: string; genExtra?: Record<string, unknown> }
-const GEMINI_MODELS: ModelDef[] = [
-    { id: 'gemini-2.5-flash', genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-    { id: 'gemini-2.5-flash-lite', genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-]
-
-async function callGeminiVision(file: LoFile, deadline: number): Promise<string | null> {
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) return null
-
-    const keyFingerprint = `key ...${apiKey.slice(-4)} (len ${apiKey.length})`
-
-    const basePayload = {
-        system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-        contents: [{
-            role: 'user',
-            parts: [
-                { inlineData: { mimeType: file.mime, data: file.buffer.toString('base64') } },
-                { text: USER_PREFIX },
-            ],
-        }],
-        generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 4096,
-            responseMimeType: 'application/json',
-            responseSchema: RESPONSE_SCHEMA,
-        },
-    }
-
-    // Auditable outbound log, matching deepseek.ts's and bankIntelligence.ts's
-    // — the only part sent here is the page image the agent uploaded to this
-    // case, plus this function's own fixed instruction text; never anything
-    // from lib/google/*. Image bytes are summarized by type, not dumped.
-    console.log(`[Gemini OUTBOUND extractLetterOfOffer] mimeType=${file.mime} instruction="${USER_PREFIX.slice(0, 200)}"`)
-
-    for (const { id: model, genExtra } of GEMINI_MODELS) {
-        const body = JSON.stringify(genExtra
-            ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }
-            : basePayload
-        )
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-        try {
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const timeout = callTimeout(deadline, 30000)
-                if (timeout == null) return null
-                res = await fetch(url, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-                    signal: AbortSignal.timeout(timeout),
-                })
-                if (res.ok || res.status !== 503) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 800))
-            }
-            if (!res || !res.ok) {
-                const detail = res ? await res.text().catch(() => '') : ''
-                console.error(`[extractLetterOfOffer] gemini ${model} HTTP ${res?.status} ${keyFingerprint} ${detail.slice(0, 800)}`)
-                if (res?.status === 429) lastFailure = 'rate_limited'
-                continue
-            }
-            const json = await res.json()
-            const finish = json?.candidates?.[0]?.finishReason
-            if (finish && finish !== 'STOP') {
-                console.error(`[extractLetterOfOffer] gemini ${model} stopped early: ${finish}`)
-            }
-            const text = json?.candidates?.[0]?.content?.parts?.[0]?.text
-            if (typeof text === 'string' && text.trim()) return text
-        } catch (err) {
-            console.error(`[extractLetterOfOffer] gemini ${model} threw: ${String(err)}`)
-        }
-    }
-    return null
+    const { text, failure } = await callClaude({
+        label: 'extractLetterOfOffer',
+        system: SYSTEM_INSTRUCTION,
+        user,
+        files,
+        // A poor scan can be misread by a digit: the agent must check the amount.
+        model: files.length ? CLAUDE_VISION_MODEL : CLAUDE_MODEL,
+        // Headroom: a truncated reply loses the whole read, and thinking counts.
+        maxTokens: 12000,
+        timeoutMs,
+        sensitive: true,
+    })
+    if (failure === 'rate_limited' || failure === 'account') lastFailure = failure
+    return text
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -335,8 +208,8 @@ export interface LoFile {
  * Why the last extraction failed, when the reason is actionable — same
  * pattern as extractLoanOffer.ts's rate-limit signal.
  */
-let lastFailure: 'rate_limited' | null = null
-export function takeLastFailure(): 'rate_limited' | null {
+let lastFailure: 'rate_limited' | 'account' | null = null
+export function takeLastFailure(): 'rate_limited' | 'account' | null {
     const f = lastFailure
     lastFailure = null
     return f
@@ -362,7 +235,7 @@ export async function extractLetterOfOffer(file: LoFile): Promise<ExtractedLo | 
         console.log(`[extractLetterOfOffer] pdf-parse extracted ${trimmed.length} chars`)
 
         if (trimmed.length >= MIN_PDF_TEXT_CHARS) {
-            const raw = await callDeepSeek(trimmed, Math.min(deadline, Date.now() + TEXT_LANE_MS))
+            const raw = await readLo({ text: trimmed }, deadline, TEXT_LANE_MS)
             const parsed = raw && safeParse(raw)
             if (parsed) {
                 const result = normalize(parsed, 'pdf-text')
@@ -377,7 +250,7 @@ export async function extractLetterOfOffer(file: LoFile): Promise<ExtractedLo | 
         }
     }
 
-    const raw = await callGeminiVision(file, deadline)
+    const raw = await readLo({ files: [file] }, deadline, 40_000)
     const parsed = raw && safeParse(raw)
     if (parsed) {
         const result = normalize(parsed, 'vision')

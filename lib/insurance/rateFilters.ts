@@ -14,6 +14,13 @@ export function fixedRateYears(pkg: MortgagePackage): number {
     return pkg.rate_schedule.filter(e => e.type === 'fixed' && !e.thereafter).length
 }
 
+/** Banks offered in the Rates page's Priority / Privilege Banking filter. Names must
+ *  match `mortgage_packages.bank`. Finance companies (Hong Leong, Singapura) are left out. */
+export const PRIORITY_BANK_OPTIONS = [
+    'DBS', 'OCBC', 'UOB', 'Standard Chartered', 'Maybank', 'HSBC', 'Citibank',
+    'Bank of China', 'CIMB', 'RHB', 'State Bank of India',
+] as const
+
 /** Parse a priority-customer minimum loan size from min_loan_note.
  *  Looks for patterns like "Priority Banking: min $300K" or "Privilege: min $500K". */
 export function parsePriorityMin(note: string | null | undefined): number | null {

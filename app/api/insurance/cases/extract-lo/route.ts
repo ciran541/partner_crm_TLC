@@ -11,6 +11,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { isClaudeConfigured } from '@/lib/ai/claude'
 import { requireInsuranceUser } from '@/lib/auth/requireInsuranceUser'
 import { extractLoanOffer, takeLastFailure, LO_ACCEPTED_MIME } from '@/lib/insurance/extractLoanOffer'
 import { CLOSED_LOAN_LABELS } from '@/lib/insurance/closedWon'
@@ -36,18 +37,12 @@ export async function POST(request: Request) {
     // it". Both used to surface as the same generic 422, which is impossible to
     // act on — and the keys living in a local .env.local that never deploys is
     // exactly how a feature works locally and silently does nothing in prod.
-    const hasDeepSeek = !!process.env.DEEPSEEK_API_KEY
-    const hasGemini = !!process.env.GEMINI_API_KEY
-    if (!hasDeepSeek && !hasGemini) {
-        console.error('[extract-lo] no AI keys configured — set DEEPSEEK_API_KEY and GEMINI_API_KEY')
+    if (!isClaudeConfigured()) {
+        console.error('[extract-lo] ANTHROPIC_API_KEY is not set')
         return NextResponse.json(
-            { error: 'Document reading is not configured on this server. Ask your admin to set the AI keys.' },
+            { error: 'Document reading is not configured on this server. Ask your admin to set the AI key.' },
             { status: 503 },
         )
-    }
-    // Images and scanned PDFs can ONLY be read by the vision lane.
-    if (!hasGemini) {
-        console.warn('[extract-lo] GEMINI_API_KEY missing — images and scanned PDFs cannot be read')
     }
 
     let form: FormData
@@ -73,14 +68,6 @@ export async function POST(request: Request) {
         if (!LO_ACCEPTED_MIME.includes(file.type as typeof LO_ACCEPTED_MIME[number])) {
             return NextResponse.json({ error: 'Only PDF, JPEG, PNG or WebP files can be read.' }, { status: 415 })
         }
-    }
-    // Only Gemini can read pixels. Without it an image upload would run the
-    // whole pipeline and fail with a generic "couldn't read this file".
-    if (!hasGemini && uploads.some(f => f.type.startsWith('image/'))) {
-        return NextResponse.json(
-            { error: 'Reading photos and screenshots is not configured on this server. Upload the PDF instead, or ask your admin to set GEMINI_API_KEY.' },
-            { status: 503 },
-        )
     }
 
     const totalBytes = uploads.reduce((sum, f) => sum + f.size, 0)
@@ -108,13 +95,16 @@ export async function POST(request: Request) {
         })))
         const data = await extractLoanOffer(pages, kinds)
         if (!data) {
-            // A spent daily quota is a wait-or-upgrade problem, not a bad
+            // A busy service or an empty AI balance is not a bad
             // document — saying "couldn't read this file" would send the agent
             // hunting for a better scan that was never the issue.
-            if (takeLastFailure() === 'rate_limited') {
+            const failure = takeLastFailure()
+            if (failure) {
                 return NextResponse.json(
-                    { error: "The document-reading service has hit today's usage limit. Enter the details manually, or try again tomorrow." },
-                    { status: 429 },
+                    failure === 'account'
+                        ? { error: 'Document reading is unavailable right now. Enter the details manually and let your admin know.' }
+                        : { error: 'Document reading is busy right now. Try again in a minute, or enter the details manually.' },
+                    { status: failure === 'account' ? 503 : 429 },
                 )
             }
             return NextResponse.json(

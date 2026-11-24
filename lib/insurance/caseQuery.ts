@@ -50,6 +50,9 @@ export interface CaseQuery {
     missingFollowUp?: boolean
     /** Closed Won cases closed in this month 'YYYY-MM' or year 'YYYY' (SGT) — the Closed Won tab. */
     closedMonth?: string
+    /** Only cases referred to this banker (Track). */
+    bankerName?: string
+    bankerBank?: string
     lockInFrom?: string
     lockInTo?: string
     /**
@@ -89,6 +92,7 @@ export function buildCaseParams(q: CaseQuery, cursor: string | null): URLSearchP
     if (q.followUpAfter) p.set('followUpAfter', q.followUpAfter)
     if (q.missingFollowUp) p.set('missingFollowUp', 'true')
     if (q.closedMonth) p.set('closedMonth', q.closedMonth)
+    if (q.bankerName) { p.set('bankerName', q.bankerName); p.set('bankerBank', q.bankerBank ?? '') }
     if (q.lockInFrom) p.set('lockInFrom', q.lockInFrom)
     if (q.lockInTo) p.set('lockInTo', q.lockInTo)
     if (q.bucket) p.set('bucket', q.bucket)

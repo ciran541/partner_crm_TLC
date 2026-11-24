@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { performance, monthPerformance, monthlyTrend, sourceBreakdown, cohort, type DashboardData } from '../dashboardStats'
+import { performance, monthPerformance, monthlyTrend, sourceBreakdown, cohort, lostReasons, comingDue, laterClosingsLabel, type DashboardData } from '../dashboardStats'
 
 const data: DashboardData = {
     closed: [
@@ -14,6 +14,12 @@ const data: DashboardData = {
         { month: '2026-10', source: 'referral', activated: 4, won: 2, lost: 2, open: 0 },
         { month: '2026-11', source: 'social_media', activated: 6, won: 0, lost: 0, open: 6 },
         { month: '2025-10', source: 'referral', activated: 5, won: 3, lost: 2, open: 0 },
+    ],
+    won_by_year: [
+        { year: 2026, closed_year: 2026, source: 'social_media', cases: 1, loan_volume: 400_000 },
+        { year: 2026, closed_year: 2027, source: 'social_media', cases: 1, loan_volume: 500_000 },
+        { year: 2026, closed_year: 2024, source: 'referral', cases: 2, loan_volume: 600_000 },   // backdated closing
+        { year: 2025, closed_year: 2026, source: 'referral', cases: 3, loan_volume: 900_000 },
     ],
 }
 
@@ -47,21 +53,28 @@ describe('monthlyTrend', () => {
 })
 
 describe('sourceBreakdown', () => {
-    it('closings by closing year; conversion from the SAME activation cohort', () => {
+    it('splits the year\'s leads into closed the same year and closed later; together they are Won', () => {
         const rows = sourceBreakdown(data, 2026)
         const social = rows.find(r => r.source === 'social_media')!
-        expect(social.closedCases).toBe(2)
+        expect(social).toMatchObject({ closedCases: 1, closedVolume: 400_000, laterCases: 1, laterVolume: 500_000 })
+        expect(social.closedCases + social.laterCases).toBe(social.won)
         expect(social.leads).toBe(16)
         expect(social.won).toBe(2)
         expect(social.conversionPct).toBeCloseTo(12.5)
         const referral = rows.find(r => r.source === 'referral')!
-        expect(referral.closedCases).toBe(1)          // the 2025 closings don't count in 2026
+        expect(referral).toMatchObject({ closedCases: 2, laterCases: 0 })   // 2025's leads closed in 2026 stay in 2025
+        expect(sourceBreakdown(data, 2025)[0]).toMatchObject({ closedCases: 0, laterCases: 3 })
         expect(referral.conversionPct).toBe(50)       // 2 of the 4 leads activated in 2026
     })
     it('"Not set" is shown, and always last', () => {
-        const rows = sourceBreakdown(data, 2026)
-        expect(rows[rows.length - 1].source).toBe('not_set')
-        expect(rows[0].source).toBe('social_media')   // most closings first
+        const leads = [...data.leads, { month: '2026-09', source: 'not_set', activated: 9, won: 9, lost: 0, open: 0 }]
+        const rows = sourceBreakdown({ ...data, leads }, 2026)
+        expect(rows.map(r => r.source)).toEqual(['social_media', 'referral', 'not_set'])
+    })
+    it('names the later year only when there is one', () => {
+        expect(laterClosingsLabel(data, 2026)).toBe('Closed in 2027')
+        expect(laterClosingsLabel({ ...data, won_by_year: [...data.won_by_year!, { year: 2026, closed_year: 2028, source: 'referral', cases: 1, loan_volume: 1 }] }, 2026)).toBe('Closed in 2027 onwards')
+        expect(laterClosingsLabel(data, 2024)).toBeNull()
     })
 })
 
@@ -90,5 +103,31 @@ describe('monthPerformance (tap a month on the trend chart)', () => {
         expect(p).toMatchObject({ loanVolume: 1_200_000, cases: 3, averageLoan: 400_000 })
         expect(p.yoyGrowthPct).toBeCloseTo(20)
         expect(monthPerformance(closed, '2026-05').yoyGrowthPct).toBeNull()   // nothing in May 2025
+    })
+})
+
+describe('lostReasons', () => {
+    const lost = [
+        { month: null, reason: 'Other', cases: 1, loan_volume: 100 },
+        { month: '2026-11', reason: 'Rate not competitive enough', cases: 2, loan_volume: 900 },
+        { month: '2026-12', reason: 'Rate not competitive enough', cases: 1, loan_volume: 100 },
+    ]
+    it('all time includes undated; a year only counts dated ones', () => {
+        expect(lostReasons(lost, null)).toEqual([
+            { reason: 'Rate not competitive enough', cases: 3, loanVolume: 1000, pct: 75 },
+            { reason: 'Other', cases: 1, loanVolume: 100, pct: 25 },
+        ])
+        expect(lostReasons(lost, 2026).map(r => r.reason)).toEqual(['Rate not competitive enough'])
+        expect(lostReasons([], null)).toEqual([])
+    })
+})
+
+describe('comingDue', () => {
+    it('is 12 months from now across the year end, gaps as zero', () => {
+        const r = comingDue([{ month: '2027-01', cases: 2, loan_volume: 500 }], '2026-11')
+        expect(r).toHaveLength(12)
+        expect([r[0].month, r[2].month, r[11].month]).toEqual(['2026-11', '2027-01', '2027-10'])
+        expect(r[2].loan_volume).toBe(500)
+        expect(r[0].loan_volume).toBe(0)
     })
 })

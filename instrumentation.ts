@@ -29,7 +29,7 @@ function validateEnv() {
     const optional = [
         'RESEND_API_KEY', 'RESEND_FROM_EMAIL',
         'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
-        'GEMINI_API_KEY', 'DEEPSEEK_API_KEY', 'MAS_API_KEY', 'FRED_API_KEY',
+        'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'MAS_API_KEY', 'FRED_API_KEY',
     ]
     const missingOptional = optional.filter(name => !process.env[name])
     if (missingOptional.length > 0) {

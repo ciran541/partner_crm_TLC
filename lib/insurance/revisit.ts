@@ -24,6 +24,7 @@
 
 import { computeAmortization } from '@/lib/insurance/amortCalc'
 import type { SoraRates } from '@/lib/insurance/sora'
+import { caseLockInEnd } from '@/lib/insurance/followUps'
 import type { Case, ClosedWonData, ClosedWonLoan } from '@/lib/types'
 
 // ─── Gate ────────────────────────────────────────────────────────────────────
@@ -66,13 +67,6 @@ export function yearsBetween(from: string, to: string): number {
     let y = ty - fy
     if (tm < fm || (tm === fm && td < fd)) y--
     return Math.max(0, y)
-}
-
-function addYears(date: string, years: number): string {
-    const [y, m, d] = date.split('-').map(Number)
-    // 29 Feb + N years on a non-leap year → 28 Feb (clamp to month end)
-    const last = new Date(Date.UTC(y + years, m, 0)).getUTCDate()
-    return `${y + years}-${String(m).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`
 }
 
 /** The bank holding the loan after this close. */
@@ -219,7 +213,7 @@ export function buildRevisitCase(parent: Case, today: string, sora: SoraRates | 
     const homeTenure = remaining(k => HOME_KINDS.has(k))
     const equityTenure = remaining(k => k === 'equity')
 
-    const lockInEnd = cw.closed_at && lockin ? addYears(cw.closed_at, lockin) : undefined
+    const lockInEnd = caseLockInEnd(parent) ?? undefined
     const thereafter = (cw.package?.schedule ?? []).find(e => e.thereafter)
     const rateAfterLockin = thereafter?.type === 'fixed' && thereafter.rate != null ? thereafter.rate : undefined
     const bank = closingBank(parent)

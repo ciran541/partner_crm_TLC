@@ -2,13 +2,12 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getServerUser } from '@/lib/auth/getUser'
 import { canAccessInsurance } from '@/lib/permissions'
-import { composeAnswer } from '@/lib/insurance/askGemini'
-import { normalizeQuery } from '@/lib/insurance/normalizeQuery'
+import { composeAnswer } from '@/lib/insurance/composeAnswer'
 import { retrieveArticles } from '@/lib/insurance/retrieveKnowledge'
 import { rateLimitUser } from '@/lib/rateLimit'
 
 // POST /api/insurance/knowledge/ask  { question }
-// Grounded RAG: retrieve matching articles, then Gemini composes an answer
+// Grounded RAG: retrieve matching articles, then Claude composes an answer
 // ONLY from them. Refuses when nothing relevant matched (never invents).
 // Retrieval cascade (semantic → fulltext → substring) lives in
 // lib/insurance/retrieveKnowledge.ts, shared with the /search route.
@@ -18,7 +17,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Every call spends a Gemini request (plus an embedding). Bound it per agent
+    // Every call spends a Claude request (plus an embedding). Bound it per agent
     // so a runaway client loop can't run up an unbounded bill.
     const limited = await rateLimitUser(user.id, 'knowledge-ask', 'ai')
     if (limited) return limited
@@ -29,15 +28,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ answer: null, sources: [], grounded: false })
     }
 
-    // ── Normalize the query before retrieval ──
-    // Rewrites vague/poorly-typed questions into clean precise questions so
-    // semantic search matches the Q&A knowledge base accurately.
-    const normalizedQuestion = await normalizeQuery(question)
-    const searchQuery = normalizedQuestion || question
-
     // ── Retrieve candidate articles (looser semantic gate than /search — the
     //    composer only sees 3 articles, so recall matters more than precision) ──
-    const { articles: candidates } = await retrieveArticles(searchQuery, {
+    const { articles: candidates } = await retrieveArticles(question, {
         matchThreshold: 0.25,
         matchCount: 3,
     })

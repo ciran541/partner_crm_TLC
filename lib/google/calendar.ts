@@ -32,9 +32,9 @@ export async function createFollowUpEvent(
     calendarId = 'primary',
     clientPhone?: string | null
 ): Promise<string> {
-    // Auditable outbound log, matching deepseek.ts's and bankIntelligence.ts's —
-    // this whole file has no import of any AI/ML module (deepseek.ts,
-    // askGemini.ts, bankIntelligence.ts, etc.) and calls only Google's own
+    // Auditable outbound log, matching lib/ai/claude.ts's —
+    // this whole file has no import of any AI/ML module (lib/ai/claude.ts,
+    // composeAnswer.ts, bankIntelligence.ts, etc.) and calls only Google's own
     // Calendar API. Nothing built here ever reaches a third-party AI provider.
     console.log(`[Google Calendar OUTBOUND create] calendarId=${calendarId} summary="${followUpTitle(clientName, clientPhone)}" date=${followUpDate}`)
 

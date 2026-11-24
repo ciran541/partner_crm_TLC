@@ -69,7 +69,7 @@ const nextConfig: NextConfig = {
   // @napi-rs/canvas supplies the DOM globals pdfjs-dist expects (DOMMatrix,
   // ImageData, Path2D), which Node does not have. Without it pdf-parse throws
   // "DOMMatrix is not defined" at load on Vercel and every PDF read silently
-  // falls through to Gemini — confirmed in production logs, and it had been
+  // falls back to reading the PDF itself — confirmed in production logs, and it had been
   // degrading Banks' Insights the same way. It is a native module, so it must
   // stay external too: bundling a .node binary breaks its resolution.
   // exceljs: mass-upload template build/parse (lib/insurance/caseImportXlsx.ts) —

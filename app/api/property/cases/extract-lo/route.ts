@@ -19,6 +19,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { isClaudeConfigured } from '@/lib/ai/claude'
 import { requirePropertyUser } from '@/lib/auth/requirePropertyUser'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { extractLetterOfOffer, takeLastFailure, toMortgageFields, LO_ACCEPTED_MIME } from '@/lib/property/extractLetterOfOffer'
@@ -31,7 +32,7 @@ const STORAGE_BUCKET = 'property-documents'
 /**
  * Ceiling on what actually gets READ, separate from the 25MB the document
  * uploader accepts for attaching a file to a case. This one is about the AI
- * providers, not Vercel: Gemini's inline-data request body is base64
+ * providers, not Vercel: the request body is base64
  * (~1.33x the raw size), and a huge scan risks the same "garbled table"
  * failure mode the extraction prompt already has to defend against, just
  * worse. A file over this still attaches to the case fine — it just isn't
@@ -43,17 +44,12 @@ export async function POST(request: Request) {
     const auth = await requirePropertyUser()
     if (!auth.authorized) return auth.response
 
-    const hasDeepSeek = !!process.env.DEEPSEEK_API_KEY
-    const hasGemini = !!process.env.GEMINI_API_KEY
-    if (!hasDeepSeek && !hasGemini) {
-        console.error('[extract-lo] no AI keys configured — set DEEPSEEK_API_KEY and GEMINI_API_KEY')
+    if (!isClaudeConfigured()) {
+        console.error('[extract-lo] ANTHROPIC_API_KEY is not set')
         return NextResponse.json(
-            { error: 'Document reading is not configured on this server. Ask your admin to set the AI keys.' },
+            { error: 'Document reading is not configured on this server. Ask your admin to set the AI key.' },
             { status: 503 },
         )
-    }
-    if (!hasGemini) {
-        console.warn('[extract-lo] GEMINI_API_KEY missing — images and scanned PDFs cannot be read')
     }
 
     let body: { path?: string; mime?: string }
@@ -74,12 +70,6 @@ export async function POST(request: Request) {
     }
     if (!mime || !LO_ACCEPTED_MIME.includes(mime as typeof LO_ACCEPTED_MIME[number])) {
         return NextResponse.json({ error: 'Only PDF, JPEG, PNG or WebP files can be read.' }, { status: 415 })
-    }
-    if (!hasGemini && mime.startsWith('image/')) {
-        return NextResponse.json(
-            { error: 'Reading photos and screenshots is not configured on this server. Upload the PDF instead, or ask your admin to set GEMINI_API_KEY.' },
-            { status: 503 },
-        )
     }
 
     try {
@@ -103,10 +93,13 @@ export async function POST(request: Request) {
 
         const data = await extractLetterOfOffer({ buffer, mime })
         if (!data) {
-            if (takeLastFailure() === 'rate_limited') {
+            const failure = takeLastFailure()
+            if (failure) {
                 return NextResponse.json(
-                    { error: "The document-reading service has hit today's usage limit. Enter the details manually, or try again tomorrow." },
-                    { status: 429 },
+                    failure === 'account'
+                        ? { error: 'Document reading is unavailable right now. Enter the details manually and let your admin know.' }
+                        : { error: 'Document reading is busy right now. Try again in a minute, or enter the details manually.' },
+                    { status: failure === 'account' ? 503 : 429 },
                 )
             }
             return NextResponse.json(

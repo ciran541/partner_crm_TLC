@@ -1,5 +1,5 @@
 /**
- * Live extraction check — runs the REAL SCB partner blast through DeepSeek and
+ * Live extraction check — runs the REAL SCB partner blast through Claude and
  * asserts the structured result, rather than trusting the prompt to work.
  *
  * This message is the canonical hard case: one blast carrying a client cash
@@ -7,12 +7,12 @@
  * boundary, and an LTV note. If the prompt ever regresses on the audience split,
  * this catches it.
  *
- * Costs one DeepSeek call. Named `.dbtest.ts` so `npm test` never collects it —
+ * Costs one Claude call. Named `.dbtest.ts` so `npm test` never collects it —
  * that run stays pure and offline.
  *
  *   npm run test:db
  *
- * Needs DEEPSEEK_API_KEY, read from .env.local.
+ * Needs ANTHROPIC_API_KEY, read from .env.local.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
@@ -57,7 +57,7 @@ describe('extractPromotions — live SCB blast', () => {
     let result: ExtractedPromotion[] | null
 
     beforeAll(async () => {
-        expect(process.env.DEEPSEEK_API_KEY, 'DEEPSEEK_API_KEY missing from .env.local').toBeTruthy()
+        expect(process.env.ANTHROPIC_API_KEY, 'ANTHROPIC_API_KEY missing from .env.local').toBeTruthy()
         result = await extractPromotions(SCB_BLAST, 'Standard Chartered')
         console.log(JSON.stringify(result, null, 2))
     }, 90_000)

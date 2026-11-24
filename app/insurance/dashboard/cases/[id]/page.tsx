@@ -43,7 +43,7 @@ import CaseChanges from '@/components/insurance/cases/CaseChanges'
 import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
 import FollowUpUpdateForm, { type FollowUpSaved } from '@/components/insurance/followup/FollowUpUpdateForm'
 import FollowUpHistory from '@/components/insurance/followup/FollowUpHistory'
-import { autoRemark, defaultClosedWonFollowUp, followUpBucket, needsFollowUp } from '@/lib/insurance/followUps'
+import { autoRemark, defaultClosedWonFollowUp, estimateLockInEnd, followUpBucket, lockInLimit, needsFollowUp } from '@/lib/insurance/followUps'
 import { LEAD_SOURCES, leadSourceLabel } from '@/lib/insurance/leadSources'
 
 type TabKey = 'overview' | 'workflow'
@@ -891,6 +891,8 @@ function PendingDocsModal({ initialBankers, onConfirm, onCancel }: {
     )
 }
 
+const dmy = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
+
 interface LoanFormRow { enabled: boolean; amount: string; tenure: string }
 
 // Vercel rejects a Serverless Function request body over ~4.5MB at the edge,
@@ -959,6 +961,8 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
         setLoanRows(r => ({ ...r, [kind]: { ...r[kind], ...patch } }))
 
     const [lockin, setLockin] = useState(existing.package?.lockin_years != null ? String(existing.package.lockin_years) : '')
+    // '' = use the estimate (closing date + lock-in years).
+    const [lockInEndPicked, setLockInEndPicked] = useState(existing.lock_in_end_date ?? '')
     const [schedule, setSchedule] = useState<RateScheduleEntry[]>(
         existing.package?.schedule?.length ? existing.package.schedule : [{ year: 1, type: 'fixed' }],
     )
@@ -1101,11 +1105,15 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
         }))
     const lockinYears = parseInt(lockin) || 0
     const totals = closedWonTotals(loans, schedule, lockinYears, sora)
-    const followUp = followUpPicked || defaultClosedWonFollowUp(existing.closed_at ?? todaySgt(), lockinYears, todaySgt())
+    const closedOn = existing.closed_at ?? todaySgt()
+    const lockInEnd = lockinYears > 0 ? (lockInEndPicked || estimateLockInEnd(closedOn, lockinYears)) : null
+    const followUp = followUpPicked || defaultClosedWonFollowUp(closedOn, lockInEnd, todaySgt())
+    const fuLimit = lockInLimit(lockInEnd, todaySgt())
+    const fuTooLate = !!fuLimit && followUp > fuLimit
     const reachable = !!(clientEmail.trim() || clientMobile.trim())
 
     const enabledValid = loans.length > 0 && loans.every(l => l.amount > 0 && l.tenure > 0)
-    const canSave = !busy && clientName.trim() && enabledValid
+    const canSave = !busy && clientName.trim() && enabledValid && !fuTooLate
 
     // "+ Add feature" starts a blank row; don't persist ones left empty.
     const cleanFeatures = pkgFeatures.map(f => f.trim()).filter(Boolean)
@@ -1150,7 +1158,8 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                 package_features: cleanFeatures.length ? cleanFeatures : undefined,
                 bank: closedBank.trim() || undefined,
                 // Kept from the first close if the agent edits the closure later.
-                closed_at: existing.closed_at ?? todaySgt(),
+                closed_at: closedOn,
+                lock_in_end_date: lockInEnd ?? undefined,
             }
 
             const firstYear = schedule.find(e => !e.thereafter)
@@ -1244,6 +1253,7 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                                     <div className={box}>
                                         {row('Bank', closedBank.trim())}
                                         {row('Lock-in', lockinYears > 0 ? `${lockinYears} yr${lockinYears > 1 ? 's' : ''}` : '')}
+                                        {row('Lock-in ends', lockInEnd ? dmy(lockInEnd) : '')}
                                         {row('Rates', packageSummary(schedule, lockinYears))}
                                         {cleanFeatures.length > 0 && row('Features', cleanFeatures.join(', '))}
                                         {row('Subsidy', hasSubsidy ? `${subsidyProvided || 'Yes'}${clawbackEnd ? ` · clawback until ${clawbackEnd}` : ''}` : 'None')}
@@ -1410,6 +1420,15 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                             <input inputMode="numeric" value={lockin} onChange={e => setLockin(e.target.value.replace(/[^\d]/g, ''))}
                                 placeholder="e.g. 2" className="input-std" style={{ maxWidth: 160 }} />
                         </div>
+                        {lockinYears > 0 && (
+                            <div>
+                                <label className="label-xs">Lock-in End Date</label>
+                                <input type="date" value={lockInEnd ?? ''} min={todaySgt()} onChange={e => setLockInEndPicked(e.target.value)} className="input-std" style={{ maxWidth: 200 }} />
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                    {lockInEndPicked ? 'Check it against the Letter of Offer.' : 'Estimated from today. Lock-in usually starts at disbursement, so correct it if you know the date.'}
+                                </p>
+                            </div>
+                        )}
                         <div>
                             <label className="label-xs">Interest Rates (p.a.)</label>
                             <RateScheduleEditor schedule={schedule} onChange={setSchedule} />
@@ -1538,7 +1557,12 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
                                 <label className="label-xs">Follow-up Date * <span className="text-slate-400 normal-case">(syncs to your Google Calendar)</span></label>
-                                <input type="date" value={followUp} min={todaySgt()} onChange={e => setFollowUpPicked(e.target.value)} className="input-std" />
+                                <input type="date" value={followUp} min={todaySgt()} max={fuLimit ?? undefined} onChange={e => setFollowUpPicked(e.target.value)} className="input-std" />
+                                {fuLimit && (
+                                    <p className={`text-[11px] mt-1 ${fuTooLate ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>
+                                        No later than {dmy(fuLimit)}, 2 months before the lock-in ends.
+                                    </p>
+                                )}
                                 {!followUpPicked && (
                                     <p className="text-[11px] text-slate-400 mt-1">
                                         {lockinYears > 0 ? 'Suggested: 3 months before the lock-in ends.' : 'Suggested: 2 years from now. Add the lock-in to time it to the lock-in end.'}

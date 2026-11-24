@@ -1,13 +1,13 @@
 /**
  * Rate ingestion extractor — turns a pasted Google-Sheet block into structured
- * packages via DeepSeek (JSON mode, temperature 0).
+ * packages via Claude (JSON mode, temperature 0).
  *
- * Moved off Gemini: its free tier meters ~20 requests per day PER MODEL across
+ * Moved off Claude: its free tier meters ~20 requests per day PER MODEL across
  * every feature sharing the key, and Letter-of-Offer extraction now needs that
  * budget for scanned documents, which only a vision model can read. This task
  * is pasted text in, JSON out, so it belongs on the paid, uncapped provider.
  *
- * One thing that lost: Gemini's responseSchema enforced the output shape. DeepSeek's
+ * One thing that lost: Claude's responseSchema enforced the output shape. Claude's
  * json mode guarantees only that the response PARSES, so the shape is described
  * explicitly at the end of the prompt and normalize() below re-validates every
  * field. A real read elsewhere in this codebase came back with the whole payload
@@ -22,7 +22,7 @@
 
 import type { MortgagePackageInput, RateScheduleEntry } from '@/lib/types/rates'
 import { cleanReference } from '@/lib/insurance/rateSchedule'
-import { callDeepSeek } from '@/lib/insurance/deepseek'
+import { callClaude } from '@/lib/ai/claude'
 
 const SYSTEM_INSTRUCTION = `You convert a pasted Singapore mortgage rate block (from a broker's working sheet or a banker's message) into STRUCTURED package data.
 
@@ -75,24 +75,22 @@ const ALLOWED_PROPERTY = ['HDB', 'Private', 'HDB / Private', 'Executive Condomin
 export async function extractPackages(text: string, bank: string): Promise<MortgagePackageInput[] | null> {
     if (!text.trim() || !bank.trim()) return null
 
-    const raw = await callDeepSeek({
+    const { text: raw } = await callClaude({
         label: 'extractPackages',
         system: SYSTEM_INSTRUCTION,
         user: `Bank: ${bank}\n\nPaste:\n${text.trim()}`,
-        temperature: 0,
         // Headroom for big bank dumps (a full bank can be ~20 packages);
         // truncation produces invalid JSON and loses the whole extraction.
-        maxTokens: 16384,
-        json: true,
-        timeoutMs: 60000,
+        maxTokens: 20000,   // includes thinking
+        thinking: 'medium',
+        timeoutMs: 55000,
     })
     if (!raw) return null
 
     try {
         const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
         const parsed = JSON.parse(cleaned)
-        // DeepSeek's json mode guarantees only that this PARSES — there is no
-        // schema enforcement as there was with Gemini's responseSchema, so
+        // No schema is enforced on this call, so
         // tolerate the array arriving at the top level or under a stray key.
         const packages = Array.isArray(parsed) ? parsed
             : Array.isArray(parsed?.packages) ? parsed.packages

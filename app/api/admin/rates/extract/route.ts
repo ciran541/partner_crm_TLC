@@ -5,7 +5,7 @@ import { extractPackages } from '@/lib/insurance/extractPackages'
 export const maxDuration = 60
 
 // POST /api/admin/rates/extract  { bank, text }
-// Gemini structures the pasted sheet block into packages. Saves NOTHING — the
+// Claude structures the pasted sheet block into packages. Saves NOTHING — the
 // result goes to the review screen, and only a confirmed replace writes to the DB.
 export async function POST(request: Request) {
     const auth = await requireAdminUser()
@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     if (!bank?.trim() || !text?.trim()) {
         return NextResponse.json({ error: 'Pick a bank and paste the rate block.' }, { status: 400 })
     }
-    if (!process.env.DEEPSEEK_API_KEY) {
-        return NextResponse.json({ error: 'Extraction needs DEEPSEEK_API_KEY — not configured.' }, { status: 503 })
+    if (!process.env.ANTHROPIC_API_KEY) {
+        return NextResponse.json({ error: 'Extraction needs ANTHROPIC_API_KEY — not configured.' }, { status: 503 })
     }
 
     const packages = await extractPackages(text, bank)

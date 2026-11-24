@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from 'react'
 import { Check, X, Mail } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
-import { autoRemark, addDays, addMonths } from '@/lib/insurance/followUps'
+import { autoRemark, addDays, addMonths, followUpLimit } from '@/lib/insurance/followUps'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { INACTIVE_STAGE, OPEN_STAGES, stageLabel } from '@/lib/insurance/stages'
 import type { Case } from '@/lib/types'
@@ -23,7 +23,7 @@ import type { Case } from '@/lib/types'
 
 export type FollowUpCase = Pick<Case,
     'id' | 'stage' | 'client_name' | 'client_email' | 'client_mobile' |
-    'follow_up_date' | 'follow_up_remark' | 'no_follow_up' | 'client_reminder_opt_in'>
+    'follow_up_date' | 'follow_up_remark' | 'no_follow_up' | 'client_reminder_opt_in' | 'lock_in_end_date' | 'closed_won_data'>
 
 export type FollowUpSaved = Pick<Case, 'id' | 'stage' | 'follow_up_date' | 'follow_up_remark' | 'no_follow_up' | 'client_reminder_opt_in' | 'referred_bankers'>
 
@@ -34,6 +34,8 @@ function stageOptions(current: string): string[] {
     if (current === 'Closed Lost') return ['Closed Lost', ...MOVABLE]
     return MOVABLE.includes(current) ? MOVABLE : [current, ...MOVABLE]
 }
+
+const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
 
 export default function FollowUpUpdateForm({
     c, presetStage, allowStageChange = true, title, extra, extraBody, onSaved, onCancel,
@@ -82,9 +84,13 @@ export default function FollowUpUpdateForm({
     }
 
     const reachable = !!(c.client_email?.trim() || c.client_mobile?.trim())
-    const canSave = !saving && (noFollowUp || (!!date && date >= today))
+    // Closed Won / Inactive: no later than 2 months before lock-in ends. A date
+    // saved before this rule may stay until it's changed.
+    const limit = followUpLimit(c, today, stage)
+    const tooLate = !!limit && date > limit && (stageMoved || date !== current)
+    const canSave = !saving && (noFollowUp || (!!date && date >= today && !tooLate))
 
-    const quick: { label: string; value: string }[] = stage === 'Closed Won' || stage === 'Closed Lost'
+    const quickAll: { label: string; value: string }[] = stage === 'Closed Won' || stage === 'Closed Lost'
         ? [
             { label: '6 months', value: addMonths(today, 6) },
             { label: '1 year', value: addMonths(today, 12) },
@@ -96,6 +102,10 @@ export default function FollowUpUpdateForm({
             { label: '1 week', value: addDays(today, 7) },
             { label: '2 weeks', value: addDays(today, 14) },
         ]
+    const quick = [
+        ...quickAll.filter(q => !limit || q.value <= limit),
+        ...(limit ? [{ label: `Latest: ${fmtDay(limit)}`, value: limit }] : []),
+    ]
 
     const save = async () => {
         if (!canSave) return
@@ -156,7 +166,12 @@ export default function FollowUpUpdateForm({
                 <>
                     <div>
                         <label className={label}>Next follow-up date *</label>
-                        <input type="date" value={date} min={today} onChange={e => setDate(e.target.value)} className={input} style={{ maxWidth: 220 }} />
+                        <input type="date" value={date} min={today} max={limit ?? undefined} onChange={e => setDate(e.target.value)} className={input} style={{ maxWidth: 220 }} />
+                        {limit && (
+                            <p className={`text-[11px] mt-1 ${tooLate ? 'text-red-600 font-semibold' : 'text-slate-400'}`}>
+                                No later than {fmtDay(limit)}, 2 months before the lock-in ends.
+                            </p>
+                        )}
                         {carriedOverdue && date === today && (
                             <p className="text-[11px] text-amber-600 mt-1">
                                 Was {new Date(`${current}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })} (overdue), so it&apos;s set to today. Change it if needed.

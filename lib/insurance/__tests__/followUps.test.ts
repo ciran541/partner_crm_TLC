@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
     AUTO_REMARKS, autoRemark, needsFollowUp, addMonths, addDays, daysBetween,
-    defaultClosedWonFollowUp, defaultNewCaseFollowUp, followUpBucket, reminderDue,
+    defaultClosedWonFollowUp, defaultNewCaseFollowUp, caseLockInEnd, followUpLimit, followUpBucket, reminderDue,
 } from '../followUps'
 
 describe('auto remarks', () => {
@@ -42,10 +42,10 @@ describe('date helpers', () => {
 
 describe('defaults', () => {
     it('closed won: 3 months before lock-in ends, else 2 years', () => {
-        expect(defaultClosedWonFollowUp('2026-11-20', 2, '2026-11-20')).toBe('2028-08-20')
-        expect(defaultClosedWonFollowUp('2026-11-20', 0, '2026-11-20')).toBe('2028-11-20')
+        expect(defaultClosedWonFollowUp('2026-11-20', '2028-11-20', '2026-11-20')).toBe('2028-08-20')
+        expect(defaultClosedWonFollowUp('2026-11-20', null, '2026-11-20')).toBe('2028-11-20')
         // A backdated close whose lead date has passed lands tomorrow, not overdue.
-        expect(defaultClosedWonFollowUp('2020-01-01', 1, '2026-11-20')).toBe('2026-11-21')
+        expect(defaultClosedWonFollowUp('2020-01-01', '2021-01-01', '2026-11-20')).toBe('2026-11-21')
     })
     it('new case: 3 months before a future lock-in end, else today', () => {
         expect(defaultNewCaseFollowUp('2027-06-30', '2026-11-20')).toBe('2027-03-30')
@@ -88,5 +88,26 @@ describe('reminderDue — client is contacted only on Closed Won + consent', () 
     it('needs an email or mobile', () => {
         expect(reminderDue({ ...base, client_email: '' }, t)).toBe(false)
         expect(reminderDue({ ...base, client_email: '', client_mobile: '91234567' }, t)).toBe(true)
+    })
+})
+
+describe('lock-in limit: no later than 2 months before lock-in ends', () => {
+    const won = { stage: 'Closed Won', lock_in_end_date: '2026-12-01', closed_won_data: { closed_at: '2026-11-20', package: { lockin_years: 2 }, lock_in_end_date: '2028-12-27' } }
+    it('uses the lock-in entered at closing, not the old loan or the estimate', () => {
+        expect(caseLockInEnd(won)).toBe('2028-12-27')
+        expect(followUpLimit(won, '2026-11-24')).toBe('2028-10-27')
+    })
+    it('falls back to closing date + years for older closures', () => {
+        expect(caseLockInEnd({ ...won, closed_won_data: { closed_at: '2026-11-20', package: { lockin_years: 2 } } })).toBe('2028-11-20')
+    })
+    it('lifts on the day it arrives, so a later date can still be saved', () => {
+        expect(followUpLimit(won, '2028-10-26')).toBe('2028-10-27')
+        expect(followUpLimit(won, '2028-10-27')).toBeNull()
+    })
+    it('covers Inactive, never open stages or a case with no lock-in', () => {
+        expect(followUpLimit({ stage: 'Inactive', lock_in_end_date: '2027-04-30' }, '2026-11-24')).toBe('2027-02-28')
+        expect(followUpLimit({ stage: 'Pending Docs', lock_in_end_date: '2027-04-30' }, '2026-11-24')).toBeNull()
+        expect(followUpLimit({ stage: 'Pending Docs', lock_in_end_date: '2027-04-30' }, '2026-11-24', 'Inactive')).toBe('2027-02-28')
+        expect(followUpLimit({ stage: 'Inactive' }, '2026-11-24')).toBeNull()
     })
 })

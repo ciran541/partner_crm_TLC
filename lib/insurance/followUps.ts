@@ -16,7 +16,7 @@
  * Pure: no React, no network.
  */
 
-import type { PipelineStage } from '@/lib/types'
+import type { ClosedWonData, PipelineStage } from '@/lib/types'
 
 /** Pre-filled remark per stage. Inactive has none yet (product decision: later). */
 export const AUTO_REMARKS: Partial<Record<PipelineStage, string>> = {
@@ -87,14 +87,51 @@ export const LOCKIN_LEAD_MONTHS = 3
 /** Fallback when the lock-in end is unknown. */
 export const CLOSED_WON_FALLBACK_YEARS = 2
 
+// ─── Lock-in limit (agreed 2026-11-24) ───────────────────────────────────────
+//
+// A Closed Won or Inactive client's follow-up can't be later than 2 months before
+// their lock-in ends: after that they've usually been approached elsewhere. The
+// limit lifts on the day it arrives, so an agent told "call me in two weeks"
+// isn't left with no date they can save. Open stages aren't limited.
+// SQL twins: case_lock_in_end() and cases_follow_up_lockin_limit().
+
+export const LOCKIN_LIMIT_MONTHS = 2
+
+/** Lock-in end assumed from the closing date, when nobody entered the real one. */
+export function estimateLockInEnd(closedAt: string | null | undefined, lockinYears: number | null | undefined): string | null {
+    return closedAt && lockinYears && lockinYears > 0 ? addMonths(closedAt, lockinYears * 12) : null
+}
+
+type LockInCase = { stage?: string | null; lock_in_end_date?: string | null; closed_won_data?: ClosedWonData | null }
+
+/** When the client's CURRENT loan leaves lock-in. Closed Won = the loan just closed, not the one it replaced. */
+export function caseLockInEnd(c: LockInCase): string | null {
+    if (c.stage !== 'Closed Won') return c.lock_in_end_date?.slice(0, 10) || null
+    const cw = c.closed_won_data ?? {}
+    return cw.lock_in_end_date?.slice(0, 10) || estimateLockInEnd(cw.closed_at, cw.package?.lockin_years)
+}
+
+/** Latest follow-up allowed for this lock-in end; null = no limit (none known, or already reached). */
+export function lockInLimit(lockInEnd: string | null | undefined, today: string): string | null {
+    if (!lockInEnd) return null
+    const limit = addMonths(lockInEnd, -LOCKIN_LIMIT_MONTHS)
+    return limit > today ? limit : null
+}
+
+/** The limit for a case once it is in `stage` (defaults to its current stage). */
+export function followUpLimit(c: LockInCase, today: string, stage: string | null | undefined = c.stage): string | null {
+    if (stage !== 'Closed Won' && stage !== 'Inactive') return null
+    return lockInLimit(caseLockInEnd({ ...c, stage }), today)
+}
+
 /**
  * Default follow-up for a just-closed (won) case: LOCKIN_LEAD_MONTHS before the
  * new lock-in ends, else CLOSED_WON_FALLBACK_YEARS out. Never earlier than
  * tomorrow — a past default would land straight in "Overdue".
  */
-export function defaultClosedWonFollowUp(closedAt: string, lockinYears: number | null | undefined, today: string): string {
-    const candidate = lockinYears && lockinYears > 0
-        ? addMonths(closedAt, lockinYears * 12 - LOCKIN_LEAD_MONTHS)
+export function defaultClosedWonFollowUp(closedAt: string, lockInEnd: string | null | undefined, today: string): string {
+    const candidate = lockInEnd
+        ? addMonths(lockInEnd, -LOCKIN_LEAD_MONTHS)
         : addMonths(closedAt, CLOSED_WON_FALLBACK_YEARS * 12)
     const tomorrow = addDays(today, 1)
     return candidate < tomorrow ? tomorrow : candidate

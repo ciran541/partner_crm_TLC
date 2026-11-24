@@ -22,7 +22,13 @@ import { LEAD_SOURCES, NOT_SET, NOT_SET_LABEL } from '@/lib/insurance/leadSource
 
 export interface ClosedRow { month: string; source: string; cases: number; loan_volume: number }
 export interface LeadRow { month: string; source: string; activated: number; won: number; lost: number; open: number }
-export interface DashboardData { closed: ClosedRow[]; leads: LeadRow[] }
+/** month = when it was lost; null before HUB recorded stage changes (Nov 2026). */
+export interface LostRow { month: string | null; reason: string; cases: number; loan_volume: number }
+/** Past clients by the month their lock-in ends. */
+export interface DueRow { month: string; cases: number; loan_volume: number }
+/** Won leads by the year first activated and the year closed. */
+export interface WonByYearRow { year: number; closed_year: number; source: string; cases: number; loan_volume: number }
+export interface DashboardData { won_by_year?: WonByYearRow[]; closed: ClosedRow[]; leads: LeadRow[]; lost?: LostRow[]; coming_due?: DueRow[] }
 
 const inYear = (month: string, year: number) => month.startsWith(`${year}-`)
 const monthNum = (month: string) => Number(month.slice(5, 7))
@@ -97,9 +103,11 @@ export function monthlyTrend(closed: ClosedRow[], year: number, metric: TrendMet
 export interface SourceRow {
     source: string
     label: string
-    /** Production: cases CLOSED in the year from this source (and their quantum). */
+    /** This year's leads that closed in the same year, and in a later one. Together = won. */
     closedCases: number
     closedVolume: number
+    laterCases: number
+    laterVolume: number
     /** Cohort: leads ACTIVATED in the year from this source, and how they ended up. */
     leads: number
     won: number
@@ -108,30 +116,51 @@ export interface SourceRow {
     conversionPct: number | null
 }
 
-/** One row per source that has any activity in the year, most closings first. "Not set" always last. */
+/**
+ * One row per source with leads in the year, most won first. "Not set" always last.
+ * Everything follows the year's LEADS (agreed 2026-11-24): a Dec 2026 lead won in
+ * Feb 2027 stays in 2026, as "closed later". A closing dated before its lead
+ * (backdated) counts as closed the same year.
+ */
 export function sourceBreakdown(data: DashboardData, year: number): SourceRow[] {
     const order = [...LEAD_SOURCES.map(s => s.value as string), NOT_SET]
     const rows = order.map(source => {
-        const closed = data.closed.filter(r => r.source === source && inYear(r.month, year))
+        const wonRows = (data.won_by_year ?? []).filter(r => r.source === source && r.year === year)
+        const sum = (rs: WonByYearRow[]) => ({
+            cases: rs.reduce((s, r) => s + Number(r.cases), 0),
+            volume: rs.reduce((s, r) => s + Number(r.loan_volume), 0),
+        })
+        const same = sum(wonRows.filter(r => r.closed_year <= year))
+        const later = sum(wonRows.filter(r => r.closed_year > year))
         const leads = data.leads.filter(r => r.source === source && inYear(r.month, year))
         const n = leads.reduce((s, r) => s + Number(r.activated), 0)
         const won = leads.reduce((s, r) => s + Number(r.won), 0)
         return {
             source,
             label: LEAD_SOURCES.find(s => s.value === source)?.label ?? NOT_SET_LABEL,
-            closedCases: closed.reduce((s, r) => s + Number(r.cases), 0),
-            closedVolume: closed.reduce((s, r) => s + Number(r.loan_volume), 0),
+            closedCases: same.cases,
+            closedVolume: same.volume,
+            laterCases: later.cases,
+            laterVolume: later.volume,
             leads: n,
             won,
             open: leads.reduce((s, r) => s + Number(r.open), 0),
             conversionPct: n > 0 ? (won / n) * 100 : null,
         }
-    }).filter(r => r.closedCases > 0 || r.leads > 0)
+    }).filter(r => r.leads > 0)
 
     return rows.sort((a, b) =>
         (a.source === NOT_SET ? 1 : 0) - (b.source === NOT_SET ? 1 : 0)
-        || b.closedCases - a.closedCases
+        || b.won - a.won
         || b.leads - a.leads)
+}
+
+/** Heading for the later closings of `year`'s leads; null when there are none yet. */
+export function laterClosingsLabel(data: DashboardData, year: number): string | null {
+    const ys = (data.won_by_year ?? []).filter(r => r.year === year && r.closed_year > year).map(r => r.closed_year)
+    if (ys.length === 0) return null
+    const first = Math.min(...ys)
+    return first === Math.max(...ys) ? `Closed in ${first}` : `Closed in ${first} onwards`
 }
 
 // ─── 4. Conversion by activation cohort ─────────────────────────────────────
@@ -161,4 +190,35 @@ export function cohort(leads: LeadRow[], scope: string): Cohort {
         conversionPct: t.activated > 0 ? (t.won / t.activated) * 100 : null,
         provisional: t.open > 0,
     }
+}
+
+// ─── 5. Why deals are lost ──────────────────────────────────────────────────
+
+export interface LostReason { reason: string; cases: number; loanVolume: number; pct: number }
+
+/** `year` = lost in that year; null = all time (includes cases lost before dates were recorded). */
+export function lostReasons(lost: LostRow[], year: number | null): LostReason[] {
+    const by = new Map<string, { cases: number; loanVolume: number }>()
+    for (const r of lost) {
+        if (year != null && !(r.month && inYear(r.month, year))) continue
+        const t = by.get(r.reason) ?? { cases: 0, loanVolume: 0 }
+        by.set(r.reason, { cases: t.cases + Number(r.cases), loanVolume: t.loanVolume + Number(r.loan_volume) })
+    }
+    const total = [...by.values()].reduce((s, r) => s + r.cases, 0)
+    return [...by.entries()]
+        .map(([reason, r]) => ({ reason, ...r, pct: total > 0 ? (r.cases / total) * 100 : 0 }))
+        .sort((a, b) => b.cases - a.cases || b.loanVolume - a.loanVolume)
+}
+
+// ─── 6. Business coming due ─────────────────────────────────────────────────
+
+/** 12 months from `currentMonth`, empty months included. */
+export function comingDue(rows: DueRow[], currentMonth: string): DueRow[] {
+    const [y, m] = currentMonth.split('-').map(Number)
+    return Array.from({ length: 12 }, (_, i) => {
+        const t = y * 12 + (m - 1) + i
+        const month = `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`
+        const r = rows.find(x => x.month === month)
+        return { month, cases: Number(r?.cases ?? 0), loan_volume: Number(r?.loan_volume ?? 0) }
+    })
 }

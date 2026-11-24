@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MortgagePackage, MortgagePackageInput, RateScheduleEntry, RateCategory } from '@/lib/types/rates'
 import { formatRateEntry, isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
-import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, shortLoan, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
+import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, shortLoan, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, PRIORITY_BANK_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
 import RateIngestionModal from '@/components/insurance/rates/RateIngestionModal'
 import RateCompareModal from '@/components/insurance/rates/RateCompareModal'
@@ -498,9 +498,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                         <span className="ml-2 text-[9px] font-normal normal-case text-slate-300">Select banks where client holds priority status — unlocks lower min. loan thresholds</span>
                     </p>
                     <div className="flex flex-wrap gap-1.5">
-                        {[...new Set(packages.map(p => p.bank))].sort().filter(bank =>
-                            packages.some(p => p.bank === bank && parsePriorityMin(p.min_loan_note) != null)
-                        ).map(bank => (
+                        {PRIORITY_BANK_OPTIONS.map(bank => (
                             <FilterPill key={bank} active={priorityBanks.has(bank)} color="purple"
                                 onClick={() => setPriorityBanks(prev => toggleSet(prev, bank))}>
                                 {bank}

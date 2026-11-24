@@ -1,6 +1,7 @@
 // Server-only: used by the /api/insurance/cases/import routes, never a client component.
 import ExcelJS from 'exceljs'
 import { findHeaderRow, normaliseHeader } from '@/lib/insurance/columnMatch'
+import { LEAD_SOURCES } from '@/lib/insurance/leadSources'
 
 /**
  * Mass upload — read ANY client list an agent already has (Excel or CSV, any
@@ -173,7 +174,7 @@ export const STARTER_HEADERS = [
     'Client Name', 'Mobile', 'Email', 'Loan Amount', 'Current Bank', 'Lock-in End Date',
     'Follow-up Date', 'Property Type', 'Property Address', 'Remaining Tenure',
     'Current Rate', 'Property Value', 'Year of Purchase',
-    'Subsidy Received', 'Case Type', 'Stage', 'Remarks',
+    'Subsidy Received', 'Lead Source', 'Case Type', 'Stage', 'Remarks',
 ]
 
 const STARTER_NOTES: Record<string, string> = {
@@ -183,7 +184,7 @@ const STARTER_NOTES: Record<string, string> = {
     'Loan Amount': 'Current outstanding loan, e.g. 750000',
     'Current Bank': 'e.g. DBS',
     'Lock-in End Date': 'DD/MM/YYYY, e.g. 15/03/2027',
-    'Follow-up Date': 'DD/MM/YYYY. HUB reminds you on this day',
+    'Follow-up Date': 'DD/MM/YYYY. HUB reminds you on this day. No later than 2 months before the lock-in ends',
     'Property Type': 'HDB / Condo / Landed / EC',
     'Property Address': 'Optional',
     'Remaining Tenure': 'Years left on the loan, e.g. 22',
@@ -192,7 +193,8 @@ const STARTER_NOTES: Record<string, string> = {
     'Year of Purchase': 'e.g. 2019',
     'Subsidy Received': 'e.g. 2000',
     'Case Type': 'Refinancing / Purchase / Decoupling / Equity Loan. Blank = Refinancing',
-    'Stage': 'Blank = Inactive (past client, follow-up only). Or Touched Base etc.',
+    'Lead Source': `${LEAD_SOURCES.map(s => s.label).join(' / ')}. Blank = Not set`,
+    'Stage': 'Blank = Inactive (past client, follow-up only). Or Active etc.',
     'Remarks': 'Optional notes',
 }
 

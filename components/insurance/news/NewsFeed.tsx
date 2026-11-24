@@ -62,7 +62,7 @@ export default function NewsFeed({ accentColor = '#03a9e7' }: { accentColor?: st
             )}
 
             <p className="text-xs text-slate-400 mt-4 text-center">
-                Sources: Business Times · CNA · Financial Times · The Edge Singapore · MAS · URA · HDB &nbsp;·&nbsp; AI relevance filtering and summaries by DeepSeek
+                Sources: Business Times · CNA · Financial Times · The Edge Singapore · MAS · URA · HDB &nbsp;·&nbsp; AI relevance filtering and summaries
             </p>
         </div>
     )

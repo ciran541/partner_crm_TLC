@@ -10,7 +10,7 @@ type CronGuardResult =
  *
  * Fail-closed in production: if CRON_SECRET is not configured there, the
  * endpoint refuses to run rather than becoming publicly triggerable (each run
- * burns MAS/DeepSeek/FRED quota and DB writes). Locally the secret is optional
+ * burns MAS/Claude/FRED quota and DB writes). Locally the secret is optional
  * so `curl localhost:3000/api/cron/...` still works for manual testing.
  */
 export function requireCronAuth(request: Request): CronGuardResult {

@@ -12,27 +12,17 @@
  *
  * TWO LANES, chosen by whether real text comes out — not by file extension:
  *
- *   PDF with a text layer  → pdf-parse → DeepSeek   (primary)
- *   image, or PDF that parsed empty → Gemini vision (only lane that can read it)
+ *   PDF with a text layer  → pdf-parse → Claude reads the text   (primary)
+ *   image, scanned PDF, or an incomplete text read → Claude reads the pages
  *
- * DeepSeek's hosted API (deepseek-v4-flash/-pro) is text-only — no image, no
- * PDF, no document input. Re-confirmed 2026-07-27 against DeepSeek's own docs:
- * every message role's `content` is documented as a plain string, there is no
- * multimodal content-part shape, and the model/pricing pages list no vision or
- * OCR model. Their "Thinking with Visual Primitives" research (Apr 2026) and
- * the vision in their chat UI have NOT reached the public API. So a JPEG has
- * nothing to hand DeepSeek, and neither does a scanned PDF — a client who
- * photographs their LO and "saves as PDF" produces a file that is a .pdf but
- * carries no text layer at all. Routing on empty extracted text (not on the
- * extension) is what catches that second case; extension-routing would send it
- * to DeepSeek with an empty string and invite a fabricated answer.
- *
- * If DeepSeek ever ships image input, the Gemini lane can be deleted outright.
+ * Routing on extracted text, not the extension, is what catches a photographed
+ * LO "saved as PDF": a .pdf with no text layer at all.
  *
  * Returns null on any failure so the caller can surface a clean error and the
  * agent just fills the form by hand — extraction never blocks a close.
  */
 
+import { callClaude, CLAUDE_MODEL, CLAUDE_VISION_MODEL } from '@/lib/ai/claude'
 import { cleanReference } from '@/lib/insurance/rateSchedule'
 import { CLOSED_LOAN_LABELS } from '@/lib/insurance/closedWon'
 import type { RateScheduleEntry } from '@/lib/types/rates'
@@ -151,53 +141,6 @@ OUTPUT SHAPE — return exactly this structure. Every field below is TOP-LEVEL. 
 }`
 }
 
-const RESPONSE_SCHEMA = {
-    type: 'object',
-    properties: {
-        loans: {
-            type: 'array',
-            items: {
-                type: 'object',
-                properties: {
-                    kind: { type: 'string' },
-                    amount: { type: 'string' },   // raw token — code parses
-                    tenure: { type: 'string' },   // raw token — code parses ("25 years" / "300 months")
-                },
-                required: ['kind'],
-            },
-        },
-        lockin_years: { type: 'integer' },
-        rate_schedule: {
-            type: 'array',
-            items: {
-                type: 'object',
-                properties: {
-                    year: { type: 'integer' },
-                    thereafter: { type: 'boolean' },
-                    type: { type: 'string', enum: ['fixed', 'floating'] },
-                    // Raw printed text, REQUIRED — the numeric fields below are
-                    // optional in this schema and Gemini simply left `rate` out
-                    // on fixed rows, silently dropping both fixed years of a
-                    // real LO. Requiring the text guarantees the figure always
-                    // arrives; code parses it.
-                    rate_text: { type: 'string' },
-                    rate: { type: 'number' },
-                    reference: { type: 'string' },
-                    spread: { type: 'number' },
-                },
-                required: ['type', 'rate_text'],
-            },
-        },
-        bank: { type: 'string' },
-        property_address: { type: 'string' },
-        features: { type: 'array', items: { type: 'string' } },
-        subsidy: { type: 'string' },
-        clawback_end_date: { type: 'string' },   // YYYY-MM-DD, only if literally printed
-        notes: { type: 'array', items: { type: 'string' } },
-    },
-    required: ['loans', 'rate_schedule'],
-}
-
 const USER_PREFIX = 'Transcribe this Letter of Offer per the instructions. Return JSON only.'
 
 // ─── Wall-clock budget ────────────────────────────────────────────────────────
@@ -236,171 +179,38 @@ function callTimeout(deadline: number, cap: number): number | null {
     return Math.min(cap, left)
 }
 
-// ─── Lane 1: DeepSeek (text) ──────────────────────────────────────────────────
-// Same OpenAI-compatible shape as news.ts / bankIntelligence.ts, duplicated
-// per-file matching this codebase's established convention.
-const DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
-
-async function callDeepSeek(loText: string, system: string, deadline: number): Promise<string | null> {
-    const apiKey = process.env.DEEPSEEK_API_KEY
-    if (!apiKey) return null
-
-    for (const model of DEEPSEEK_MODELS) {
-        const body = JSON.stringify({
-            model,
-            messages: [
-                { role: 'system', content: system },
-                { role: 'user', content: `${USER_PREFIX}\n\nLetter of Offer text:\n${loText.slice(0, 60000)}` },
-            ],
-            temperature: 0,
-            // Headroom: a multi-facility LO with many features is legitimately
-            // long, and hitting the cap truncates the JSON mid-string, losing
-            // the entire extraction rather than just the overflowing field.
-            max_tokens: 8192,
-            thinking: { type: 'disabled' },
-            response_format: { type: 'json_object' },
-        })
-        try {
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                const timeout = callTimeout(deadline, 20000)
-                if (timeout == null) return null
-                res = await fetch('https://api.deepseek.com/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-                    body,
-                    signal: AbortSignal.timeout(timeout),
-                })
-                if (res.ok || (res.status !== 503 && res.status !== 429)) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 800))
-            }
-            if (!res || !res.ok) {
-                console.error(`[extractLoanOffer] deepseek ${model} HTTP ${res?.status}`)
-                continue
-            }
-            const json = await res.json()
-            const text = json?.choices?.[0]?.message?.content
-            if (typeof text === 'string' && text.trim()) return text
-        } catch (err) {
-            console.error(`[extractLoanOffer] deepseek ${model} threw: ${String(err)}`)
-        }
+// ─── Model call ───────────────────────────────────────────────────────────────
+// Both lanes: the text lane sends extracted text, the vision lane sends the
+// pages themselves. Marked sensitive because an LO is client data.
+async function readLo(
+    input: { text: string } | { files: LoFile[] },
+    system: string,
+    deadline: number,
+    cap: number,
+): Promise<string | null> {
+    const timeoutMs = callTimeout(deadline, cap)
+    if (timeoutMs == null) return null
+    const files = 'files' in input ? input.files : []
+    let user = USER_PREFIX
+    if ('text' in input) {
+        user = `${USER_PREFIX}\n\nLetter of Offer text:\n${input.text.slice(0, 60000)}`
+    } else if (files.length > 1) {
+        user = `${USER_PREFIX}\n\nThe ${files.length} images above are consecutive pages of ONE Letter of Offer, in order. Read them together as a single document.`
     }
-    return null
-}
-
-// ─── Lane 2: Gemini (vision) ──────────────────────────────────────────────────
-// gemini-2.5-flash is the confirmed-available primary (extractPackages.ts's
-// gemini-3.0-flash does not exist — it has been 404ing and silently falling
-// through). Thinking disabled so a scanned LO stays inside the timeout.
-interface ModelDef { id: string; genExtra?: Record<string, unknown> }
-const GEMINI_MODELS: ModelDef[] = [
-    { id: 'gemini-2.5-flash', genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-    { id: 'gemini-2.5-flash-lite', genExtra: { thinkingConfig: { thinkingBudget: 0 } } },
-]
-
-async function callGeminiVision(files: LoFile[], system: string, deadline: number): Promise<string | null> {
-    const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) return null
-
-    /**
-     * Fingerprint of the key in use, logged ONLY on failure (below) — never on
-     * the happy path, and never the key itself.
-     *
-     * This earned its place: production 429'd instantly while local succeeded
-     * seconds later on what was believed to be the same key. It was not the
-     * same key, and no amount of reading the status code would have shown that
-     * — an instant 429 is also what a project with the API disabled returns.
-     * Comparing this line across environments is the fastest way to rule that
-     * out before chasing quota, region or per-IP theories.
-     */
-    const keyFingerprint = `key ...${apiKey.slice(-4)} (len ${apiKey.length})`
-
-    // All pages go in ONE request, in order, so the model sees the whole
-    // document. An LO photographed page by page is a single document: the
-    // address is often on page 1 and the rate table on page 2, and reading
-    // them separately loses whichever fields aren't on the page it picked.
-    const pageParts = files.map(f => ({
-        inlineData: { mimeType: f.mime, data: f.buffer.toString('base64') },
-    }))
-    const label = files.length > 1
-        ? `${USER_PREFIX}\n\nThe ${files.length} images above are consecutive pages of ONE Letter of Offer, in order. Read them together as a single document.`
-        : USER_PREFIX
-
-    const basePayload = {
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{
-            role: 'user',
-            parts: [...pageParts, { text: label }],
-        }],
-        generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 8192,   // see max_tokens above — truncation kills the whole read
-            responseMimeType: 'application/json',
-            responseSchema: RESPONSE_SCHEMA,
-        },
-    }
-
-    // Auditable outbound log, matching deepseek.ts's and bankIntelligence.ts's
-    // — every part sent here is a page image the agent uploaded to this case,
-    // or this function's own instruction text; never anything from
-    // lib/google/*. Image bytes are summarized by count/type, not dumped.
-    console.log(`[Gemini OUTBOUND extractLoanOffer] pages=${files.length} mimeTypes=${JSON.stringify(files.map(f => f.mime))} instruction="${label.slice(0, 200)}"`)
-
-    for (const { id: model, genExtra } of GEMINI_MODELS) {
-        const body = JSON.stringify(genExtra
-            ? { ...basePayload, generationConfig: { ...basePayload.generationConfig, ...genExtra } }
-            : basePayload
-        )
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-        try {
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                // An image read takes longer than a text prompt — bigger cap, same shared deadline.
-                const timeout = callTimeout(deadline, 30000)
-                if (timeout == null) return null
-                res = await fetch(url, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-                    signal: AbortSignal.timeout(timeout),
-                })
-                // Retry ONLY a transient 503. A 429 here is Gemini's daily
-                // quota, which will not recover in 800ms — retrying just spends
-                // another unit of the very thing that ran out.
-                if (res.ok || res.status !== 503) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 800))
-            }
-            if (!res || !res.ok) {
-                // Google explains WHICH limit was hit in the body
-                // (quotaId / quotaMetric, e.g. PerDay vs PerMinute vs
-                // PerProject). A bare status code cannot distinguish a spent
-                // daily quota from a per-minute burst limit or a project
-                // misconfiguration, and those have completely different fixes.
-                const detail = res ? await res.text().catch(() => '') : ''
-                console.error(`[extractLoanOffer] gemini ${model} HTTP ${res?.status} ${keyFingerprint} ${detail.slice(0, 800)}`)
-                // Gemini's free tier meters each MODEL separately, so a 429 on
-                // one does not mean the next is blocked — a real local run had
-                // flash unavailable and flash-lite answer fine. Record the
-                // reason but keep going down the chain; only the same-model
-                // retry above is skipped, since a daily quota cannot recover
-                // in 800ms.
-                if (res?.status === 429) lastFailure = 'rate_limited'
-                continue
-            }
-            const json = await res.json()
-            const finish = json?.candidates?.[0]?.finishReason
-            if (finish && finish !== 'STOP') {
-                // MAX_TOKENS means the JSON was cut mid-string and will not
-                // parse — a real HSBC read died this way when the model dumped
-                // page text into one field. Name it rather than let it surface
-                // as a generic "couldn't read this file".
-                console.error(`[extractLoanOffer] gemini ${model} stopped early: ${finish}`)
-            }
-            const text = json?.candidates?.[0]?.content?.parts?.[0]?.text
-            if (typeof text === 'string' && text.trim()) return text
-        } catch (err) {
-            console.error(`[extractLoanOffer] gemini ${model} threw: ${String(err)}`)
-        }
-    }
-    return null
+    const { text, failure } = await callClaude({
+        label: 'extractLoanOffer',
+        system,
+        user,
+        files,
+        // A poor scan can be misread by a digit: the agent must check the amount.
+        model: files.length ? CLAUDE_VISION_MODEL : CLAUDE_MODEL,
+        // Headroom: a truncated reply loses the whole read, and thinking counts.
+        maxTokens: 12000,
+        timeoutMs,
+        sensitive: true,
+    })
+    if (failure === 'rate_limited' || failure === 'account') lastFailure = failure
+    return text
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -414,13 +224,11 @@ export interface LoFile {
 /**
  * Why the last extraction failed, when the reason is actionable.
  *
- * Set by the lanes and read by the route so a quota wall can say so. Gemini's
- * free tier is ~20 requests/day and returns 429 on every model in the chain
- * once spent — which otherwise reaches the agent as "couldn't read this file",
- * indistinguishable from an unreadable document and impossible to act on.
+ * Set by the model call and read by the route, so "busy" or "no credit" is not
+ * shown to the agent as an unreadable document.
  */
-let lastFailure: 'rate_limited' | null = null
-export function takeLastFailure(): 'rate_limited' | null {
+let lastFailure: 'rate_limited' | 'account' | null = null
+export function takeLastFailure(): 'rate_limited' | 'account' | null {
     const f = lastFailure
     lastFailure = null
     return f
@@ -467,10 +275,10 @@ export async function extractLoanOffer(
         // handing it to a text model just produces a confident empty answer —
         // so treat too-little-text as no text and go straight to vision.
         if (trimmed.length >= MIN_PDF_TEXT_CHARS) {
-            // Hold back enough budget that a DeepSeek stall can't starve the
+            // Hold back enough budget that a slow call can't starve the
             // vision lane — otherwise a slow text lane silently becomes the
             // only lane, and a PDF it can't handle has nowhere left to go.
-            const raw = await callDeepSeek(trimmed, system, Math.min(deadline, Date.now() + TEXT_LANE_MS))
+            const raw = await readLo({ text: trimmed }, system, deadline, TEXT_LANE_MS)
             if (raw) logRaw('pdf-text', raw)
             const parsed = raw && safeParse(raw)
             if (parsed) {
@@ -493,7 +301,7 @@ export async function extractLoanOffer(
 
     // Lane 2 — images, multi-page uploads, scanned PDFs, and any PDF the text
     // lane read poorly.
-    const raw = await callGeminiVision(pages, system, deadline)
+    const raw = await readLo({ files: pages }, system, deadline, 40_000)
     if (raw) logRaw('vision', raw)
     const parsed = raw && safeParse(raw)
     if (parsed) {
@@ -712,7 +520,7 @@ const TOP_LEVEL_FIELDS = [
 /**
  * Hoist top-level fields that the model wrongly nested inside loans[0].
  *
- * Only Gemini gets an enforced responseSchema — DeepSeek's json_object mode
+ * Only the model gets an enforced responseSchema — the model's json_object mode
  * enforces nothing, and on a real OCBC letter it returned the entire payload
  * (schedule, lock-in, address, features, subsidy) tucked inside the single
  * loan entry. Everything outside `loans` read as absent, the schedule was
@@ -790,7 +598,7 @@ export function normalize(
         const ref = typeof e.reference === 'string' ? e.reference.trim() : ''
         const rateText = typeof e.rate_text === 'string' ? e.rate_text.trim() : ''
         const spreadVal = parseRateNumber(e.spread)
-        // Gemini's responseSchema tends to emit EVERY declared property, so a
+        // the model's responseSchema tends to emit EVERY declared property, so a
         // fixed row arrives carrying `reference: ""` and `spread: 0`. Testing
         // those for mere presence (`!= null`) misclassified fixed years as
         // floating — an explicit "fixed" type must win over empty leftovers.
@@ -812,7 +620,7 @@ export function normalize(
             if (yr != null && yr >= 1 && yr <= 40) entry.year = Math.round(yr)
         }
         // The percentage printed on the row, recovered from rate_text when the
-        // model left the numeric field out. On a real UOB letter Gemini
+        // model left the numeric field out. On a real UOB letter the model
         // returned {type:"fixed", year:1} with no rate at all — correct row,
         // no figure — and both fixed years were dropped on the floor.
         const fromText = parseRateNumber(rateText)

@@ -1,17 +1,19 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
     DndContext, DragOverlay, MouseSensor, TouchSensor, useDraggable, useDroppable,
     useSensor, useSensors, type DragEndEvent, type DragStartEvent, type TouchSensorOptions,
 } from '@dnd-kit/core'
 import type { TouchEvent as ReactTouchEvent } from 'react'
-import { ArrowRightLeft, CalendarDays, GripVertical, Phone } from 'lucide-react'
+import { AlertCircle, ArrowRightLeft, CalendarDays, Clock, GripVertical, Phone } from 'lucide-react'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import { stageLabel } from '@/lib/insurance/stages'
 import { todaySgt } from '@/lib/insurance/promotions'
+import { addDays } from '@/lib/insurance/followUps'
+import { daysInStage, isStuck } from '@/lib/insurance/stageAge'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import FollowUpUpdateForm from '@/components/insurance/followup/FollowUpUpdateForm'
 import BankerMultiSelect from '@/components/insurance/BankerMultiSelect'
@@ -85,6 +87,22 @@ class HoldTouchSensor extends TouchSensor {
 
 const fmtShort = (d: string) => new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: '2-digit' })
 
+interface Banker { name: string; bank: string }
+type Filter = { followUpTo?: string; bankerName?: string; bankerBank?: string }
+
+function useOpenBankers(agent?: string): (Banker & { cases: number })[] {
+    const [list, setList] = useState<(Banker & { cases: number })[]>([])
+    useEffect(() => {
+        let alive = true
+        fetch(`/api/insurance/cases/bankers${agent ? `?agent=${agent}` : ''}`)
+            .then(r => (r.ok ? r.json() : { bankers: [] }))
+            .then(d => { if (alive) setList(d.bankers ?? []) })
+            .catch(() => { /* the filter just doesn't show */ })
+        return () => { alive = false }
+    }, [agent])
+    return list
+}
+
 export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/insurance/dashboard/cases/${id}` }: {
     search: string
     agent?: string
@@ -93,6 +111,13 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
     hrefFor?: (id: string) => string
 }) {
     const today = todaySgt()
+    const [overdueOnly, setOverdueOnly] = useState(false)
+    const [banker, setBanker] = useState<Banker | null>(null)
+    const bankers = useOpenBankers(agent)
+    const filter = {
+        ...(overdueOnly ? { followUpTo: addDays(today, -1) } : {}),
+        ...(banker ? { bankerName: banker.name, bankerBank: banker.bank } : {}),
+    }
     const [dragging, setDragging] = useState<CaseListRow | null>(null)
     // `to` unset = opened from the Move button: pick the column first.
     const [move, setMove] = useState<{ c: CaseListRow; to?: PipelineStage } | null>(null)
@@ -117,10 +142,38 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
 
     return (
         <>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+                <button type="button" onClick={() => setOverdueOnly(v => !v)} aria-pressed={overdueOnly}
+                    className={`h-10 px-3.5 rounded-full text-sm font-semibold border flex items-center gap-1.5 transition-colors ${
+                        overdueOnly ? 'bg-red-500 border-red-500 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}>
+                    <AlertCircle size={15} /> Overdue follow-up
+                </button>
+                {(bankers.length > 0 || banker) && (
+                    <select aria-label="Banker" value={banker ? JSON.stringify([banker.name, banker.bank]) : ''}
+                        onChange={e => {
+                            if (!e.target.value) { setBanker(null); return }
+                            const [name, bank] = JSON.parse(e.target.value) as [string, string]
+                            setBanker({ name, bank })
+                        }}
+                        className={`h-10 px-3 max-w-[260px] rounded-full text-sm font-semibold border bg-white outline-none focus:border-[#03a9e7] ${banker ? 'border-[#03a9e7] text-[#0369a1]' : 'border-slate-200 text-slate-600'}`}>
+                        <option value="">All bankers</option>
+                        {banker && !bankers.some(b => b.name === banker.name && b.bank === banker.bank) && (
+                            <option value={JSON.stringify([banker.name, banker.bank])}>{banker.name} ({banker.bank})</option>
+                        )}
+                        {bankers.map(b => (
+                            <option key={`${b.bank}|${b.name}`} value={JSON.stringify([b.name, b.bank])}>{b.name} ({b.bank}) · {b.cases}</option>
+                        ))}
+                    </select>
+                )}
+                {(overdueOnly || banker) && (
+                    <button type="button" onClick={() => { setOverdueOnly(false); setBanker(null) }} className="h-10 px-2 text-sm font-semibold on-navy-muted">Clear</button>
+                )}
+            </div>
             <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => { lastDragAt = Date.now(); setDragging(null) }}>
                 <div className="grid grid-flow-col auto-cols-[minmax(232px,1fr)] gap-3 overflow-x-auto pb-2 -mx-1 px-1">
                     {COLUMNS.map(col => (
-                        <Column key={col.stage} col={col} readOnly={readOnly} hrefFor={hrefFor} search={search} agent={agent} today={today} draggingId={dragging?.id}
+                        <Column key={col.stage} col={col} filter={filter} readOnly={readOnly} hrefFor={hrefFor} search={search} agent={agent} today={today} draggingId={dragging?.id}
                             onMove={c => setMove({ c })} />
                     ))}
                 </div>
@@ -136,12 +189,12 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
     )
 }
 
-function Column({ col, search, agent, today, draggingId, onMove, readOnly, hrefFor }: {
+function Column({ col, filter, search, agent, today, draggingId, onMove, readOnly, hrefFor }: {
     readOnly?: boolean; hrefFor: (id: string) => string
-    col: Col; search: string; agent?: string; today: string; draggingId?: string
+    col: Col; filter: Filter; search: string; agent?: string; today: string; draggingId?: string
     onMove: (c: CaseListRow) => void
 }) {
-    const q = usePagedCases({ stage: col.stage, search, agent, sort: 'follow_up_date', dir: 'asc', limit: PAGE })
+    const q = usePagedCases({ ...filter, stage: col.stage, search, agent, sort: 'follow_up_date', dir: 'asc', limit: PAGE })
     const { setNodeRef, isOver } = useDroppable({ id: col.stage })
 
     return (
@@ -162,7 +215,7 @@ function Column({ col, search, agent, today, draggingId, onMove, readOnly, hrefF
                     <p className="text-xs text-slate-400 text-center py-6">Loading…</p>
                 ) : q.rows.length === 0 ? (
                     <p className="text-xs text-slate-400 text-center py-8 border-2 border-dashed border-slate-200 rounded-xl">
-                        {search ? 'No matches' : readOnly ? 'No cases' : 'Drag a case here'}
+                        {search || Object.keys(filter).length > 0 ? 'No matches' : readOnly ? 'No cases' : 'Drag a case here'}
                     </p>
                 ) : q.rows.map(c => (
                     <DraggableCard key={c.id} c={c} today={today} hidden={draggingId === c.id} onMove={() => onMove(c)} readOnly={readOnly} href={hrefFor(c.id)} />
@@ -198,6 +251,8 @@ function CardBody({ c, today, showBanker, lifted, onMove, readOnly }: { readOnly
     const dueToday = fu === today
     const banker = c.referred_bankers?.[0]
     const more = (c.referred_bankers?.length ?? 0) - 1
+    const days = daysInStage(c.stage_changed_at)
+    const stuck = isStuck(c.stage, days)
     return (
         <div className={`bg-white rounded-xl border border-slate-200 flex ${readOnly ? 'cursor-pointer' : 'cursor-grab'} ${lifted ? 'shadow-xl rotate-1 cursor-grabbing' : 'hover:border-slate-300 hover:shadow-sm'}`}>
             {/* Drag grip — touch-action: none makes a finger here drag at once on iPad.
@@ -219,6 +274,11 @@ function CardBody({ c, today, showBanker, lifted, onMove, readOnly }: { readOnly
             {showBanker && (
                 <p className="text-xs text-slate-500 truncate mt-0.5">
                     {banker ? `${banker.name} (${banker.bank})${more > 0 ? ` +${more}` : ''}` : <span className="text-slate-300">No banker</span>}
+                </p>
+            )}
+            {days != null && (
+                <p className={`text-[11px] flex items-center gap-1 mt-0.5 ${stuck ? 'font-bold text-amber-700' : 'text-slate-400'}`}>
+                    <Clock size={11} /> {days === 0 ? 'New in this stage today' : `${days} day${days === 1 ? '' : 's'} in this stage`}
                 </p>
             )}
             <p className={`text-xs font-semibold flex items-center gap-1 mt-1 ${overdue ? 'text-red-600' : dueToday ? 'text-amber-600' : 'text-slate-500'}`}>

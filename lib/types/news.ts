@@ -1,6 +1,6 @@
 /**
  * Layer 6 — Mortgage News. Native RSS/JSON feeds from a fixed source allow-list
- * + DeepSeek relevance filter, agent-facing read-only feed with on-demand AI
+ * + Claude relevance filter, agent-facing read-only feed with on-demand AI
  * summaries.
  */
 

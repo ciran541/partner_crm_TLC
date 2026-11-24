@@ -18,21 +18,23 @@
  *
  * Business Times' feed carries genuine per-item <category> tags (confirmed via
  * the raw XML), so BT_RELEVANT_CATEGORIES pre-filters to only categories that
- * could plausibly be mortgage-relevant before anything reaches DeepSeek — cuts
- * obvious noise (Arts & Design, Sports, etc.) for free and reduces DeepSeek call
+ * could plausibly be mortgage-relevant before anything reaches Claude — cuts
+ * obvious noise (Arts & Design, Sports, etc.) for free and reduces Claude call
  * volume. CNA and MAS have no comparably reliable category scoping to pre-filter
  * on (MAS's content types are a mix of clearly-relevant and ambiguous — e.g.
  * "Parliamentary Replies" spans everything from property cooling measures to
- * unrelated topics), so both rely on DeepSeek classification alone.
+ * unrelated topics), so both rely on Claude classification alone.
  *
- * DeepSeek is used two ways here, both degrading to null on any failure so a bad
+ * Claude is used two ways here, both degrading to null on any failure so a bad
  * API call never blocks ingestion or shows a false positive:
- *  - classifyRelevance: JSON-mode relevance gate (never assume relevant on failure)
+ *  - classifyBatch (newsClassify.ts): relevance gate (never assume relevant on failure)
  *  - summarizeArticle: plain-text 2-3 sentence summary, from title+snippet only
  *    (never scraped article HTML — avoids paywall/ToS issues)
  */
 
 import Parser from 'rss-parser'
+import { callFreeFirst } from '@/lib/ai/freeFirst'
+import { classifyBatch, NEWS_BATCH } from '@/lib/insurance/newsClassify'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { NEWS_SOURCES } from '@/lib/types/news'
 import type { NewsArticle, NewsArticleInput } from '@/lib/types/news'
@@ -53,16 +55,11 @@ const BT_RELEVANT_CATEGORIES = new Set([
 // the time budget. Uninserted candidates aren't lost — they're not yet in the
 // DB, so they're simply reconsidered next run.
 //
-// Classification is deliberately SEQUENTIAL (one call at a time), not parallel
-// — confirmed via live testing (against Gemini, before the DeepSeek switch)
-// that firing several classifyRelevance() calls concurrently trips the
-// free-tier rate limit on every model in the chain at once (429s across the
-// board), which parallel retries can't route around. Kept sequential here as a
-// reasonable precaution rather than re-verifying the same risk doesn't apply
-// to DeepSeek too.
+// Classification runs in batches (newsClassify.ts), one batch at a time.
 const FEED_TIMEOUT_MS = 15000
-const MAX_NEW_PER_RUN = 30
-const RUN_TIME_BUDGET_MS = 40000   // leaves headroom under maxDuration=60 for feed fetching + DB writes
+const MAX_NEW_PER_RUN = 60
+const MAX_CLASSIFY_PER_RUN = 75
+const CLASSIFY_START_BUDGET_MS = 25000   // leaves room under maxDuration=60
 
 // MAS and HDB's WAFs return a decoy/error page instead of real content to
 // requests without a browser-like User-Agent (confirmed live per-site: Node's
@@ -283,123 +280,30 @@ async function fetchHdbFeed(pageUrl: string): Promise<FeedItem[]> {
     }
 }
 
-// ── DeepSeek ─────────────────────────────────────────────────────────────────
-// Switched from Gemini to DeepSeek for this file specifically (Knowledge Engine
-// and rate ingestion elsewhere in the codebase still use Gemini — not part of
-// this change). Reasons: Gemini's free tier turned out to cap at 20 requests/
-// day *per model* (confirmed live against the actual key in use, far tighter
-// than general documentation suggested), and DeepSeek is meaningfully cheaper
-// per token on the paid tier besides. OpenAI-compatible chat completions API —
-// same retry-on-5xx/429 pattern as the Gemini helpers elsewhere for consistency.
-const DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
-
-async function callDeepSeek(
-    systemInstruction: string,
-    userMessage: string,
-    options: { jsonMode?: boolean; maxTokens?: number } = {}
-): Promise<string | null> {
-    const apiKey = process.env.DEEPSEEK_API_KEY
-    if (!apiKey) return null
-
-    const body = JSON.stringify({
-        model: DEEPSEEK_MODELS[0],
-        messages: [
-            { role: 'system', content: systemInstruction },
-            { role: 'user', content: userMessage },
-        ],
-        temperature: 0,
-        max_tokens: options.maxTokens ?? 500,
-        // Confirmed live: deepseek-v4-flash's reasoning tokens (returned in a
-        // separate reasoning_content field) still count against max_tokens —
-        // a real call for a simple classification used 95 reasoning tokens
-        // before writing the actual answer. Same class of risk as the Gemini
-        // thinking-budget truncation bug found earlier; disabling it here
-        // proactively rather than waiting to reproduce that bug on this
-        // provider too. Per DeepSeek's own docs, this is a top-level field.
-        thinking: { type: 'disabled' },
-        ...(options.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-    })
-
-    // Auditable outbound log, matching the shared deepseek.ts's — this file
-    // has its own local callDeepSeek (not the shared one), so it needs its
-    // own log. Every input here is a news article's title/snippet fetched
-    // from a public RSS/news feed; never anything from lib/google/*.
-    console.log(`[DeepSeek OUTBOUND label=news] system="${systemInstruction.slice(0, 300)}" user="${userMessage.slice(0, 800)}"`)
-
-    for (const model of DEEPSEEK_MODELS) {
-        const modelBody = model === DEEPSEEK_MODELS[0] ? body : body.replace(`"model":"${DEEPSEEK_MODELS[0]}"`, `"model":"${model}"`)
-        try {
-            let res: Response | null = null
-            for (let attempt = 0; attempt < 2; attempt++) {
-                res = await fetch('https://api.deepseek.com/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-                    body: modelBody,
-                    signal: AbortSignal.timeout(20000),
-                })
-                if (res.ok || (res.status !== 503 && res.status !== 429)) break
-                if (attempt === 0) await new Promise(r => setTimeout(r, 700))
-            }
-            if (!res || !res.ok) {
-                console.error(`[news] ${model} HTTP ${res?.status}`)
-                continue
-            }
-            const json = await res.json()
-            const text = json?.choices?.[0]?.message?.content
-            if (typeof text === 'string' && text.trim()) return text.trim()
-        } catch (err) {
-            console.error(`[news] ${model} threw: ${String(err)}`)
-        }
-    }
-    return null
-}
-
-const CLASSIFY_SYSTEM = `You classify Singapore news headlines for a mortgage/insurance CRM used by loan advisory agents.
-
-Decide whether the article is relevant to: mortgage/home loan financing, SORA or other interest rate benchmarks, MAS monetary policy, bank lending rules, property cooling measures, or the Singapore property market (HDB/private) in a way that matters to a mortgage advisor and their clients.
-
-NOT relevant: general politics, crime, sports, entertainment, unrelated business news, or static reference/regulation pages that aren't actual news (e.g. a generic "Regulation" or "Investor Alert List" page).
-
-Base your answer only on the title and snippet given — do not guess beyond them.
-
-Respond ONLY with a JSON object of this exact shape: {"isRelevant": boolean, "reason": string}`
-
-export async function classifyRelevance(title: string, description: string): Promise<{ isRelevant: boolean; reason: string } | null> {
-    const raw = await callDeepSeek(
-        CLASSIFY_SYSTEM,
-        `Title: ${title}\nSnippet: ${description || '(none)'}`,
-        { jsonMode: true, maxTokens: 200 }
-    )
-    if (!raw) return null
-    try {
-        const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-        const parsed = JSON.parse(cleaned)
-        if (typeof parsed?.isRelevant !== 'boolean') return null
-        return { isRelevant: parsed.isRelevant, reason: String(parsed.reason ?? '').trim() }
-    } catch {
-        return null
-    }
-}
+// ── AI: public headlines only, so free Gemini first (lib/ai/freeFirst.ts) ─────
 
 const SUMMARY_SYSTEM = `You summarize a Singapore mortgage/property-finance news item for a loan advisory agent. Using ONLY the title and snippet given, write 2-3 plain-English sentences explaining what happened and, where the snippet supports it, why it matters for mortgage rates or the property market. Do not invent facts beyond what is given.
 
 Often no real snippet is available — just the headline. In that case, do not pad the summary with invented specifics or generic filler to make it sound fuller. Give a brief, honest restatement of what the headline itself says, and it is fine for this to be short.`
 
 export async function summarizeArticle(title: string, description: string | null): Promise<string | null> {
-    return callDeepSeek(SUMMARY_SYSTEM, `Title: ${title}\nSnippet: ${description || '(none)'}`, { maxTokens: 300 })
+    return callFreeFirst({
+        label: 'news-summary',
+        system: SUMMARY_SYSTEM,
+        user: `Title: ${title}\nSnippet: ${description || '(none)'}`,
+        maxTokens: 500,
+        thinking: 'off',
+        freeTimeoutMs: 10000,
+        timeoutMs: 20000,
+    })
 }
 
 // ── Ingestion ────────────────────────────────────────────────────────────────
 
 /**
- * Cron entrypoint: fetch both sources, date-filter, classify new items, upsert.
- *
- * Respects a wall-clock time budget (not just an item count cap) while calling
- * DeepSeek: live testing showed that when the free-tier quota is exhausted, EVERY
- * item burns through the full model-fallback × retry cascade before failing —
- * with enough items that alone can exceed the 60s serverless budget even though
- * each individual item "degrades gracefully" to null. Once the budget is spent,
- * remaining rows are inserted unclassified rather than left out entirely.
+ * Cron entrypoint: fetch every source, store what's new from the last STALE_DAYS,
+ * then classify in batches. Rows a run couldn't classify stay NULL (hidden from
+ * agents) and are picked up by the next run while still in that window.
  */
 export async function ingestAll(): Promise<{ inserted: number } | null> {
     const admin = createAdminClient()
@@ -415,19 +319,6 @@ export async function ingestAll(): Promise<{ inserted: number } | null> {
         }
     }
 
-    // Rows already stored but never successfully classified (e.g. a prior run's
-    // DeepSeek calls all failed) get a fresh attempt too, so a transient outage
-    // doesn't strand articles as permanently unclassified/hidden.
-    const { data: unclassifiedRows } = await admin
-        .from('mortgage_news_articles')
-        .select('id, source, feed_key, title, description')
-        .is('is_relevant', null)
-        .eq('is_manual', false)
-        .gte('published_at', new Date(cutoff).toISOString())
-        .limit(10)
-
-    if (!candidates.length && !unclassifiedRows?.length) return { inserted: 0 }
-
     const { data: existingRows } = candidates.length
         ? await admin.from('mortgage_news_articles').select('url').in('url', candidates.map(c => c.item.link))
         : { data: [] }
@@ -442,8 +333,6 @@ export async function ingestAll(): Promise<{ inserted: number } | null> {
 
     let inserted = 0
     for (const { source, item } of newCandidates) {
-        const withinBudget = Date.now() - startedAt < RUN_TIME_BUDGET_MS
-        const classification = withinBudget ? await classifyRelevance(item.title, item.description ?? '') : null
         // upsert + ignoreDuplicates rather than insert: a stray duplicate URL
         // (e.g. two near-identical feed entries for the same story) should skip
         // that one row, not fail the whole call.
@@ -459,21 +348,38 @@ export async function ingestAll(): Promise<{ inserted: number } | null> {
                 description: item.description,
                 image_url: item.imageUrl,
                 category: item.category,
-                is_relevant: classification?.isRelevant ?? null,
-                relevance_reason: classification?.reason ?? null,
             }, { onConflict: 'url', ignoreDuplicates: true })
         if (error) console.error('[news] insert failed:', error.message)
         else inserted++
     }
 
-    for (const row of unclassifiedRows ?? []) {
-        if (Date.now() - startedAt >= RUN_TIME_BUDGET_MS) break
-        const classification = await classifyRelevance(row.title, row.description ?? '')
-        if (!classification) continue   // still failing — leave it for a later run
-        await admin
-            .from('mortgage_news_articles')
-            .update({ is_relevant: classification.isRelevant, relevance_reason: classification.reason, updated_at: new Date().toISOString() })
-            .eq('id', row.id)
+    const { data: pending, error: pendingError } = await admin
+        .from('mortgage_news_articles')
+        .select('id, title, description')
+        .is('is_relevant', null)
+        .eq('is_manual', false)
+        .gte('published_at', new Date(cutoff).toISOString())
+        .order('published_at', { ascending: false })
+        .limit(MAX_CLASSIFY_PER_RUN)
+    if (pendingError) console.error('[news] loading unclassified failed:', pendingError.message)
+
+    const rows = pending ?? []
+    for (let i = 0; i < rows.length; i += NEWS_BATCH) {
+        // A batch can take ~27s if both providers time out; don't start late.
+        if (i > 0 && Date.now() - startedAt >= CLASSIFY_START_BUDGET_MS) break
+        const batch = rows.slice(i, i + NEWS_BATCH)
+        const verdicts = await classifyBatch(batch)
+        await Promise.all(batch.map(async (row, n) => {
+            const v = verdicts[n]
+            if (!v) return
+            // .is(null): never overwrite an admin's override made meanwhile.
+            const { error } = await admin
+                .from('mortgage_news_articles')
+                .update({ is_relevant: v.isRelevant, relevance_reason: v.reason, updated_at: new Date().toISOString() })
+                .eq('id', row.id)
+                .is('is_relevant', null)
+            if (error) console.error('[news] saving verdict failed:', error.message)
+        }))
     }
 
     return { inserted }

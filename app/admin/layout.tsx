@@ -7,7 +7,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { accountLabel, canAccessAdmin, getSafeRoute } from '@/lib/permissions'
 import {
     LayoutDashboard, Users, BarChart3, DollarSign, LogOut, Menu, X, Building2, Bell, ClipboardList, Percent, BookOpen,
-    Newspaper, CalendarClock, Landmark, History, Gift, Target, Wallet, PanelLeftClose, PanelLeftOpen,
+    Newspaper, CalendarClock, Landmark, History, Gift, Target, Wallet, PanelLeftClose, PanelLeftOpen, Sparkles,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
@@ -65,6 +65,7 @@ const NAV: { label: string; items: NavItem[] }[] = [
         items: [
             { name: 'Users', href: '/admin/users', icon: Users },
             { name: 'Audit Log', href: '/admin/audit-log', icon: History },
+            { name: 'AI Spend', href: '/admin/ai-spend', icon: Sparkles },
         ],
     },
 ]

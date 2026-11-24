@@ -1,28 +1,18 @@
 /**
- * Grounded answer synthesis — NOW VIA DEEPSEEK, not Gemini, despite this file's
- * name (kept because nine files and five docs reference it; renaming is a
- * separate tidy-up).
- *
- * Why it moved: Gemini's free tier meters ~20 requests per day PER MODEL across
- * every feature sharing the key. Answering one agent question costs TWO Gemini
- * calls (normalizeQuery + this), so roughly ten questions drained the whole
- * day's budget — including the share that Letter-of-Offer extraction needs, and
- * LO scans have no alternative provider because DeepSeek cannot read pixels.
- * DeepSeek is paid, uncapped, and cheaper, and this task is pure text in / text
- * out. Gemini is now reserved for vision only.
+ * Grounded answer synthesis (Claude).
  *
  * The model is ONLY the writer — it phrases an answer from the articles we hand
  * it. It is never the source of knowledge. Strict grounding is enforced by:
  *  - feeding it ONLY the retrieved articles (this file)
  *  - the system instruction below ("only from provided articles, never guess")
- *  - temperature 0
  *  - the caller's threshold gate (not called when nothing relevant matched)
  *
  * Returns null on any failure (missing key, network, safety block) so the caller
  * degrades gracefully to showing the article cards.
  */
 
-import { callDeepSeek } from '@/lib/insurance/deepseek'
+import { callClaude, CLAUDE_MODEL } from '@/lib/ai/claude'
+import { answerKey, getSavedAnswer, saveAnswer } from '@/lib/insurance/answerCache'
 
 interface SourceArticle {
     title: string
@@ -52,25 +42,26 @@ WHAT YOU MUST NOT DO:
 IF THE ARTICLES DO NOT CONTAIN THE ANSWER:
 Reply exactly: "I don't have guidance on that in our knowledge base — please check with your admin."`
 
-// The Gemini model chain that used to live here is gone with the provider
-// switch. The only remaining Gemini caller is extractLoanOffer.ts (vision), and
-// it keeps its own list. Nothing in this file talks to Gemini any more.
-
 export async function composeAnswer(question: string, articles: SourceArticle[]): Promise<string | null> {
     if (articles.length === 0 || !question.trim()) return null
+
+    const key = answerKey(question, articles, SYSTEM_INSTRUCTION, CLAUDE_MODEL)
+    const saved = await getSavedAnswer(key)
+    if (saved) return saved
 
     const context = articles
         .map((a, i) => `--- Article ${i + 1}: ${a.title} ---\n${a.content}`)
         .join('\n\n')
 
-    return callDeepSeek({
+    const { text, complete } = await callClaude({
         label: 'askKnowledge',
         system: SYSTEM_INSTRUCTION,
         user: `Reference articles (the ONLY source you may use):\n\n${context}\n\n---\n\nAgent's question: ${question.trim()}\n\nAnswer using only the articles above.`,
-        temperature: 0,
         maxTokens: 3000,
         // An agent is waiting on this in the UI — don't let a slow model hang
         // the request when the caller can degrade to article cards instead.
         timeoutMs: 25000,
     })
+    if (text && complete) await saveAnswer(key, text)
+    return text
 }

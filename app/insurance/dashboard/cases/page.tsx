@@ -13,6 +13,8 @@ import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
 import TrackBoard from '@/components/insurance/cases/TrackBoard'
+import BulkInactiveBar, { BULK_MAX } from '@/components/insurance/cases/BulkInactiveBar'
+import InlineAlert from '@/components/shared/InlineAlert'
 import ClosedWonMonthly from '@/components/insurance/cases/ClosedWonMonthly'
 import { todaySgt } from '@/lib/insurance/promotions'
 // "Track" = the open pipeline as a drag-and-drop board. It's the default view.
@@ -78,6 +80,10 @@ function CasesList() {
     const [stageFilter, setStageFilter] = useState(TRACK)
     const isTrack = stageFilter === TRACK
     const isClosedWon = stageFilter === CLOSED_WON
+    // Inactive: pick several clients, then activate / set one follow-up date.
+    const isInactive = stageFilter === INACTIVE_STAGE
+    const [selected, setSelected] = useState<Set<string>>(new Set())
+    const [bulkNote, setBulkNote] = useState<{ ok: boolean; message: string } | null>(null)
     // Closed Won tab: which closings to list — 'YYYY-MM' (a month) or 'YYYY'
     // (whole year), SGT. Opens on this month.
     const currentMonth = todaySgt().slice(0, 7)
@@ -144,6 +150,16 @@ function CasesList() {
         return { today: todayStr, thisMonth: todayStr.slice(0, 7) }
     }, [])
 
+    const toggleSelected = (id: string) => setSelected(prev => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else if (next.size < BULK_MAX) next.add(id)
+        return next
+    })
+    const pickable = cases.slice(0, BULK_MAX)
+    const allPicked = pickable.length > 0 && pickable.every(c => selected.has(c.id))
+    const changeStageFilter = (s: string) => { setStageFilter(s); setSelected(new Set()); setBulkNote(null) }
+
     const potentialRevenue = loanVolume * REVENUE_RATE
     const todayStr = todaySgt()
 
@@ -151,7 +167,7 @@ function CasesList() {
     const hasFilters = stageFilter !== TRACK || agentFilter !== 'all' || !!search || dateActive
 
     const resetFilters = () => {
-        setStageFilter(TRACK); setAgentFilter('all'); setSearch('')
+        changeStageFilter(TRACK); setAgentFilter('all'); setSearch('')
         setDateMode('all'); setFromDate(''); setToDate(''); setMonth('')
     }
 
@@ -194,7 +210,7 @@ function CasesList() {
                 <FilterPills
                     options={STATUS_PILL_OPTIONS}
                     value={stageFilter}
-                    onChange={setStageFilter}
+                    onChange={changeStageFilter}
                     accentColor="#03a9e7"
                     scrollable
                 />
@@ -313,6 +329,8 @@ function CasesList() {
                 </div>
             )}
 
+            {bulkNote && <InlineAlert type={bulkNote.ok ? 'success' : 'error'} message={bulkNote.message} onDismiss={() => setBulkNote(null)} />}
+
             {!isTrack && loading && (
                 <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={48} radius={10} />)}
@@ -354,6 +372,13 @@ function CasesList() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
+                                        {isInactive && (
+                                            <th className="table-th" style={{ width: 48 }}>
+                                                <input type="checkbox" aria-label={`Select the first ${pickable.length} clients`} checked={allPicked}
+                                                    onChange={() => setSelected(allPicked ? new Set() : new Set(pickable.map(c => c.id)))}
+                                                    className="w-5 h-5 accent-[#03a9e7]" />
+                                            </th>
+                                        )}
                                         <th className="table-th">Client</th>
                                         {isAdmin && <th className="table-th">Agent</th>}
                                         <th className="table-th">Type</th>
@@ -372,6 +397,12 @@ function CasesList() {
                                             onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = '#f8fafc')}
                                             onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = '')}
                                         >
+                                            {isInactive && (
+                                                <td className="table-td" onClick={e => e.stopPropagation()}>
+                                                    <input type="checkbox" aria-label={`Select ${c.client_name || 'client'}`} checked={selected.has(c.id)}
+                                                        onChange={() => toggleSelected(c.id)} className="w-5 h-5 accent-[#03a9e7]" />
+                                                </td>
+                                            )}
                                             <td className="table-td">
                                                 <p style={{ fontWeight: 600, color: '#0f172a' }}>
                                                     {c.client_name || <span style={{ color: '#94a3b8', fontStyle: 'italic', fontWeight: 400 }}>Unnamed</span>}
@@ -426,14 +457,18 @@ function CasesList() {
                     {/* Mobile card list */}
                     <div className="md:hidden flex flex-col gap-2.5">
                         {cases.map(c => (
+                            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            {isInactive && (
+                                <input type="checkbox" aria-label={`Select ${c.client_name || 'client'}`} checked={selected.has(c.id)}
+                                    onChange={() => toggleSelected(c.id)} className="w-6 h-6 shrink-0 accent-[#03a9e7]" />
+                            )}
                             <button
-                                key={c.id}
                                 onClick={() => router.push(`/insurance/dashboard/cases/${c.id}`)}
                                 className="card"
                                 style={{
                                     padding: '18px 20px', textAlign: 'left',
                                     display: 'flex', alignItems: 'flex-start', gap: 14,
-                                    width: '100%', background: 'none', cursor: 'pointer',
+                                    width: '100%', minWidth: 0, cursor: 'pointer',
                                 }}
                             >
                                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -468,6 +503,7 @@ function CasesList() {
                                 </div>
                                 <ArrowRight size={16} color="#cbd5e1" style={{ flexShrink: 0, marginTop: 4 }} />
                             </button>
+                            </div>
                         ))}
                     </div>
 
@@ -487,6 +523,13 @@ function CasesList() {
                         </button>
                     )}
                 </div>
+            )}
+            {isInactive && selected.size > 0 && (
+                <BulkInactiveBar
+                    ids={[...selected]}
+                    onClear={() => setSelected(new Set())}
+                    onDone={(message, ok, failedIds) => { setSelected(new Set(failedIds)); setBulkNote({ ok, message }) }}
+                />
             )}
             {newCaseOpen && (
                 <NewCaseModal

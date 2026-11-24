@@ -3,7 +3,7 @@
  * research — a PDF for OCBC (Research Monitor), UOB (Monthly Investment
  * Insights), Maybank (CIO Monthly Outlook), SC (Global Market Outlook), and
  * DBS (CIO Insights, quarterly), a plain article for HSBC (Monthly View) —
- * auto-discovered and comprehensively summarized via DeepSeek (Gemini fallback).
+ * auto-discovered and comprehensively summarized via Claude.
  */
 
 // Only banks with a confirmed, real way to find their latest report —

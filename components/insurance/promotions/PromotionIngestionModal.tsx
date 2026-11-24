@@ -29,7 +29,7 @@ Conditions:
 ...`
 
 /**
- * Paste a bank's promo blast → DeepSeek structures it → admin reviews → save.
+ * Paste a bank's promo blast → Claude structures it → admin reviews → save.
  *
  * The review step is the point of the whole screen, not a formality: the model
  * decides which benefit belongs to the CLIENT and which belongs to the AGENT,

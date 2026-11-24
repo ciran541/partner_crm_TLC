@@ -102,6 +102,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             ...old,
             loans: totals ? c.loans : old.loans,
             package: totals ? { ...old.package, lockin_years: c.lockin_years, schedule } : old.package,
+            // A corrected lock-in length makes the confirmed end date wrong: back to the estimate.
+            lock_in_end_date: c.lockin_years === (old.package?.lockin_years ?? 0) ? old.lock_in_end_date : undefined,
             lo_documents: c.lo_documents,
             bank: c.bank || undefined,
             property_address: c.property_address || undefined,

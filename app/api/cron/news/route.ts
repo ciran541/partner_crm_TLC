@@ -3,9 +3,9 @@ import { ingestAll } from '@/lib/insurance/news'
 import { requireCronAuth } from '@/lib/auth/requireCron'
 
 // GET /api/cron/news — daily Vercel cron. Fetches the native BT + CNA RSS feeds,
-// classifies new items for relevance (DeepSeek), and stores them.
+// classifies new items for relevance (AI), and stores them.
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60   // feed fetches + per-item DeepSeek classification
+export const maxDuration = 60   // feed fetches + batched AI classification
 
 export async function GET(request: Request) {
     const auth = requireCronAuth(request)

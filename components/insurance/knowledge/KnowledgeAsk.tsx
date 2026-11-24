@@ -22,7 +22,7 @@ interface Props {
 
 /**
  * Grounded "ask a question" experience. Calls /api/insurance/knowledge/ask which
- * retrieves matching articles and (if any) has Gemini compose an answer ONLY from
+ * retrieves matching articles and (if any) has Claude compose an answer ONLY from
  * them. Always shows the source articles beneath. Never browses the full library.
  */
 export default function KnowledgeAsk({ autoFocus }: Props) {
@@ -102,7 +102,7 @@ export default function KnowledgeAsk({ autoFocus }: Props) {
                         </div>
                     )}
 
-                    {/* Fallback notice when Gemini was unavailable but we have articles */}
+                    {/* Fallback notice when Claude was unavailable but we have articles */}
                     {!result.answer && result.sources.length > 0 && (
                         <p className="text-sm text-slate-600 font-medium">Here&apos;s the most relevant guidance:</p>
                     )}

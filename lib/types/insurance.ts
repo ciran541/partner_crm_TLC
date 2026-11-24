@@ -88,6 +88,9 @@ export interface ClosedWonData {
     // which bank now holds the loan, and when the lock-in started.
     bank?: string
     closed_at?: string              // YYYY-MM-DD (SGT) the case was closed
+    // YYYY-MM-DD the NEW loan's lock-in ends, confirmed by the agent at closing
+    // (it usually runs from disbursement). Older closures: caseLockInEnd() estimates it.
+    lock_in_end_date?: string
 }
 
 // Case Interface
@@ -109,6 +112,8 @@ export interface Case {
     lead_source?: string | null
     lead_source_other?: string | null
     first_activated_at?: string | null
+    // When the case entered its current stage (stamped by DB trigger).
+    stage_changed_at?: string | null
 
     // Case Classification
     case_type: CaseType
