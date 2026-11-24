@@ -1,31 +1,27 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { rpcError } from '@/lib/admin/rpcError'
 import { CORRECTION_FEE } from '@/lib/insurance/commission'
 
+const schema = z.object({ reason: z.string().trim().min(1).max(2000), charge: z.boolean(), updated_at: z.string() })
+
+/**
+ * POST — send a Closed Won case back to the agent (Pending Signature) to fix.
+ * Fixing it yourself is PATCH /api/admin/insurance/cases/[id]. Both go through
+ * admin_edit_case(), which blocks a case that's been paid, fully or partly.
+ */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
     const auth = await requireAdminUser()
     if (!auth.authorized) return auth.response
     const { id } = await context.params
-    let input
-    try { input = await request.json() } catch { return NextResponse.json({ error: 'Invalid request' }, { status: 400 }) }
-    if (!input || typeof input.reason !== 'string' || !input.reason.trim() || input.reason.length > 2000 || typeof input.charge !== 'boolean' || !['reopen', 'record'].includes(input.mode) || typeof input.updated_at !== 'string') {
-        return NextResponse.json({ error: 'Provide a reason, fee decision and correction mode.' }, { status: 400 })
-    }
-    const db = createAdminClient()
-    const { data: before, error: readError } = await db.from('cases').select('*').eq('id', id).single()
-    if (readError || !before) return NextResponse.json({ error: 'Case not found' }, { status: 404 })
-    if (before.stage !== 'Closed Won' || before.commission_status === 'paid' || before.updated_at !== input.updated_at) return NextResponse.json({ error: 'Only an unchanged, unpaid Closed Won case can be corrected. Refresh the case first.' }, { status: 409 })
-    const fee = input.charge ? CORRECTION_FEE : 0
-    const correction = { at: new Date().toISOString(), by: auth.userId, reason: input.reason.trim(), fee, mode: input.mode, from_stage: before.stage }
-    const { data, error } = await db.from('cases').update({
-        stage: input.mode === 'reopen' ? 'Pending Signature' : before.stage,
-        correction_fee: Number(before.correction_fee ?? 0) + fee,
-        corrections: [...(before.corrections ?? []), correction],
-        updated_at: correction.at,
-    }).eq('id', id).eq('updated_at', before.updated_at).eq('commission_status', 'unpaid').select().maybeSingle()
-    if (error) return NextResponse.json({ error: 'Unable to record correction' }, { status: 500 })
-    if (!data) return NextResponse.json({ error: 'Case changed. Refresh before trying again.' }, { status: 409 })
-    await db.from('insurance_case_activity_logs').insert({ case_id: id, actor_id: auth.userId, action: 'correction', old_value: { stage: before.stage, fee: before.correction_fee }, new_value: { ...correction, stage: data.stage } })
+    const parsed = schema.safeParse(await request.json().catch(() => null))
+    if (!parsed.success) return NextResponse.json({ error: 'Give a reason and decide on the fee.' }, { status: 400 })
+    const { data, error } = await createAdminClient().rpc('admin_edit_case', {
+        p_case: id, p_actor: auth.userId, p_expected: parsed.data.updated_at, p_changes: {},
+        p_reason: parsed.data.reason, p_fee: parsed.data.charge ? CORRECTION_FEE : 0, p_reopen: true,
+    })
+    if (error) return rpcError('correction', error, 'Unable to send the case back.')
     return NextResponse.json(data)
 }

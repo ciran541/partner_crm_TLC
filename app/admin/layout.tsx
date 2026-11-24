@@ -1,76 +1,125 @@
 'use client'
 
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useState, useSyncExternalStore, type ElementType } from 'react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter, usePathname } from 'next/navigation'
-import { canAccessAdmin, getSafeRoute } from '@/lib/permissions'
+import { accountLabel, canAccessAdmin, getSafeRoute } from '@/lib/permissions'
 import {
-    LayoutDashboard,
-    Users,
-    BarChart3,
-    DollarSign,
-    LogOut,
-    Menu,
-    X,
-    Shield,
-    Building2,
-    Bell,
-    ClipboardList,
-    Percent,
-    BookOpen,
-    Clock,
-    Newspaper,
-    CalendarClock,
-    Landmark,
-    History,
-    Gift,
+    LayoutDashboard, Users, BarChart3, DollarSign, LogOut, Menu, X, Building2, Bell, ClipboardList, Percent, BookOpen,
+    Newspaper, CalendarClock, Landmark, History, Gift, Target, Wallet, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
+import { clearCaseCaches } from '@/lib/insurance/caseCache'
 
 interface NavItem {
     name: string
     href: string
-    icon: React.ComponentType<{ size?: number }>
-    /** Match this href exactly. Only '/admin' needs it — every other route is a
-     *  prefix of nothing, but '/admin' is a prefix of all of them. */
-    exact?: boolean
+    icon: ElementType
+    /** Other routes that belong to this item. */
+    also?: string[]
 }
 
-interface NavSection {
-    label: string
-    items: NavItem[]
+// Grouped by what the screen is FOR. Finance comes first: payouts are what admin
+// is opened for. Labels are plan names; URLs keep the original app names.
+const NAV: { label: string; items: NavItem[] }[] = [
+    { label: '', items: [{ name: 'Home', href: '/admin', icon: LayoutDashboard }] },
+    {
+        label: 'Finance',
+        items: [
+            { name: 'TLC Dashboard', href: '/admin/finance', icon: BarChart3 },
+            { name: 'Payouts', href: '/admin/payouts', icon: Wallet, also: ['/admin/insurance/earnings'] },
+        ],
+    },
+    {
+        label: 'Premium',
+        items: [
+            { name: 'Cases', href: '/admin/insurance/cases', icon: ClipboardList },
+            { name: 'Action Centre', href: '/admin/insurance/follow-ups', icon: Target },
+        ],
+    },
+    {
+        label: 'Content',
+        items: [
+            { name: 'Rates', href: '/admin/insurance/rates', icon: Percent },
+            { name: 'Bank Promotions', href: '/admin/insurance/promotions', icon: Gift },
+            { name: 'Knowledge', href: '/admin/insurance/knowledge', icon: BookOpen },
+            { name: 'Mortgage News', href: '/admin/insurance/news', icon: Newspaper },
+            { name: 'Economic Calendar', href: '/admin/insurance/calendar', icon: CalendarClock },
+            { name: "Banks' Insights", href: '/admin/insurance/bank-intelligence', icon: Landmark },
+        ],
+    },
+    {
+        label: 'Basic & Starter',
+        items: [
+            { name: 'Cases', href: '/admin/property/cases', icon: Building2 },
+            { name: 'Earnings', href: '/admin/property/earnings', icon: DollarSign },
+            { name: 'Dashboard', href: '/admin/property/analytics', icon: BarChart3 },
+            { name: 'Reminders', href: '/admin/property/reminders', icon: Bell },
+        ],
+    },
+    {
+        label: 'System',
+        items: [
+            { name: 'Users', href: '/admin/users', icon: Users },
+            { name: 'Audit Log', href: '/admin/audit-log', icon: History },
+        ],
+    },
+]
+
+const under = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`)
+function isActive(pathname: string, item: NavItem) {
+    if (item.href === '/admin') return pathname === '/admin'
+    return [item.href, ...(item.also ?? [])].some(h => under(pathname, h))
+}
+
+// Icon rail, remembered per device. Collapsed by default below 1024px (iPad portrait).
+const RAIL_KEY = 'hub-admin-sidebar-collapsed'
+const railStore = {
+    listeners: new Set<() => void>(),
+    subscribe(cb: () => void): () => void {
+        railStore.listeners.add(cb)
+        window.addEventListener('storage', cb)
+        window.addEventListener('resize', cb)
+        return () => {
+            railStore.listeners.delete(cb)
+            window.removeEventListener('storage', cb)
+            window.removeEventListener('resize', cb)
+        }
+    },
+    get(): boolean {
+        try {
+            const saved = localStorage.getItem(RAIL_KEY)
+            if (saved !== null) return saved === '1'
+        } catch { /* private mode */ }
+        return window.innerWidth < 1024
+    },
+    serverGet(): boolean { return false },
+    set(v: boolean) {
+        try { localStorage.setItem(RAIL_KEY, v ? '1' : '0') } catch { /* ignore */ }
+        railStore.listeners.forEach(l => l())
+    },
 }
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
     const router = useRouter()
-    const pathname = usePathname()
+    const pathname = usePathname() ?? ''
     const [role, setRole] = useState<string | null>(null)
     const [email, setEmail] = useState<string | null>(null)
     const [displayName, setDisplayName] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
-    const [sidebarOpen, setSidebarOpen] = useState(true)
+    const [menuOpen, setMenuOpen] = useState(false)   // phone only
+    const rail = useSyncExternalStore(railStore.subscribe, railStore.get, railStore.serverGet)
 
     useEffect(() => {
         const loadUser = async () => {
-            const {
-                data: { user },
-            } = await supabase.auth.getUser()
-
-            if (!user) {
-                router.replace('/login')
-                return
-            }
-
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) { router.replace('/login'); return }
             setEmail(user.email ?? null)
 
-            const { data: profile } = await supabase
-                .from('profiles')
-                .select('role, app_type, name')
-                .eq('id', user.id)
-                .single()
-
+            const { data: profile } = await supabase.from('profiles').select('role, app_type, name').eq('id', user.id).single()
             if (!profile || !canAccessAdmin(profile.role)) {
                 router.replace(getSafeRoute(profile?.role, profile?.app_type))
                 return
@@ -82,25 +131,19 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             const { data: { session } } = await supabase.auth.getSession()
             if (session) {
                 saveLinkedAccount({
-                    userId: user.id,
-                    email: user.email ?? '',
-                    name: profile.name ?? null,
-                    role: profile.role,
-                    appType: profile.app_type,
-                    accessToken: session.access_token,
-                    refreshToken: session.refresh_token,
+                    userId: user.id, email: user.email ?? '', name: profile.name ?? null, role: profile.role, appType: profile.app_type,
+                    accessToken: session.access_token, refreshToken: session.refresh_token,
                 })
             }
-
             setRole(profile.role)
             setDisplayName(profile.name ?? null)
             setLoading(false)
         }
-
         loadUser()
     }, [router])
 
     const handleSignOut = async () => {
+        clearCaseCaches()
         const { data: { user } } = await supabase.auth.getUser()
         if (user) removeLinkedAccount(user.id)
         await supabase.auth.signOut()
@@ -110,173 +153,113 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     if (loading) {
         return (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-                <Spinner size="lg" color="#8b5cf6" label="Loading…" />
+                <Spinner size="lg" color="#03a9e7" label="Loading…" />
             </div>
         )
     }
 
-    // Grouped by what the screen is FOR, not by which table it reads. The
-    // insurance section split in two because the money screens (whose numbers go
-    // to agents and get paid out) and the reference/content screens (rates,
-    // promos, news) are different jobs done at different times — one long
-    // undifferentiated list made them look interchangeable.
-    const navSections: NavSection[] = [
-        {
-            label: 'Core',
-            items: [
-                { name: 'Admin Home', href: '/admin', icon: LayoutDashboard, exact: true },
-                { name: 'Users', href: '/admin/users', icon: Users },
-                { name: 'Audit Log', href: '/admin/audit-log', icon: History },
-            ],
-        },
-        {
-            label: 'Premium — Finance',
-            items: [
-                { name: 'Insurance Cases', href: '/admin/insurance/cases', icon: ClipboardList },
-                { name: 'Insurance Earnings', href: '/admin/insurance/earnings', icon: DollarSign },
-                { name: 'Insurance Analytics', href: '/admin/insurance/analytics', icon: BarChart3 },
-            ],
-        },
-        {
-            label: 'Premium — Operations',
-            items: [
-                { name: 'Insurance Follow-ups', href: '/admin/insurance/follow-ups', icon: Clock },
-                { name: 'Insurance Rates', href: '/admin/insurance/rates', icon: Percent },
-                { name: 'Bank Promotions', href: '/admin/insurance/promotions', icon: Gift },
-                { name: 'Insurance Knowledge', href: '/admin/insurance/knowledge', icon: BookOpen },
-                { name: 'Mortgage News', href: '/admin/insurance/news', icon: Newspaper },
-                { name: 'Economic Calendar', href: '/admin/insurance/calendar', icon: CalendarClock },
-                { name: "Banks' Insights", href: '/admin/insurance/bank-intelligence', icon: Landmark },
-            ],
-        },
-        {
-            label: 'Basic & Starter',
-            items: [
-                { name: 'Property Cases', href: '/admin/property/cases', icon: Building2 },
-                { name: 'Property Earnings', href: '/admin/property/earnings', icon: DollarSign },
-                { name: 'Property Analytics', href: '/admin/property/analytics', icon: BarChart3 },
-                { name: 'Property Reminders', href: '/admin/property/reminders', icon: Bell },
-            ],
-        },
-    ]
+    const nav = (compact: boolean) => NAV.map((section, i) => (
+        <div key={section.label || 'home'} className={i ? 'mt-4' : ''}>
+            {i > 0 && (compact
+                ? <div className="border-t border-white/10 mb-3 mx-2" />
+                : <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">{section.label}</p>)}
+            <ul className="space-y-1">
+                {section.items.map(item => {
+                    const active = isActive(pathname, item)
+                    const title = section.label && compact ? `${section.label}: ${item.name}` : item.name
+                    return (
+                        <li key={item.href}>
+                            <Link href={item.href} title={compact ? title : undefined} aria-label={compact ? title : undefined}
+                                aria-current={active ? 'page' : undefined} onClick={() => setMenuOpen(false)}
+                                className={`sidebar-link min-h-[44px] text-sm ${compact ? 'justify-center' : ''} ${active ? 'active' : ''}`}
+                                style={compact ? { paddingLeft: active ? 0 : 3, paddingRight: 0 } : undefined}>
+                                <item.icon size={compact ? 22 : 18} />
+                                {!compact && <span>{item.name}</span>}
+                            </Link>
+                        </li>
+                    )
+                })}
+            </ul>
+        </div>
+    ))
+
+    const footer = (
+        <div className="p-5 border-t border-white/10 bg-black/10 shrink-0">
+            <div className="mb-4">
+                <AccountSwitcher
+                    email={email}
+                    displayName={displayName}
+                    roleLabel={accountLabel(role as Parameters<typeof accountLabel>[0], null)}
+                    avatarColor="#03a9e7"
+                    onSignOut={handleSignOut}
+                    alwaysShowMenu
+                    addAccountLinks={[
+                        { label: 'Add admin login', href: '/login' },
+                        { label: 'Add Premium login', href: '/insurance/login' },
+                        { label: 'Add Basic / Starter login', href: '/property/login?add=1' },
+                    ]}
+                />
+            </div>
+            <button onClick={handleSignOut} className="flex items-center gap-2 text-slate-400 hover:text-red-400 transition-colors text-xs font-medium">
+                <LogOut size={16} /> Sign Out
+            </button>
+        </div>
+    )
 
     return (
-        <div className="flex min-h-screen bg-slate-50 relative">
-            {/* Mobile Top Bar */}
-            <div className="md:hidden fixed top-0 left-0 right-0 h-16 border-b border-white/10 flex items-center px-4 z-[60]"
-                style={{ background: '#1e1b4b' }}>
-                <button
-                    onClick={() => setSidebarOpen(!sidebarOpen)}
-                    className="p-2 text-white hover:bg-white/10 rounded-lg transition-colors"
-                >
-                    {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
-                </button>
-                <div className="ml-4 flex items-center gap-2">
-                    <Shield size={20} className="text-purple-300" />
-                    <span className="text-white font-bold text-sm">TLC Admin</span>
-                </div>
+        <div className="min-h-screen bg-slate-50">
+            {/* Phone top bar */}
+            <div className="md:hidden fixed top-0 left-0 right-0 h-14 flex items-center px-3 z-40 bg-[#052d4a]">
+                <button onClick={() => setMenuOpen(true)} aria-label="Open menu" className="w-11 h-11 flex items-center justify-center text-white rounded-lg hover:bg-white/10"><Menu size={22} /></button>
+                <span className="ml-2 text-white font-bold text-sm">TLC HUB Admin</span>
             </div>
-
-            {/* Backdrop */}
-            {sidebarOpen && (
-                <div
-                    className="md:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm"
-                    onClick={() => setSidebarOpen(false)}
-                />
+            {menuOpen && (
+                <div className="md:hidden fixed inset-0 z-50 flex">
+                    <div className="absolute inset-0 bg-black/50" onClick={() => setMenuOpen(false)} />
+                    <aside className="relative w-[280px] max-w-[85vw] flex flex-col sidebar-container">
+                        <div className="p-4 flex items-center justify-between border-b border-white/10">
+                            <span className="text-white font-bold">TLC HUB Admin</span>
+                            <button onClick={() => setMenuOpen(false)} aria-label="Close menu" className="w-11 h-11 flex items-center justify-center text-slate-300"><X size={20} /></button>
+                        </div>
+                        <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">{nav(false)}</nav>
+                        {footer}
+                    </aside>
+                </div>
             )}
 
-            {/* Sidebar */}
-            <aside
-                className={`fixed inset-y-0 left-0 z-50 w-[260px] flex flex-col overflow-hidden transform transition-transform duration-300 ease-in-out md:translate-x-0 ${
-                    sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-                }`}
-                style={{ background: '#1e1b4b', color: 'white' }}
-            >
-                {/* Brand Header */}
-                <div className="p-6 border-b border-white/10 shrink-0">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                            <Shield size={20} className="text-purple-300" />
-                        </div>
-                        <div>
-                            <h1 className="text-sm font-bold text-white leading-tight">Super Admin</h1>
-                            <p className="text-[11px] text-purple-300">The Loan Connection</p>
-                        </div>
+            {/* iPad / desktop sidebar */}
+            <aside className="hidden md:flex flex-col fixed inset-y-0 left-0 z-40 sidebar-container transition-[width] duration-200" style={{ width: rail ? 72 : 260 }}>
+                {rail ? (
+                    <div className="py-5 border-b border-white/10 flex flex-col items-center gap-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/brand/tlc-logo.png" alt="The Loan Connection" className="w-9 h-9 rounded" />
+                        <button type="button" onClick={() => railStore.set(false)} title="Expand sidebar" aria-label="Expand sidebar"
+                            className="w-11 h-11 rounded-xl flex items-center justify-center text-slate-300 bg-white/5 hover:bg-white/15 hover:text-white"><PanelLeftOpen size={22} /></button>
                     </div>
-                </div>
-
-                {/* Navigation */}
-                <nav className="flex-1 min-h-0 px-3 py-6 overflow-y-auto">
-                    {navSections.map((section, sectionIndex) => (
-                        <div key={section.label}>
-                            {sectionIndex > 0 && <hr className="border-white/10 my-4" />}
-                            <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                                {section.label}
-                            </p>
-                            <ul className="space-y-1">
-                                {section.items.map(item => {
-                                    const isActive = item.exact
-                                        ? pathname === item.href
-                                        : pathname === item.href || !!pathname?.startsWith(item.href)
-                                    return (
-                                        <li key={item.name}>
-                                            <a
-                                                href={item.href}
-                                                className={`flex items-center gap-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                                                    isActive
-                                                        ? 'bg-purple-500/20 text-white border-l-[3px] border-purple-400 pr-4'
-                                                        : 'text-slate-300 hover:text-white hover:bg-white/10 px-4'
-                                                }`}
-                                                style={isActive ? { paddingLeft: 13 } : undefined}
-                                                onClick={() => {
-                                                    if (window.innerWidth < 768) setSidebarOpen(false)
-                                                }}
-                                            >
-                                                <item.icon size={18} />
-                                                <span>{item.name}</span>
-                                            </a>
-                                        </li>
-                                    )
-                                })}
-                            </ul>
+                ) : (
+                    <div className="p-5 pr-3 border-b border-white/10 flex items-center gap-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/brand/tlc-logo.png" alt="" className="w-10 h-10 rounded" />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-white leading-tight">TLC HUB Admin</p>
+                            <p className="text-[11px] text-[#7dd3fc]">The Loan Connection</p>
                         </div>
-                    ))}
-                </nav>
-
-                {/* User Footer */}
-                <div className="p-5 border-t border-white/10 shrink-0" style={{ background: 'rgba(0,0,0,0.15)' }}>
-                    <div className="mb-4">
-                        <AccountSwitcher
-                            email={email}
-                            displayName={displayName}
-                            roleLabel="Super Admin"
-                            avatarColor="#a855f7"
-                            onSignOut={handleSignOut}
-                            alwaysShowMenu
-                            addAccountLinks={[
-                                { label: 'Add admin login', href: '/login' },
-                                { label: 'Add Premium login', href: '/insurance/login' },
-                                { label: 'Add Basic / Starter login', href: '/property/login?add=1' },
-                            ]}
-                        />
+                        <button type="button" onClick={() => railStore.set(true)} title="Collapse sidebar" aria-label="Collapse sidebar"
+                            className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center text-slate-400 hover:bg-white/10 hover:text-white"><PanelLeftClose size={20} /></button>
                     </div>
-                    <button
-                        onClick={handleSignOut}
-                        className="flex items-center gap-2 text-slate-400 hover:text-red-400 transition-colors text-xs font-medium"
-                    >
-                        <LogOut size={16} />
-                        Sign Out
-                    </button>
-                </div>
+                )}
+                <nav className={`flex-1 min-h-0 py-4 overflow-y-auto ${rail ? 'px-2' : 'px-3'}`}>{nav(rail)}</nav>
+                {rail ? (
+                    <div className="py-4 border-t border-white/10 bg-black/10 flex flex-col items-center gap-3">
+                        <button type="button" onClick={() => railStore.set(false)} title={displayName || email || 'Account'} aria-label="Open sidebar to switch account"
+                            className="w-10 h-10 rounded-full bg-[#03a9e7] text-white text-sm font-bold">{(displayName || email || '?').trim().charAt(0).toUpperCase()}</button>
+                        <button type="button" onClick={handleSignOut} title="Sign out" aria-label="Sign out" className="w-10 h-10 rounded-lg flex items-center justify-center text-[#ee3238] hover:bg-white/10"><LogOut size={18} /></button>
+                    </div>
+                ) : footer}
             </aside>
 
-            {/* Main Content */}
-            <main
-                className={`flex-1 transition-all duration-300 ease-in-out min-w-0 ${
-                    sidebarOpen ? 'md:ml-[260px]' : 'ml-0'
-                }`}
-            >
-                <div className="p-4 md:p-8 pt-20 md:pt-8 w-full">
+            <main className={`min-w-0 transition-[margin] duration-200 ${rail ? 'md:ml-[72px]' : 'md:ml-[260px]'}`}>
+                <div className="p-4 md:p-6 lg:p-8 pt-[72px] md:pt-6 lg:pt-8 w-full">
                     <div className="max-w-[1200px] mx-auto">{children}</div>
                 </div>
             </main>

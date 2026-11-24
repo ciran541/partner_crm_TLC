@@ -1,200 +1,115 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { ClipboardList, AlertCircle, ArrowRight, ChevronDown, Search } from 'lucide-react'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { ClipboardList, Search } from 'lucide-react'
 import { usePagedCases } from '@/lib/insurance/usePagedCases'
-import { formatDate } from '@/lib/utils/formatDate'
-import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { caseCommission, commissionBucket } from '@/lib/insurance/commission'
+import { INACTIVE_STAGE, PIPELINE_STAGES, stageBadge, stageLabel } from '@/lib/insurance/stages'
+import { todaySgt } from '@/lib/insurance/promotions'
+import FilterPills from '@/components/shared/FilterPills'
+import Skeleton from '@/components/shared/Skeleton'
+import TrackBoard from '@/components/insurance/cases/TrackBoard'
+import ClosedWonMonthly from '@/components/insurance/cases/ClosedWonMonthly'
+import { Empty, ErrorBox, FIELD, PageTitle, Pill, day, money } from '@/components/admin/ui'
 import type { CaseType } from '@/lib/types'
-import { PIPELINE_STAGES as STAGES, stageBadge } from '@/lib/insurance/stages'
 
-const CASE_TYPES: CaseType[] = ['Purchase', 'Refinancing', 'Decouple', 'Equity Loan']
+/**
+ * Premium cases across every agent. Same tabs as the agent's Cases page (Track,
+ * each stage, Closed Won by month), view-only: changes are made on the case page.
+ */
 
+const CASE_TYPES: CaseType[] = ['Purchase', 'Refinancing', 'Decouple', 'Equity Loan', 'Divorce']
+const TRACK = 'track'
+const TABS = [
+    { value: TRACK, label: 'Track' },
+    { value: 'all', label: 'All' },
+    ...PIPELINE_STAGES.filter(s => s !== INACTIVE_STAGE).map(s => ({ value: s as string, label: stageLabel(s) })),
+    { value: INACTIVE_STAGE as string, label: stageLabel(INACTIVE_STAGE) },
+]
 
-export default function AdminInsuranceCasesPage() {
+export default function AdminPremiumCasesPage() {
+    return <Suspense fallback={<Skeleton height={320} radius={14} />}><Content /></Suspense>
+}
+
+function Content() {
     const router = useRouter()
-    const [stageFilter, setStageFilter] = useState('')
-    const [typeFilter, setTypeFilter] = useState('')
-    const [agentFilter, setAgentFilter] = useState('')
+    const params = useSearchParams()
+    const currentMonth = todaySgt().slice(0, 7)
+    const [tab, setTab] = useState(() => (TABS.some(t => t.value === params.get('stage')) ? params.get('stage')! : TRACK))
+    const [agent, setAgent] = useState(() => params.get('agent') ?? '')
+    const [type, setType] = useState('')
     const [search, setSearch] = useState('')
+    const [closedMonth, setClosedMonth] = useState(currentMonth)
     const [agents, setAgents] = useState<{ id: string; name: string }[]>([])
+    const isTrack = tab === TRACK
+    const isWon = tab === 'Closed Won'
 
-    // Server-side filtering, paging and totals. Search covers client name/mobile/
-    // email and — because the caller is an admin — the agent's name too, matching
-    // what this screen's placeholder promises.
-    const {
-        rows: filtered,
-        total,
-        hasMore,
-        loading,
-        refreshing,
-        loadingMore,
-        error,
-        loadMore,
-    } = usePagedCases({
-        search,
-        stage: stageFilter || 'all',
-        caseType: typeFilter || undefined,
-        agent: agentFilter || undefined,
-    })
+    const q = usePagedCases({
+        search, stage: tab, caseType: type || undefined, agent: agent || undefined,
+        closedMonth: isWon && closedMonth !== 'all' ? closedMonth : undefined,
+    }, { enabled: !isTrack })
 
-    // The agent dropdown used to be derived from the loaded rows. Under paging
-    // that would only ever list agents who happen to appear in the current page,
-    // so the roster now comes from its own endpoint.
     useEffect(() => {
-        let active = true
-        fetch('/api/admin/get-profiles')
-            .then(res => (res.ok ? res.json() : []))
-            .then(profiles => {
-                if (!active || !Array.isArray(profiles)) return
-                setAgents(
-                    profiles
-                        .map((p: { id: string; name: string }) => ({ id: p.id, name: p.name || 'Unnamed agent' }))
-                        .sort((a, b) => a.name.localeCompare(b.name)),
-                )
-            })
-            .catch(() => { /* non-fatal: filter just won't populate */ })
-        return () => { active = false }
+        let alive = true
+        fetch('/api/admin/get-profiles').then(r => (r.ok ? r.json() : [])).then((list: { id: string; name: string; role: string; app_type: string }[]) => {
+            if (alive && Array.isArray(list)) setAgents(list.filter(p => p.role === 'agent' && p.app_type === 'insurance').map(p => ({ id: p.id, name: p.name || 'Unnamed agent' })).sort((a, b) => a.name.localeCompare(b.name)))
+        }).catch(() => {})
+        return () => { alive = false }
     }, [])
 
-    const hasFilters = !!stageFilter || !!typeFilter || !!agentFilter || !!search
-
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
-                    <ClipboardList size={26} color="#8b5cf6" /> Insurance Cases
-                </h1>
-                <p className="text-sm text-slate-500 mt-1">
-                    {loading ? 'Loading…' : `${total} case${total !== 1 ? 's' : ''} across all agents`}
-                </p>
-            </div>
-
-            {/* Filters */}
-            <div className="flex flex-wrap gap-3">
-                <div className="relative flex-1 min-w-[200px] max-w-xs">
+        <div className="space-y-5">
+            <PageTitle icon={ClipboardList} title="Cases" subtitle="Premium cases across every agent." />
+            <FilterPills options={TABS} value={tab} onChange={setTab} accentColor="#03a9e7" scrollable />
+            <div className="flex flex-wrap gap-2">
+                <label className="relative flex-1 min-w-[220px] max-w-sm">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input value={search} onChange={e => setSearch(e.target.value)}
-                        placeholder="Search client, mobile, agent…"
-                        className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-slate-200 bg-white focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100" />
-                </div>
-                <FilterSelect value={agentFilter} onChange={setAgentFilter} allLabel="All Agents"
-                    options={agents.map(a => ({ value: a.id, label: a.name }))} />
-                <FilterSelect value={stageFilter} onChange={setStageFilter} allLabel="All Stages"
-                    options={STAGES.map(s => ({ value: s, label: s }))} />
-                <FilterSelect value={typeFilter} onChange={setTypeFilter} allLabel="All Types"
-                    options={CASE_TYPES.map(t => ({ value: t, label: t }))} />
-                {hasFilters && (
-                    <button onClick={() => { setStageFilter(''); setTypeFilter(''); setAgentFilter(''); setSearch('') }}
-                        className="text-xs text-slate-500 hover:text-slate-700 px-2 py-1">Clear filters</button>
-                )}
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Client, mobile, email or agent" className={`${FIELD} w-full pl-9`} />
+                </label>
+                <select aria-label="Agent" className={FIELD} value={agent} onChange={e => setAgent(e.target.value)}>
+                    <option value="">All agents</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+                {!isTrack && <select aria-label="Case type" className={FIELD} value={type} onChange={e => setType(e.target.value)}>
+                    <option value="">All types</option>{CASE_TYPES.map(t => <option key={t}>{t}</option>)}
+                </select>}
+                {(search || agent || type) && <button type="button" onClick={() => { setSearch(''); setAgent(''); setType('') }} className="min-h-[44px] px-2 text-xs text-slate-500">Clear filters</button>}
             </div>
 
-            {loading && (
-                <div className="card p-8 flex items-center justify-center gap-3 text-slate-500 text-sm">
-                    <div style={{ width: 24, height: 24, borderRadius: '50%', border: '3px solid #8b5cf6', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />
-                    Loading cases…
-                    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-                </div>
-            )}
-
-            {error && <div className="card p-6 flex items-center gap-3 text-red-600 text-sm"><AlertCircle size={18} />{error}</div>}
-
-            {!loading && !error && filtered.length === 0 && (
-                <div className="card p-12 text-center">
-                    <ClipboardList size={32} className="mx-auto mb-3 text-slate-300" />
-                    <p className="text-slate-500 text-sm">No cases match the current filters.</p>
-                </div>
-            )}
-
-            {/* Dim while a new query loads over existing rows — no spinner flash,
-                no layout jump. */}
-            {!loading && !error && filtered.length > 0 && (
-                <div className="card overflow-hidden transition-opacity duration-150" style={{ opacity: refreshing ? 0.55 : 1 }}>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="border-b border-slate-100 bg-slate-50">
-                                    <Th>Agent</Th><Th>Client</Th><Th>Type</Th><Th>Stage</Th>
-                                    <Th right>Loan</Th><Th right>Commission</Th><Th>Payout</Th><Th>Updated</Th><Th />
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                                {filtered.map(c => {
-                                    const badge = stageBadge(c.stage)
-                                    const bucket = commissionBucket(c)
-                                    // Server-computed, so the column and the
-                                    // aggregate can never disagree.
-                                    const loan = c.loan_value ?? 0
-                                    return (
-                                        <tr key={c.id}
-                                            onClick={() => router.push(`/admin/insurance/cases/${c.id}`)}
-                                            className="hover:bg-purple-50/40 cursor-pointer transition-colors">
-                                            <td className="px-4 py-3 text-slate-600 font-medium">{c.profiles?.name ?? '—'}</td>
-                                            <td className="px-4 py-3">
-                                                <p className="font-medium text-slate-800">{c.client_name || 'Unnamed'}</p>
-                                                {c.client_mobile && <p className="text-xs text-slate-400 mt-0.5">{c.client_mobile}</p>}
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-600">{c.case_type}</td>
-                                            <td className="px-4 py-3">
-                                                <span className="inline-flex items-center text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap" style={{ color: badge.text, background: badge.bg }}>{c.stage}</span>
-                                            </td>
-                                            <td className="px-4 py-3 text-right text-slate-700 font-medium">{loan ? formatCurrency(loan) : '—'}</td>
-                                            <td className="px-4 py-3 text-right font-semibold text-emerald-700">{loan ? formatCurrency(caseCommission(c).agent) : '—'}</td>
-                                            <td className="px-4 py-3">
-                                                {bucket === 'closed_paid' && <PayoutBadge label="Paid" color="#16a34a" bg="#f0fdf4" />}
-                                                {bucket === 'closed_unpaid' && <PayoutBadge label="Unpaid" color="#d97706" bg="#fffbeb" />}
-                                                {bucket === 'open' && <span className="text-xs text-slate-400">—</span>}
-                                                {bucket === null && <span className="text-xs text-slate-300">—</span>}
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-400 text-xs">{formatDate(c.updated_at)}</td>
-                                            <td className="px-4 py-3"><ArrowRight size={15} className="text-slate-300" /></td>
-                                        </tr>
-                                    )
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                    <div className="px-4 py-3 border-t border-slate-100 text-xs text-slate-400 flex items-center justify-between gap-3">
-                        <span>Showing {filtered.length} of {total} case{total !== 1 ? 's' : ''}</span>
-                        {/* Appends, so scroll position is preserved. */}
-                        {hasMore && (
-                            <button
-                                onClick={loadMore}
-                                disabled={loadingMore}
-                                className="text-xs font-semibold text-purple-600 hover:text-purple-800 disabled:text-slate-300"
-                            >
-                                {loadingMore ? 'Loading…' : `Load more (${total - filtered.length} remaining)`}
-                            </button>
-                        )}
+            {isTrack && <TrackBoard search={search} agent={agent || undefined} readOnly hrefFor={id => `/admin/insurance/cases/${id}`} />}
+            {isWon && <ClosedWonMonthly key={agent} scope={closedMonth} currentMonth={currentMonth} onScope={setClosedMonth} loanVolume={q.loanVolume} cases={q.total} loading={q.loading || q.refreshing} agent={agent || undefined} />}
+            {!isTrack && (q.error ? <ErrorBox message={q.error} /> : q.loading ? <Skeleton height={320} radius={14} /> : q.rows.length === 0 ? <div className="card"><Empty>No cases match.</Empty></div> : (
+                <div className="card overflow-hidden transition-opacity" style={{ opacity: q.refreshing ? 0.55 : 1 }}>
+                    <div className="overflow-x-auto"><table className="w-full text-sm">
+                        <thead><tr className="border-b border-slate-100 bg-slate-50">{['Agent', 'Client', 'Type', 'Stage', 'Follow-up'].map(h => <th key={h} className="table-th">{h}</th>)}{['Loan', 'Agent share'].map(h => <th key={h} className="table-th" style={{ textAlign: 'right' }}>{h}</th>)}<th className="table-th">Payout</th></tr></thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {q.rows.map(c => {
+                                const badge = stageBadge(c.stage)
+                                const bucket = commissionBucket(c)
+                                const loan = c.loan_value ?? 0
+                                const paid = Number(c.commission_paid_total ?? 0)
+                                const late = c.follow_up_date && c.follow_up_date.slice(0, 10) < todaySgt()
+                                return (
+                                    <tr key={c.id} onClick={() => router.push(`/admin/insurance/cases/${c.id}`)} className="hover:bg-sky-50/50 cursor-pointer">
+                                        <td className="px-4 py-3 text-slate-600 font-medium">{c.profiles?.name ?? '—'}</td>
+                                        <td className="px-4 py-3"><p className="font-semibold text-slate-800">{c.client_name || 'Unnamed'}</p>{c.client_mobile && <p className="text-xs text-slate-500">{c.client_mobile}</p>}</td>
+                                        <td className="px-4 py-3 text-slate-600">{c.case_type}</td>
+                                        <td className="px-4 py-3"><span className="text-xs font-semibold px-2 py-1 rounded-full whitespace-nowrap" style={{ color: badge.text, background: badge.bg }}>{stageLabel(c.stage)}</span></td>
+                                        <td className={`px-4 py-3 whitespace-nowrap ${late ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>{day(c.follow_up_date)}</td>
+                                        <td className="px-4 py-3 text-right">{loan ? money(loan) : '—'}</td>
+                                        <td className="px-4 py-3 text-right font-semibold text-emerald-700">{loan ? money(caseCommission(c).agent) : '—'}</td>
+                                        <td className="px-4 py-3">{bucket === 'closed_paid' ? <Pill tone="green">Paid</Pill> : bucket === 'closed_unpaid' ? (paid > 0 ? <Pill tone="blue">Part paid {money(paid)}</Pill> : <Pill tone="amber">Unpaid</Pill>) : <span className="text-slate-300">—</span>}</td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table></div>
+                    <div className="px-4 py-2 border-t border-slate-100 text-xs text-slate-500 flex items-center justify-between min-h-[48px]">
+                        <span>Showing {q.rows.length} of {q.total}</span>
+                        {q.hasMore && <button type="button" onClick={q.loadMore} disabled={q.loadingMore} className="min-h-[44px] px-3 font-semibold text-[#0369a1]">{q.loadingMore ? 'Loading…' : `Load more (${q.total - q.rows.length} remaining)`}</button>}
                     </div>
                 </div>
-            )}
-        </div>
-    )
-}
-
-function Th({ children, right }: { children?: React.ReactNode; right?: boolean }) {
-    return <th className={`${right ? 'text-right' : 'text-left'} px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider`}>{children}</th>
-}
-
-function PayoutBadge({ label, color, bg }: { label: string; color: string; bg: string }) {
-    return <span className="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full" style={{ color, background: bg }}>{label}</span>
-}
-
-function FilterSelect({ value, onChange, allLabel, options }: {
-    value: string; onChange: (v: string) => void; allLabel: string; options: { value: string; label: string }[]
-}) {
-    return (
-        <div className="relative">
-            <select value={value} onChange={e => onChange(e.target.value)}
-                className="appearance-none pl-3 pr-8 py-2 text-sm rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100">
-                <option value="">{allLabel}</option>
-                {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-            <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            ))}
         </div>
     )
 }

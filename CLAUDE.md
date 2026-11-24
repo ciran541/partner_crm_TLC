@@ -170,6 +170,16 @@ Business rule (agreed 2026-11-20): **every case always has a next follow-up date
 - **Data**: `dashboard_analytics()` → `GET /api/insurance/dashboard` (aggregates by month × source only). **All maths in `lib/insurance/dashboardStats.ts`** (tested): production by Closed Won month; **YoY compares the same months** (YTD vs same period last year); source conversion = leads activated in the year vs wins from those same leads; conversion by activation cohort, **provisional** while any lead in it is open.
 - Lead sources are a ranked bar list, not the concept's pie (8 slices can't be compared or told apart by colour-blind agents).
 
+### Admin console — finance desk
+
+TLC's own desk (agreed 2026-11-23). One admin role: `admin` and `super_admin` are the same and shown as "Admin". Sidebar: Home · Finance (TLC Dashboard, Payouts) · Premium · Content · Basic & Starter · System. UI uses plan names only; URLs keep `/admin/insurance` and `/admin/property`.
+
+- **Maths**: `lib/insurance/financeStats.ts` (tested), fed by `finance_overview()` / `finance_queue()` (migration `20261205000000`; both derive from `finance_cases()`). Premium only. Basic & Starter: `lib/property/adminAnalytics.ts` (drafts and duplicates never count, same as Earnings).
+- **Bank receipts** (`bank_transfers`, `bank_receipts`, migration `20261204000000`): banks pay TLC first, always 0.15%. Permanent rows; mistakes are reversals, clawbacks are negative. A mismatch is flagged and never changes the agent's share. Cases paid before tracking are in `bank_receipt_untracked` and left out of cash-held figures.
+- **Payouts**: `record_commission_payouts()` is the only way to record (single or batch): locks each case, batch is all-or-nothing. Paying before the bank has paid warns, never blocks.
+- **Admin edits**: `PATCH /api/admin/insurance/cases/[id]` → `admin_edit_case()`: whitelisted columns, stale-edit check, reason required beyond client/follow-up details, optional $50 fee, change log, all in one transaction. Anything that moves the payout is blocked once any payout exists. It pins `closed_at` so an edit can't move the closing month. Agents see the log via `CaseChanges`. Don't add another admin write path (the old unrestricted `update-case` route was removed).
+- **Audit Log**: `admin_activity()` merges user actions, case edits, payouts and bank records.
+
 ### Shared financial core
 
 The regulated, client-facing numbers each live in exactly ONE module — never re-implement them locally:

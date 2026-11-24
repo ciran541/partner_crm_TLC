@@ -21,6 +21,17 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing User ID' }, { status: 400 })
         }
 
+        if (role && role !== 'agent' && role !== 'super_admin') {
+            return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+        }
+        if (status && status !== 'active' && status !== 'disabled') {
+            return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+        }
+        // An admin can't lock themselves out.
+        if (id === auth.userId && (role === 'agent' || status === 'disabled')) {
+            return NextResponse.json({ error: 'You can’t disable yourself or remove your own admin access. Ask another admin.' }, { status: 400 })
+        }
+
         const supabaseAdmin = createAdminClient()
 
         // Build profile update payload

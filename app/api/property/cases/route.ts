@@ -33,6 +33,19 @@ export async function GET(request: Request) {
     if (status) query = query.eq('status', status)
     if (case_type) query = query.eq('case_type', case_type)
 
+    // Search covers every case, not just the page on screen. Characters that mean
+    // something to the filter syntax are dropped rather than escaped.
+    const search = (searchParams.get('search') ?? '').replace(/[%_*,()"'\\:.]/g, ' ').trim().slice(0, 80)
+    if (search) {
+        const like = `%${search}%`
+        const parts = ['client_name', 'client_mobile', 'property_address'].map(c => `${c}.ilike.${like}`)
+        if (userIsAdmin) {
+            const { data: agents } = await admin.from('profiles').select('id').or(`name.ilike.${like},full_name.ilike.${like}`).limit(100)
+            if (agents?.length) parts.push(`agent_id.in.(${agents.map(a => a.id).join(',')})`)
+        }
+        query = query.or(parts.join(','))
+    }
+
     const { data: cases, error, count } = await query
 
     if (error) {

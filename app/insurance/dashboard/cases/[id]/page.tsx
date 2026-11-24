@@ -13,7 +13,7 @@ import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
 import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import DecoupleOverview from '@/components/insurance/workflow/DecoupleOverview'
 import EquityLoanOverview from '@/components/insurance/workflow/EquityLoanOverview'
-import { computePurchase, inputsFromWorkflow } from '@/lib/insurance/purchaseCalc'
+import { workflowCaseFields, type AnyWorkflow } from '@/lib/insurance/workflowFields'
 import BankerMultiSelect from '@/components/insurance/BankerMultiSelect'
 import RateScheduleEditor from '@/components/insurance/RateScheduleEditor'
 import { loanSpecsFor, prefillLoan, closedWonTotals, packageSummary, CLOSED_LOAN_LABELS } from '@/lib/insurance/closedWon'
@@ -39,6 +39,7 @@ import RevisitControl from '@/components/insurance/cases/RevisitControl'
 import CaseJourney from '@/components/insurance/cases/CaseJourney'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { CORRECTION_FEE, commissionWithFee } from '@/lib/insurance/commission'
+import CaseChanges from '@/components/insurance/cases/CaseChanges'
 import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
 import FollowUpUpdateForm, { type FollowUpSaved } from '@/components/insurance/followup/FollowUpUpdateForm'
 import FollowUpHistory from '@/components/insurance/followup/FollowUpHistory'
@@ -177,24 +178,12 @@ function CaseDetailContent() {
         setLoading(false)
     }
 
-    // Single admin-aware persist path. Admins/super_admins must go through the
-    // admin API (RLS blocks their direct table writes); agents update directly.
-    // Returns an error string, or null on success.
+    // Agents write their own rows directly (RLS). Admins never reach this page;
+    // they edit through /admin, which records a reason and a full change log.
     const persistCaseUpdate = useCallback(async (updates: Record<string, unknown>): Promise<string | null> => {
-        const isAdminUser = userRole === 'admin' || userRole === 'super_admin'
-        const payload = { ...updates, updated_at: new Date().toISOString() }
-        if (isAdminUser) {
-            const res = await fetch('/api/admin/update-case', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: caseId, updates: payload }),
-            })
-            if (!res.ok) { const d = await res.json().catch(() => ({})); return d.error || 'Failed to save' }
-            return null
-        }
-        const { error } = await supabase.from('cases').update(payload).eq('id', caseId)
+        const { error } = await supabase.from('cases').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', caseId)
         return error?.message ?? null
-    }, [caseId, userRole])
+    }, [caseId])
 
     const handleUpdate = async (updates: Partial<Case> | Record<string, unknown>): Promise<boolean> => {
         if (!caseData) return false
@@ -213,73 +202,7 @@ function CaseDetailContent() {
         return true
     }
 
-    // Extract case-column values from workflow data so Overview stays in sync
-    const extractCaseFields = (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow): Partial<Case> => {
-        const updates: Partial<Case> = {}
-
-        if (caseTypeRef.current === 'Purchase') {
-            const p = wf as PurchaseWorkflow
-            if (p.property_type) {
-                const map: Record<string, string> = {
-                    resale_condo: 'Private Condo', new_launch_condo: 'Private Condo', resale_landed: 'Landed',
-                    ec_new_launch: 'EC (Executive Condo)', resale_hdb: 'HDB', bto: 'HDB',
-                }
-                updates.property_type = map[p.property_type] ?? p.property_type
-            }
-            if (p.property_price) updates.property_price = p.property_price
-            // Sync overview "Loan Amount" with the computed final loan of the headline option.
-            const loan = computePurchase(inputsFromWorkflow(p)).options[0]?.finalLoan
-            if (loan && loan > 0) updates.loan_size = Math.floor(loan)
-            return updates
-        }
-
-        if (caseTypeRef.current === 'Decouple') {
-            const d = wf as DecoupleWorkflow
-            if (d.current_bank) updates.current_bank = d.current_bank
-            if (d.property_valuation) updates.property_price = d.property_valuation
-            const totalOutstanding = (d.outstanding_home_loan ?? 0) + (d.outstanding_equity_loan ?? 0) + (d.outstanding_undisbursed ?? 0)
-            if (totalOutstanding > 0) updates.existing_loan_amount = totalOutstanding
-            if (d.property_type) {
-                const map: Record<string, string> = {
-                    completed_condo: 'Private Condo', completed_ec: 'Private Condo', incompleted_condo: 'Private Condo', landed: 'Landed',
-                }
-                updates.property_type = map[d.property_type] ?? d.property_type
-            }
-            return updates
-        }
-
-        if (caseTypeRef.current === 'Equity Loan') {
-            const e = wf as EquityLoanWorkflow
-            if (e.current_bank) updates.current_bank = e.current_bank
-            if (e.market_price) updates.property_price = e.market_price
-            const totalOutstanding = (e.outstanding_disbursed ?? 0) + (e.outstanding_equity_loan ?? 0)
-            if (totalOutstanding > 0) updates.existing_loan_amount = totalOutstanding
-            if (e.equity_loan_amount) updates.loan_size = e.equity_loan_amount
-            if (e.property_type) {
-                const map: Record<string, string> = {
-                    landed: 'Landed', completed_condo: 'Private Condo', completed_ec_mop: 'Private Condo',
-                }
-                updates.property_type = map[e.property_type] ?? e.property_type
-            }
-            return updates
-        }
-
-        const r = wf as RefinancingWorkflowData
-
-        if (r.current_bank) updates.current_bank = r.current_bank
-        const totalOutstanding = (r.outstanding_disbursed ?? 0) + (r.outstanding_undisbursed ?? 0)
-        if (totalOutstanding > 0) updates.existing_loan_amount = totalOutstanding
-        if (r.lockin_end_date) updates.lock_in_end_date = r.lockin_end_date
-        if (r.market_price) updates.property_price = r.market_price
-        if (r.property_type) {
-            const map: Record<string, string> = {
-                hdb: 'HDB', completed_condo_ec: 'Private Condo', incompleted_condo_ec: 'Private Condo', landed: 'Landed',
-            }
-            updates.property_type = map[r.property_type] ?? r.property_type
-        }
-
-        return updates
-    }
+    const extractCaseFields = (wf: AnyWorkflow) => workflowCaseFields(caseTypeRef.current, wf)
 
     const saveWorkflow = useCallback(async (wf: RefinancingWorkflowData | PurchaseWorkflow | DecoupleWorkflow | EquityLoanWorkflow) => {
         setWorkflowSaving(true)
@@ -548,6 +471,7 @@ function CaseDetailContent() {
 
             {/* TLC corrected this submission — why, by whom, and any fee (internal; not on the Workflow tab) */}
             {activeTab !== 'workflow' && <CorrectionNotice data={caseData} />}
+            {activeTab !== 'workflow' && <CaseChanges caseId={caseId} />}
 
             {/* Stage Bar — internal/pipeline; hidden on the client-facing Workflow tab */}
             {activeTab !== 'workflow' && (

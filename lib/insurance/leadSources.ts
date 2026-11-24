@@ -20,7 +20,7 @@ export interface LeadSourceInfo {
 
 export const LEAD_SOURCES: LeadSourceInfo[] = [
     { value: 'existing_client', label: 'Existing Client', includes: 'Existing insurance or mortgage clients' },
-    { value: 'referral', label: 'Referral', includes: 'Client referrals, friends, family' },
+    { value: 'referral', label: 'Client Referral', includes: 'Client referrals, friends, family' },
     { value: 'professional_referral', label: 'Professional Referral', includes: 'Property agents, insurance agents, bankers' },
     { value: 'social_media', label: 'Social Media', includes: 'Facebook, Instagram, TikTok' },
     { value: 'website_search', label: 'Website / Search', includes: 'Website, Google, Bing' },

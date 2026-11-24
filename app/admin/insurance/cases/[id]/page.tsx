@@ -21,8 +21,14 @@ import PurchaseOverview from '@/components/insurance/workflow/PurchaseOverview'
 import RefiOverview from '@/components/insurance/workflow/RefiOverview'
 import DecoupleOverview from '@/components/insurance/workflow/DecoupleOverview'
 import EquityLoanOverview from '@/components/insurance/workflow/EquityLoanOverview'
-import { stageBadge } from '@/lib/insurance/stages'
+import { stageBadge, stageLabel } from '@/lib/insurance/stages'
 import CaseJourney from '@/components/insurance/cases/CaseJourney'
+import FollowUpHistory from '@/components/insurance/followup/FollowUpHistory'
+import { ChangeList, type AdminEdit } from '@/components/insurance/cases/CaseChanges'
+import EditCaseModal from '@/components/admin/EditCaseModal'
+import BankReceiptsCard from '@/components/admin/BankReceiptsCard'
+import { leadSourceLabel } from '@/lib/insurance/leadSources'
+import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import CorrectionModal from '@/components/insurance/cases/CorrectionModal'
 import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
 import RecordPayoutModal from '@/components/insurance/earnings/RecordPayoutModal'
@@ -37,10 +43,12 @@ const ACTION_LABEL: Record<string, string> = {
     stage_change: 'Stage changed',
     commission_status_change: 'Commission status',
     correction: 'Correction',
+    admin_edit: 'Edited by TLC',
 }
 
 // Activity line text. Corrections store an object (stage, fee, reason) rather than a single value.
 function describeLog(l: ActivityLog): React.ReactNode {
+    if (l.action === 'admin_edit' && l.new_value) return <span className="block font-normal text-slate-600"><ChangeList edit={l.new_value as AdminEdit} /></span>
     if (l.action === 'correction' && l.new_value && typeof l.new_value === 'object') {
         const v = l.new_value as { mode?: string; fee?: number; reason?: string; stage?: string }
         return (
@@ -94,6 +102,8 @@ export default function AdminInsuranceCaseDetail() {
     const [payoutsOpen, setPayoutsOpen] = useState(false)
     const [logs, setLogs] = useState<ActivityLog[]>([])
     const [correcting, setCorrecting] = useState(false)
+    const [editing, setEditing] = useState(false)
+    const [version, setVersion] = useState(0)   // bumped on save, reloads the follow-up history
 
     const loadLogs = () => {
         fetch(`/api/admin/insurance/case-activity?caseId=${id}`)
@@ -153,7 +163,7 @@ export default function AdminInsuranceCaseDetail() {
             {/* Header */}
             <div>
                 <button onClick={() => router.push('/admin/insurance/cases')} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors mb-3">
-                    <ArrowLeft size={14} /> Back to Insurance Cases
+                    <ArrowLeft size={14} /> Cases
                 </button>
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>
@@ -163,12 +173,14 @@ export default function AdminInsuranceCaseDetail() {
                             {c.profiles?.name && <span className="ml-2 text-[#03a9e7] font-medium">by {c.profiles.name}</span>}
                         </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" style={{ color: badge.text, background: badge.bg }}>{c.stage}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" style={{ color: badge.text, background: badge.bg }}>{stageLabel(c.stage)}</span>
+                        <button type="button" onClick={() => setEditing(true)} className="min-h-[44px] px-4 rounded-xl bg-[#052d4a] text-white text-sm font-bold">Edit case</button>
+                        <button type="button" onClick={() => router.push(`/admin/insurance/cases/${id}/workflow`)} className="min-h-[44px] px-4 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600">Edit workflow</button>
                         {isClosedWon && !paid && (
                             <button type="button" onClick={() => setCorrecting(true)}
-                                className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
-                                Correct this case
+                                className="min-h-[44px] px-4 text-sm font-semibold rounded-xl border border-red-200 text-red-600 bg-white hover:bg-red-50 transition-colors">
+                                Send back to agent
                             </button>
                         )}
                     </div>
@@ -180,8 +192,12 @@ export default function AdminInsuranceCaseDetail() {
                 <CorrectionModal
                     caseData={c}
                     onClose={() => setCorrecting(false)}
-                    onDone={updated => { setCase({ ...c, ...updated }); setCorrecting(false); loadLogs() }}
+                    onDone={updated => { setCase({ ...c, ...updated, profiles: c.profiles }); setCorrecting(false); loadLogs(); invalidateCaseData() }}
                 />
+            )}
+            {editing && (
+                <EditCaseModal c={c} onClose={() => setEditing(false)}
+                    onSaved={updated => { setCase({ ...c, ...updated, profiles: c.profiles }); setEditing(false); setVersion(v => v + 1); loadLogs(); invalidateCaseData() }} />
             )}
 
             {/* Commission — back-check & confirm */}
@@ -224,11 +240,13 @@ export default function AdminInsuranceCaseDetail() {
                             clientName={c.client_name || 'Case'}
                             owed={comm.agent}
                             onClose={() => setPayoutsOpen(false)}
-                            onSaved={() => { loadCase() }}
+                            onSaved={() => { loadCase(); invalidateCaseData() }}
                         />
                     )}
                 </Card>
             )}
+
+            {(isClosedWon || paidSoFar !== 0) && <BankReceiptsCard caseId={c.id} expected={isClosedWon ? comm.gross : 0} canReceive={isClosedWon} />}
 
             {/* Full case workflow snapshot — identical depth to the agent's own Overview tab */}
             {workflowData?.kind === 'Purchase' && (
@@ -253,7 +271,11 @@ export default function AdminInsuranceCaseDetail() {
                     <Field label="Full Name" value={c.client_name} />
                     <Field label="Mobile" value={c.client_mobile} />
                     <Field label="Email" value={c.client_email} />
+                    <Field label="Lead source" value={c.lead_source === 'others' && c.lead_source_other ? c.lead_source_other : leadSourceLabel(c.lead_source)} />
+                    <Field label="Next follow-up" value={c.follow_up_date ? formatDate(c.follow_up_date) : c.no_follow_up ? 'Not following up' : 'No date set'} />
+                    <Field label="Remark" value={c.follow_up_remark} />
                 </div>
+                <FollowUpHistory caseId={c.id} refreshKey={version} />
             </Card>
 
             {/* Closed package — final terms captured at Closed Won (may differ from the workflow snapshot above) */}

@@ -2,36 +2,28 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
-import { commissionWithFee, caseLoanBase } from '@/lib/insurance/commission'
+import { rpcError } from '@/lib/admin/rpcError'
 import { todaySgt } from '@/lib/insurance/promotions'
-import type { Case } from '@/lib/types'
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date')
+const common = { paidOn: DATE.optional(), reference: z.string().max(120).optional(), note: z.string().max(300).optional() }
 const schema = z.union([
-    // Reverse an earlier payment (a mistake) — a new, negative row; the original stays.
-    z.object({
-        reverses: z.string().uuid(),
-        paidOn: DATE.optional(),
-        note: z.string().max(300).optional(),
-    }),
-    // Record a payment. Amount defaults to everything still outstanding.
-    z.object({
-        caseId: z.string().uuid(),
-        amount: z.number().positive().optional(),
-        paidOn: DATE.optional(),
-        reference: z.string().max(120).optional(),
-        note: z.string().max(300).optional(),
-    }),
+    // Reverse one payment, or every payment in a batch. The originals stay.
+    z.object({ reverses: z.string().uuid(), ...common }),
+    z.object({ reverseBatch: z.string().uuid(), ...common }),
+    // Pay many cases at once, each in full. All of them save, or none.
+    z.object({ items: z.array(z.object({ caseId: z.string().uuid(), amount: z.number().positive() })).min(1).max(300), ...common }),
+    // Pay one case (lower the amount for a partial payment).
+    z.object({ caseId: z.string().uuid(), amount: z.number().positive(), ...common }),
 ])
 
 /**
- * POST /api/admin/insurance/payouts — record (or reverse) a commission payout.
+ * POST /api/admin/insurance/payouts — record or reverse commission payouts.
  *
- * The ledger (commission_payouts, migration 20261202000000) is permanent: rows
- * are never edited or deleted, a mistake is undone with a reversal row. The DB
- * recomputes the case's paid total / status / paid date from the ledger, and
- * rejects any other way of changing them. A payment can't exceed what's still
- * outstanding (overpaying would make "outstanding" negative and confusing).
+ * The ledger (commission_payouts) is permanent: a mistake is undone with a
+ * reversal row. Recording goes through record_commission_payouts() (migration
+ * 20261204000000), which locks each case and re-checks what's outstanding, so
+ * two admins can't pay the same case twice.
  */
 export async function POST(request: Request) {
     const auth = await requireAdminUser()
@@ -43,6 +35,7 @@ export async function POST(request: Request) {
     const db = createAdminClient()
     const paidOn = body.paidOn ?? todaySgt()
     if (paidOn > todaySgt()) return NextResponse.json({ error: 'A payout date can’t be in the future.' }, { status: 400 })
+    const note = body.note?.trim() || null
 
     if ('reverses' in body) {
         const { data: orig } = await db.from('commission_payouts').select('id, case_id, amount, reverses').eq('id', body.reverses).single()
@@ -50,7 +43,7 @@ export async function POST(request: Request) {
         if (orig.reverses || Number(orig.amount) < 0) return NextResponse.json({ error: 'A reversal can’t itself be reversed.' }, { status: 400 })
         const { error } = await db.from('commission_payouts').insert({
             case_id: orig.case_id, amount: -Number(orig.amount), paid_on: paidOn, reverses: orig.id,
-            note: body.note?.trim() || 'Reversal', recorded_by: auth.userId,
+            note: note ?? 'Reversal', recorded_by: auth.userId,
         })
         if (error) {
             const dup = error.code === '23505'
@@ -58,26 +51,20 @@ export async function POST(request: Request) {
         }
         return NextResponse.json({ ok: true })
     }
-
-    const { data: c } = await db.from('cases').select('*').eq('id', body.caseId).single<Case>()
-    if (!c) return NextResponse.json({ error: 'Case not found' }, { status: 404 })
-    if (c.stage !== 'Closed Won') return NextResponse.json({ error: 'Only a Closed Won case has commission to pay.' }, { status: 400 })
-
-    const owed = commissionWithFee(caseLoanBase(c), c.correction_fee).agent
-    const outstanding = Math.round((owed - Number(c.commission_paid_total ?? 0)) * 100) / 100
-    if (outstanding <= 0) return NextResponse.json({ error: 'Nothing is outstanding on this case.' }, { status: 400 })
-    const amount = Math.round((body.amount ?? outstanding) * 100) / 100
-    if (amount > outstanding + 0.005) {
-        return NextResponse.json({ error: `That's more than what's outstanding ($${outstanding.toFixed(2)}).` }, { status: 400 })
+    if ('reverseBatch' in body) {
+        const { data, error } = await db.rpc('reverse_payout_batch', {
+            p_batch: body.reverseBatch, p_paid_on: paidOn, p_note: note ?? 'Batch reversal', p_actor: auth.userId,
+        })
+        if (error) return rpcError('payouts reverse batch', error, 'Could not reverse the batch.')
+        return NextResponse.json({ ok: true, reversed: data })
     }
 
-    const { error } = await db.from('commission_payouts').insert({
-        case_id: c.id, amount, paid_on: paidOn,
-        reference: body.reference?.trim() || null, note: body.note?.trim() || null, recorded_by: auth.userId,
+    const batch = 'items' in body
+    const items = batch ? body.items : [{ caseId: body.caseId, amount: body.amount }]
+    const { data, error } = await db.rpc('record_commission_payouts', {
+        p_items: items.map(i => ({ case_id: i.caseId, amount: i.amount })),
+        p_paid_on: paidOn, p_reference: body.reference?.trim() || null, p_note: note, p_actor: auth.userId, p_batch: batch,
     })
-    if (error) {
-        console.error('[POST /api/admin/insurance/payouts]', error)
-        return NextResponse.json({ error: 'Could not record the payout.' }, { status: 500 })
-    }
-    return NextResponse.json({ ok: true })
+    if (error) return rpcError('payouts', error, 'Could not record the payout.')
+    return NextResponse.json({ ok: true, ...(data as object) })
 }

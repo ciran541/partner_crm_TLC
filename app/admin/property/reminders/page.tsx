@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import StatsCard from '@/components/shared/StatsCard'
 import { formatDate } from '@/lib/utils/formatDate'
+import { todaySgt } from '@/lib/insurance/promotions'
 
 interface FollowUpRow {
     id: string
@@ -47,7 +48,7 @@ export default function AdminRemindersPage() {
         setLoading(true)
         setError(null)
         fetch('/api/admin/property/reminders')
-            .then(r => r.json())
+            .then(r => (r.ok ? r.json() : Promise.reject(new Error("load"))))
             .then(json => setRows(json.data ?? []))
             .catch(() => setError('Failed to load follow-ups.'))
             .finally(() => setLoading(false))
@@ -55,7 +56,7 @@ export default function AdminRemindersPage() {
 
     useEffect(() => { loadData() }, [])
 
-    const today = new Date().toISOString().split('T')[0]
+    const today = todaySgt()
     const overdue  = rows.filter(r => !r.followup_completed_at && r.follow_up_date < today)
     const dueToday = rows.filter(r => !r.followup_completed_at && r.follow_up_date === today)
     const upcoming = rows.filter(r => !r.followup_completed_at && r.follow_up_date > today)

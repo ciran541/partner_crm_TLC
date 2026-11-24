@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
-import { getSafeRoute, planName, PLAN_NAMES } from '@/lib/permissions'
+import { accountLabel, getSafeRoute, isAdmin, planName, PLAN_NAMES } from '@/lib/permissions'
 import { invitePlanName, inviteSignupPath, type InvitePlan } from '@/lib/auth/invites'
 
 const INVITE_PLANS: { value: InvitePlan; label: string }[] = [
@@ -22,6 +23,9 @@ export default function AdminUsersPage() {
     const [loading, setLoading] = useState(true)
     const [profiles, setProfiles] = useState<Profile[]>([])
     const [searchQuery, setSearchQuery] = useState('')
+    const [planFilter, setPlanFilter] = useState('')
+    const [statusFilter, setStatusFilter] = useState('')
+    const [myId, setMyId] = useState<string | null>(null)
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [isEditOpen, setIsEditOpen] = useState(false)
@@ -56,9 +60,10 @@ export default function AdminUsersPage() {
     const checkAdminAndLoad = async () => {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) { router.replace('/login'); return }
+        setMyId(user.id)
 
         const { data: profile } = await supabase.from('profiles').select('role, app_type').eq('id', user.id).single()
-        if (!profile || !['admin', 'super_admin'].includes(profile.role)) {
+        if (!profile || !isAdmin(profile.role)) {
             router.replace(getSafeRoute(profile?.role, profile?.app_type))
             return
         }
@@ -221,8 +226,10 @@ export default function AdminUsersPage() {
 
     const filteredProfiles = profiles.filter(
         (p) =>
+            (!planFilter || accountLabel(p.role, p.app_type, p.subscription_tier) === planFilter) &&
+            (!statusFilter || (p.status === 'disabled' ? 'disabled' : 'active') === statusFilter) && (
             (p.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
-            (p.email?.toLowerCase() || '').includes(searchQuery.toLowerCase())
+            (p.email?.toLowerCase() || '').includes(searchQuery.toLowerCase()))
     )
 
     if (loading) return (
@@ -285,7 +292,7 @@ export default function AdminUsersPage() {
                                         </span>
                                     </p>
                                     <p className="text-xs text-slate-400">
-                                        Expires {new Date(invite.expires_at).toLocaleDateString()}
+                                        Expires {new Date(invite.expires_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })}
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
@@ -321,8 +328,15 @@ export default function AdminUsersPage() {
                         className="w-full p-2.5 pl-10 rounded-lg border border-slate-200 text-sm outline-none focus:ring-2 focus:ring-[#03a9e7]/20 transition-all"
                     />
                 </div>
+                <select aria-label="Plan" value={planFilter} onChange={e => setPlanFilter(e.target.value)} className="h-11 px-3 rounded-lg border border-slate-200 text-sm bg-white">
+                    <option value="">All plans</option>
+                    {[...Object.values(PLAN_NAMES), 'Admin'].map(n => <option key={n}>{n}</option>)}
+                </select>
+                <select aria-label="Status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-11 px-3 rounded-lg border border-slate-200 text-sm bg-white">
+                    <option value="">Any status</option><option value="active">Active</option><option value="disabled">Disabled</option>
+                </select>
                 <div className="text-sm text-slate-500 whitespace-nowrap">
-                    Total: <span className="font-bold text-slate-900">{profiles.length}</span>
+                    Showing <span className="font-bold text-slate-900">{filteredProfiles.length}</span> of {profiles.length}
                 </div>
             </div>
 
@@ -349,9 +363,9 @@ export default function AdminUsersPage() {
                                                 width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
                                                 background: p.status === 'disabled' ? '#ef4444' : '#22c55e',
                                             }} />
-                                            <span className={`font-semibold ${p.name ? 'text-slate-900' : 'text-slate-400 italic'}`}>
+                                            <Link href={`/admin/users/${p.id}`} className={`font-semibold ${p.name ? 'text-[#0369a1]' : 'text-slate-400 italic'}`}>
                                                 {p.name || 'Unnamed User'}
-                                            </span>
+                                            </Link>
                                         </div>
                                     </td>
                                     <td className="p-4">
@@ -362,23 +376,23 @@ export default function AdminUsersPage() {
                                     </td>
                                     <td className="p-4">
                                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                                            ['admin','super_admin'].includes(p.role)
+                                            isAdmin(p.role)
                                                 ? 'bg-purple-50 text-purple-700 border border-purple-100'
                                                 : 'bg-sky-50 text-sky-700 border border-sky-100'
                                         }`}>
-                                            {['admin','super_admin'].includes(p.role) && <Shield size={10} className="shrink-0" />}
-                                            {p.role}
+                                            {isAdmin(p.role) && <Shield size={10} className="shrink-0" />}
+                                            {isAdmin(p.role) ? 'Admin' : 'Agent'}
                                         </span>
                                     </td>
                                     <td className="p-4">
                                         <div className="flex items-center gap-1.5">
-                                            <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                            {isAdmin(p.role) ? <span className="text-slate-300">—</span> : <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
                                                 p.app_type === 'property'
                                                     ? 'bg-emerald-50 text-emerald-700'
                                                     : 'bg-sky-50 text-sky-700'
                                             }`}>
                                                 {planName(p.app_type ?? 'insurance', p.subscription_tier)}
-                                            </span>
+                                            </span>}
                                         </div>
                                     </td>
                                     <td className="p-4">
@@ -387,13 +401,13 @@ export default function AdminUsersPage() {
                                                 ? 'bg-red-50 text-red-600 border border-red-100'
                                                 : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
                                         }`}>
-                                            {p.status ?? 'active'}
+                                            {p.status === 'disabled' ? 'Disabled' : 'Active'}
                                         </span>
                                     </td>
                                     <td className="p-4">
                                         <div className="flex items-center gap-2 text-slate-400 text-xs">
                                             <Calendar size={14} />
-                                            <span>{new Date(p.created_at).toLocaleDateString()}</span>
+                                            <span>{new Date(p.created_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                                         </div>
                                     </td>
                                     <td className="p-4 text-right">
@@ -411,7 +425,7 @@ export default function AdminUsersPage() {
                                             </button>
                                             <button
                                                 onClick={() => {
-                                                    setEditForm({ id: p.id, name: p.name || '', role: p.role, status: p.status ?? 'active', subscription_tier: p.subscription_tier ?? 'standard' })
+                                                    setEditForm({ id: p.id, name: p.name || '', role: isAdmin(p.role) ? 'super_admin' : 'agent', status: p.status ?? 'active', subscription_tier: p.subscription_tier ?? 'standard' })
                                                     setIsEditOpen(true)
                                                 }}
                                                 className="p-2 text-slate-400 hover:text-[#8b5cf6] hover:bg-purple-50 rounded-lg transition-all"
@@ -547,7 +561,7 @@ export default function AdminUsersPage() {
                                 value={createForm.role}
                                 onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as any })}>
                                 <option value="agent">Agent</option>
-                                <option value="super_admin">Super Admin</option>
+                                <option value="super_admin">Admin</option>
                             </select>
                         </div>
                         {(createForm.app_type ?? 'insurance') === 'insurance' ? (
@@ -624,22 +638,23 @@ export default function AdminUsersPage() {
                         <div>
                             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Role</label>
                             <select className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm bg-white"
-                                value={editForm.role}
+                                value={editForm.role} disabled={editForm.id === myId}
                                 onChange={(e) => setEditForm({ ...editForm, role: e.target.value as any })}>
                                 <option value="agent">Agent</option>
-                                <option value="super_admin">Super Admin</option>
+                                <option value="super_admin">Admin</option>
                             </select>
                         </div>
                         <div>
                             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Status</label>
                             <select className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm bg-white"
-                                value={editForm.status ?? 'active'}
+                                value={editForm.status ?? 'active'} disabled={editForm.id === myId}
                                 onChange={(e) => setEditForm({ ...editForm, status: e.target.value as any })}>
                                 <option value="active">Active</option>
                                 <option value="disabled">Disabled</option>
                             </select>
                         </div>
-                        {profiles.find(p => p.id === editForm.id)?.app_type === 'property' && (
+                        {editForm.id === myId && <p className="text-xs text-slate-500">You can&apos;t change your own role or disable yourself. Ask another admin.</p>}
+                        {editForm.role === 'agent' && profiles.find(p => p.id === editForm.id)?.app_type === 'property' && (
                             <div>
                                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plan</label>
                                 <select className="w-full p-2.5 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-[#03a9e7]/20 text-sm bg-white"

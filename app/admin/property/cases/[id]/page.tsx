@@ -204,7 +204,7 @@ function AdminDetailContent() {
                     className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors mb-3"
                 >
                     <ArrowLeft size={14} />
-                    Back to Property Cases
+                    Cases
                 </button>
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div>

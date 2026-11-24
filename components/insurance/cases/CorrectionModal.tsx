@@ -1,33 +1,40 @@
 'use client'
+
 import { useState } from 'react'
+import Modal from '@/components/shared/Modal'
+import { postJson } from '@/components/admin/ui'
+import { CORRECTION_FEE } from '@/lib/insurance/commission'
 import type { Case } from '@/lib/types'
 
+/** Admin: send a Closed Won case back to the agent to fix. To fix it yourself, use Edit case. */
 export default function CorrectionModal({ caseData, onClose, onDone }: { caseData: Case; onClose: () => void; onDone: (updated: Case) => void }) {
     const [reason, setReason] = useState('')
     const [charge, setCharge] = useState(true)
-    const [reopen, setReopen] = useState(true)
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState('')
-    async function save() {
-        if (busy || !reason.trim()) return
+    const paid = Number(caseData.commission_paid_total ?? 0) !== 0
+
+    const save = async () => {
         setBusy(true); setError('')
         try {
-            const res = await fetch(`/api/admin/insurance/cases/${caseData.id}/correction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: reason.trim(), charge, mode: reopen ? 'reopen' : 'record', updated_at: caseData.updated_at }) })
-            const data = await res.json()
-            if (!res.ok) throw new Error(data.error || 'Unable to record correction')
-            onDone(data)
-        } catch (e) { setError(e instanceof Error ? e.message : 'Unable to record correction') }
-        finally { setBusy(false) }
+            onDone(await postJson<Case>(`/api/admin/insurance/cases/${caseData.id}/correction`, { reason, charge, updated_at: caseData.updated_at }))
+        } catch (e) { setError(e instanceof Error ? e.message : 'Unable to send the case back'); setBusy(false) }
     }
-    return <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Record submission correction">
-        <div className="bg-white rounded-2xl p-6 max-w-lg w-full space-y-4">
-            <h2 className="text-lg font-bold">Record submission correction</h2>
-            <label className="block text-sm">Reason (required)<textarea className="w-full border rounded-lg p-2 mt-1" value={reason} onChange={e => setReason(e.target.value)} maxLength={2000} disabled={busy} /></label>
-            <label className="flex gap-2 text-sm"><input type="checkbox" checked={charge} onChange={e => setCharge(e.target.checked)} disabled={busy} />Deduct $50 correction admin fee from payout</label>
-            <label className="flex gap-2 text-sm"><input type="checkbox" checked={reopen} onChange={e => setReopen(e.target.checked)} disabled={busy} />Return to Pending Signature for the agent to correct and resubmit</label>
-            <p className="text-xs text-slate-500">The reason and fee decision will be visible to the agent. Paid cases must be marked unpaid before recording a correction.</p>
-            {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-            <div className="flex justify-end gap-3"><button onClick={onClose} disabled={busy} className="btn-ghost">Cancel</button><button onClick={save} disabled={busy || !reason.trim()} className="btn-primary disabled:opacity-50">{busy ? 'Saving…' : 'Record correction'}</button></div>
-        </div>
-    </div>
+    return (
+        <Modal title="Send back to agent" onClose={() => { if (!busy) onClose() }}>
+            <div className="space-y-4">
+                <p className="text-sm text-slate-600">The case returns to Pending Signature so the agent can fix and close it again. They see the reason and the fee.</p>
+                {paid && <p className="text-sm text-red-600">This case has been paid, fully or partly. Reverse the payout first.</p>}
+                <label className="block text-sm font-semibold text-slate-700">Reason
+                    <textarea className="w-full border border-slate-200 rounded-lg p-3 mt-1 font-normal" rows={3} maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} disabled={busy} />
+                </label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="w-5 h-5" checked={charge} onChange={e => setCharge(e.target.checked)} disabled={busy} /> Deduct the ${CORRECTION_FEE} correction fee</label>
+                {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+                <div className="flex justify-end gap-2">
+                    <button type="button" onClick={onClose} disabled={busy} className="min-h-[44px] px-4 text-sm font-semibold text-slate-500">Cancel</button>
+                    <button type="button" onClick={save} disabled={busy || paid || !reason.trim()} className="min-h-[44px] px-5 rounded-xl bg-red-600 text-white text-sm font-bold disabled:opacity-40">{busy ? 'Saving…' : 'Send back'}</button>
+                </div>
+            </div>
+        </Modal>
+    )
 }

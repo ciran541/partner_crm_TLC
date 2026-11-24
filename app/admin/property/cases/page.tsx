@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-    Building2, Plus, AlertCircle, ArrowRight, ChevronDown, Search,
+    Building2, AlertCircle, ArrowRight, ChevronDown, Search,
 } from 'lucide-react'
 import { formatDate } from '@/lib/utils/formatDate'
+import { useDebouncedValue } from '@/lib/insurance/usePagedCases'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import type { PropertyCase, PropertyCaseStatus, PropertyCaseType } from '@/lib/types/property'
 
@@ -46,37 +47,46 @@ export default function AdminPropertyCasesPage() {
     const [cases, setCases] = useState<CaseRow[]>([])
     const [totalCount, setTotalCount] = useState(0)
     const [loading, setLoading] = useState(true)
+    const [loadingMore, setLoadingMore] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [statusFilter, setStatusFilter] = useState('')
     const [typeFilter, setTypeFilter] = useState('')
     const [search, setSearch] = useState('')
+    const query = useDebouncedValue(search)
+
+    const params = new URLSearchParams({ limit: '50' })
+    if (statusFilter) params.set('status', statusFilter)
+    if (typeFilter) params.set('case_type', typeFilter)
+    if (query.trim()) params.set('search', query.trim())
+    const base = params.toString()
+    const latest = useRef(base)
+    useEffect(() => { latest.current = base }, [base])
 
     useEffect(() => {
-        setLoading(true)
-        const params = new URLSearchParams({ limit: '200' })
-        if (statusFilter) params.set('status', statusFilter)
-        if (typeFilter) params.set('case_type', typeFilter)
+        let alive = true
+        fetch(`/api/property/cases?${base}`)
+            .then(r => (r.ok ? r.json() : Promise.reject(new Error('load'))))
+            .then(json => { if (alive) { setCases(json.data ?? []); setTotalCount(json.count ?? 0); setError(null) } })
+            .catch(() => { if (alive) setError('Failed to load cases. Please refresh.') })
+            .finally(() => { if (alive) setLoading(false) })
+        return () => { alive = false }
+    }, [base])
 
-        fetch(`/api/property/cases?${params}`)
-            .then(r => r.json())
-            .then(json => {
-                setCases(json.data ?? [])
-                setTotalCount(json.count ?? 0)
-            })
-            .catch(() => setError('Failed to load cases. Please refresh.'))
-            .finally(() => setLoading(false))
-    }, [statusFilter, typeFilter])
+    const loadMore = async () => {
+        setLoadingMore(true)
+        try {
+            const r = await fetch(`/api/property/cases?${base}&page=${Math.floor(cases.length / 50) + 1}`)
+            if (!r.ok) throw new Error()
+            const json = await r.json()
+            // The filters may have changed while this was loading.
+            if (latest.current === base) {
+                setCases(list => { const have = new Set(list.map(c => c.id)); return [...list, ...(json.data as CaseRow[]).filter(c => !have.has(c.id))] })
+            }
+        } catch { setError('Could not load more cases.') }
+        setLoadingMore(false)
+    }
 
-    const filtered = cases.filter(c => {
-        if (!search.trim()) return true
-        const q = search.toLowerCase()
-        return (
-            c.client_name.toLowerCase().includes(q) ||
-            c.client_mobile.includes(q) ||
-            (c.agent_name ?? '').toLowerCase().includes(q) ||
-            c.property_address.toLowerCase().includes(q)
-        )
-    })
+    const filtered = cases
 
     return (
         <div className="space-y-6">
@@ -85,10 +95,10 @@ export default function AdminPropertyCasesPage() {
                 <div>
                     <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
                         <Building2 size={26} color="#8b5cf6" />
-                        Property Cases
+                        Cases
                     </h1>
                     <p className="text-sm text-slate-500 mt-1">
-                        {loading ? 'Loading…' : `${totalCount} total case${totalCount !== 1 ? 's' : ''} across all agents`}
+                        {loading ? 'Loading…' : `${totalCount} case${totalCount !== 1 ? 's' : ''}${search || statusFilter || typeFilter ? ' match' : ' across all agents'}`}
                     </p>
                 </div>
             </div>
@@ -233,8 +243,7 @@ export default function AdminPropertyCasesPage() {
                             </table>
                         </div>
                         <div className="px-4 py-3 border-t border-slate-100 text-xs text-slate-400">
-                            {filtered.length} of {totalCount} case{totalCount !== 1 ? 's' : ''}
-                            {search && ` matching "${search}"`}
+                            Showing {filtered.length} of {totalCount}
                         </div>
                     </div>
 
@@ -261,6 +270,7 @@ export default function AdminPropertyCasesPage() {
                             </button>
                         ))}
                     </div>
+                    {filtered.length < totalCount && <button type="button" disabled={loadingMore} onClick={loadMore} className="w-full min-h-[44px] text-sm font-semibold text-[#0369a1]">{loadingMore ? 'Loading…' : `Load more (${totalCount - filtered.length} remaining)`}</button>}
                 </>
             )}
         </div>

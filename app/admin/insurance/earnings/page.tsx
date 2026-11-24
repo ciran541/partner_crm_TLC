@@ -2,10 +2,9 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { AlertCircle } from 'lucide-react'
 import Skeleton from '@/components/shared/Skeleton'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
-import { MasterEarningsTable, AgentEarningsView } from '@/components/insurance/earnings/EarningsViews'
+import { AgentEarningsView } from '@/components/insurance/earnings/EarningsViews'
 import RecordPayoutModal from '@/components/insurance/earnings/RecordPayoutModal'
 import { commissionWithFee } from '@/lib/insurance/commission'
 import type { CaseListRow } from '@/lib/insurance/usePagedCases'
@@ -24,8 +23,9 @@ function Content() {
     const searchParams = useSearchParams()
     const agentParam = searchParams.get('agent')
 
+    useEffect(() => { if (!agentParam) router.replace('/admin/payouts') }, [agentParam, router])
+
     const [rows, setRows] = useState<AgentCommissionRow[] | null>(null)
-    const [error, setError] = useState<string | null>(null)
     // Case whose payout ledger is open (record / reverse payouts).
     const [payoutCase, setPayoutCase] = useState<CaseListRow | null>(null)
 
@@ -40,11 +40,10 @@ function Content() {
         // the agent's display name comes from. Without it the drill-down header
         // falls back to a generic "Agent".
         let active = true
-        setError(null)
         fetch('/api/admin/insurance/earnings/by-agent')
             .then(r => (r.ok ? r.json() : Promise.reject(new Error(`Request failed (${r.status})`))))
             .then(body => { if (active) setRows((body.rows ?? []) as AgentCommissionRow[]) })
-            .catch(() => { if (active) setError('Could not load earnings. Please try again.') })
+            .catch(() => { /* only the agent's name comes from here */ })
         return () => { active = false }
     }, [agentParam, reload])
 
@@ -67,7 +66,7 @@ function Content() {
                     isAdmin
                     onRecordPayout={setPayoutCase}
                     onRowOpen={id => router.push(`/admin/insurance/cases/${id}`)}
-                    onBack={() => router.push('/admin/insurance/earnings')}
+                    onBack={() => router.push('/admin/payouts')}
                 />
                 {payoutCase && (
                     <RecordPayoutModal
@@ -82,28 +81,6 @@ function Content() {
         )
     }
 
-    if (error) {
-        return <div className="card p-4 flex items-center gap-2 text-red-600 text-sm"><AlertCircle size={16} />{error}</div>
-    }
-    if (!rows) {
-        return (
-            <div className="max-w-[1200px] mx-auto flex flex-col gap-5">
-                <Skeleton height={36} width={200} radius={8} />
-                <Skeleton height={320} radius={14} />
-            </div>
-        )
-    }
-
-    return (
-        <div className="space-y-5">
-            <div>
-                <h1 className="text-2xl font-bold text-[#052d4a]">Insurance Earnings</h1>
-                <p className="text-sm text-slate-500 mt-1">Commission across all agents. Click an agent to review and confirm payouts.</p>
-            </div>
-            <MasterEarningsTable
-                rows={rows}
-                onOpen={id => router.push(`/admin/insurance/earnings?agent=${id}`)}
-            />
-        </div>
-    )
+    // The all-agents view is Payouts → By agent.
+    return null
 }

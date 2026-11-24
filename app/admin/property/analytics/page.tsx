@@ -67,9 +67,9 @@ export default function PropertyAnalyticsPage() {
         setLoading(true)
         setError(null)
         fetch('/api/admin/property/analytics')
-            .then(r => r.json())
+            .then(r => (r.ok ? r.json() : Promise.reject(new Error("load"))))
             .then(json => setData(json.data))
-            .catch(() => setError('Failed to load analytics.'))
+            .catch(() => setError('Failed to load the dashboard.'))
             .finally(() => setLoading(false))
     }
 
@@ -83,7 +83,7 @@ export default function PropertyAnalyticsPage() {
                 <div>
                     <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2">
                         <BarChart2 size={26} color="#8b5cf6" />
-                        Property Analytics
+                        Dashboard
                     </h1>
                     <p className="text-sm text-slate-500 mt-1">Portfolio overview — commissions, case volumes, and agent performance.</p>
                 </div>

@@ -103,7 +103,7 @@ function Content() {
     return (
         <div className="space-y-5">
             <div>
-                <h1 className="text-2xl font-bold text-[#052d4a]">Property Earnings</h1>
+                <h1 className="text-2xl font-bold text-[#052d4a]">Earnings</h1>
                 <p className="text-sm text-slate-500 mt-1">Commission across all Basic and Starter agents. Click an agent to see their cases.</p>
             </div>
             <MasterTable rows={rows} onOpen={id => router.push(`/admin/property/earnings?agent=${id}`)} />

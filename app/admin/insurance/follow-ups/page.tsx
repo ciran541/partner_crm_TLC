@@ -1,147 +1,114 @@
 'use client'
 
-import { useMemo } from 'react'
-import { useRouter } from 'next/navigation'
-import { Clock, AlertTriangle, CalendarDays, TrendingUp, AlertCircle } from 'lucide-react'
-import StatsCard from '@/components/shared/StatsCard'
-import { formatDate } from '@/lib/utils/formatDate'
-import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { calculateCommission } from '@/lib/property/commission'
+import { Suspense, useState } from 'react'
+import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { AlertCircle, ArrowLeft, CalendarClock, CalendarDays, CalendarPlus, Target } from 'lucide-react'
+import Skeleton from '@/components/shared/Skeleton'
 import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
+import { addDays, daysBetween, SOON_DAYS } from '@/lib/insurance/followUps'
+import { todaySgt } from '@/lib/insurance/promotions'
+import { stageBadge, stageLabel } from '@/lib/insurance/stages'
+import { Empty, ErrorBox, PageTitle, Panel, Pill, Tabs, Tile, day, money, useGet } from '@/components/admin/ui'
+import type { HealthRow } from '@/components/admin/types'
 
-type CaseRow = CaseListRow
-
-function daysUntil(dateStr: string): number {
-    const diff = new Date(dateStr).getTime() - new Date().setHours(0, 0, 0, 0)
-    return Math.ceil(diff / 86400000)
+/**
+ * Admin Action Centre — which agents are keeping up with follow-ups. Opens on a
+ * list of agents; tap one for their sections (same ones the agent sees). View
+ * only: agents own their follow-ups, and admins fix mistakes on the case page.
+ */
+export default function AdminActionCentrePage() {
+    return <Suspense fallback={<Skeleton height={320} radius={14} />}><Content /></Suspense>
 }
 
-export default function AdminInsuranceFollowUpsPage() {
-    const router = useRouter()
-    const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
+type Section = 'missing' | 'overdue' | 'today' | 'soon'
 
-    // Two queries so each half is ordered server-side the way this screen wants
-    // (overdue newest-first, upcoming soonest-first) with its own count and paging.
-    //
-    // includeDrafts stays FALSE here — this screen has always filtered drafts out
-    // via isDraftCase(), unlike the agent-facing follow-ups screen which has
-    // always included them. That difference is preserved deliberately.
-    const commonQuery = { stage: 'all', hasFollowUp: true, sort: 'follow_up_date' } as const
-
-    const overdueQ = usePagedCases({ ...commonQuery, followUpTo: today, dir: 'desc' })
-    const upcomingQ = usePagedCases({ ...commonQuery, followUpAfter: today, dir: 'asc' })
-
-    const overdue = overdueQ.rows
-    const upcoming = upcomingQ.rows
-    const loading = overdueQ.loading || upcomingQ.loading
-    const error = overdueQ.error || upcomingQ.error
-
-    if (loading) return <div className="card p-8 flex items-center justify-center text-slate-500 text-sm">Loading follow-ups…</div>
-    if (error) return <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"><AlertCircle size={15} />{error}</div>
-
+function Content() {
+    const agent = useSearchParams().get('agent')
+    const { data, error } = useGet<{ rows: HealthRow[] }>('/api/admin/follow-up-health')
+    const row = data?.rows.find(r => r.agent === agent)
+    const add = (k: 'overdue' | 'missing' | 'today' | 'soon', rows: HealthRow[]) => rows.reduce((s, r) => s + r[k], 0)
+    const scope = agent ? (row ? [row] : []) : data?.rows ?? []
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-2xl font-bold text-[#052d4a] flex items-center gap-2"><Clock size={26} color="#8b5cf6" /> Insurance Follow-ups</h1>
-                <p className="text-sm text-slate-500 mt-1">Every agent&apos;s upcoming and overdue follow-ups in one place.</p>
-            </div>
-
-            {/* Server counts — these cover every matching case, not just the rows
-                loaded so far, so the stat tiles are correct at any size. */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                <StatsCard title="Total" value={overdueQ.total + upcomingQ.total} icon={CalendarDays} color="#8b5cf6" />
-                <StatsCard title="Overdue" value={overdueQ.total} icon={AlertTriangle} color="#dc2626" variant="alert" />
-                <StatsCard title="Upcoming" value={upcomingQ.total} icon={Clock} color="#f59e0b" />
-            </div>
-
-            {overdueQ.total === 0 && upcomingQ.total === 0 ? (
-                <div className="card p-12 text-center">
-                    <Clock size={32} className="mx-auto mb-3 text-slate-300" />
-                    <p className="text-slate-500 text-sm">No follow-ups scheduled across any agent.</p>
+        <div className="space-y-5">
+            {agent && <Link href="/admin/insurance/follow-ups" className="min-h-[44px] inline-flex items-center gap-1.5 text-sm text-slate-500 no-underline"><ArrowLeft size={15} /> All agents</Link>}
+            <PageTitle icon={Target} title={agent ? row?.name ?? 'Agent' : 'Action Centre'} subtitle={agent ? 'Follow-ups this agent needs to act on.' : 'Who is keeping up with follow-ups. Tap an agent for the detail.'} />
+            {error && <ErrorBox message={error} />}
+            {data && (
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <Tile label="Overdue" value={String(add('overdue', scope))} tone={add('overdue', scope) ? 'bad' : undefined} />
+                    <Tile label="Needs a date" value={String(add('missing', scope))} tone={add('missing', scope) ? 'warn' : undefined} />
+                    <Tile label="Today" value={String(add('today', scope))} />
+                    <Tile label={`Next ${SOON_DAYS} days`} value={String(add('soon', scope))} />
                 </div>
-            ) : (
-                <>
-                    {overdue.length > 0 && <FollowUpTable title="Overdue" accent="#dc2626" rows={overdue} total={overdueQ.total} hasMore={overdueQ.hasMore} loadingMore={overdueQ.loadingMore} onLoadMore={overdueQ.loadMore} onOpen={id => router.push(`/admin/insurance/cases/${id}`)} />}
-                    {upcoming.length > 0 && <FollowUpTable title="Upcoming" accent="#0369a1" rows={upcoming} total={upcomingQ.total} hasMore={upcomingQ.hasMore} loadingMore={upcomingQ.loadingMore} onLoadMore={upcomingQ.loadMore} onOpen={id => router.push(`/admin/insurance/cases/${id}`)} />}
-                </>
             )}
+            {agent ? <AgentSections key={agent} agent={agent} /> : !data ? !error && <Skeleton height={300} radius={14} /> : <AgentList rows={data.rows} />}
         </div>
     )
 }
 
-function FollowUpTable({ title, accent, rows, total, hasMore, loadingMore, onLoadMore, onOpen }: {
-    title: string
-    accent: string
-    rows: CaseRow[]
-    total: number
-    hasMore: boolean
-    loadingMore: boolean
-    onLoadMore: () => void
-    onOpen: (id: string) => void
-}) {
+function AgentList({ rows }: { rows: HealthRow[] }) {
+    const today = todaySgt()
+    const router = useRouter()
+    const num = 'px-4 py-3 text-right tabular-nums'
+    const cell = (n: number, tone: string) => <td className={`${num} ${n > 0 ? tone : 'text-slate-300'}`}>{n}</td>
+    if (!rows.length) return <div className="card"><Empty>No Premium agents yet.</Empty></div>
     return (
-        <div className="card overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full" style={{ background: accent }} />
-                {/* Server count, so it stays right even when only a page is loaded. */}
-                <span className="text-sm font-semibold text-slate-700">{title} ({total})</span>
-            </div>
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                    <thead>
-                        <tr className="bg-slate-50 border-b border-slate-100">
-                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Agent</th>
-                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Client</th>
-                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Type</th>
-                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Stage</th>
-                            <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Follow-up</th>
-                            <th className="text-right px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Next-cycle income</th>
+        <div className="card overflow-x-auto">
+            <table className="w-full text-sm">
+                <thead><tr className="bg-slate-50 border-b border-slate-100"><th className="table-th">Agent</th>{['Overdue', 'Needs a date', 'Today', `Next ${SOON_DAYS} days`, 'Open cases'].map(h => <th key={h} className="table-th" style={{ textAlign: 'right' }}>{h}</th>)}<th className="table-th">Oldest overdue</th></tr></thead>
+                <tbody className="divide-y divide-slate-50">
+                    {rows.map(r => (
+                        <tr key={r.agent} onClick={() => router.push(`/admin/insurance/follow-ups?agent=${r.agent}`)} className="cursor-pointer hover:bg-sky-50/50">
+                            <td className="px-4 py-3 font-semibold"><Link href={`/admin/insurance/follow-ups?agent=${r.agent}`} onClick={e => e.stopPropagation()} className="text-[#0369a1]">{r.name}</Link>{r.status === 'disabled' && <span className="ml-2"><Pill tone="grey">Disabled</Pill></span>}</td>
+                            {cell(r.overdue, 'text-red-600 font-bold')}{cell(r.missing, 'text-amber-600 font-bold')}{cell(r.today, 'text-slate-700')}{cell(r.soon, 'text-slate-700')}{cell(r.open_cases, 'text-slate-700')}
+                            <td className="px-4 py-3 text-slate-500">{r.oldest ? `${daysBetween(r.oldest, today)} days late` : '—'}</td>
                         </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                        {rows.map(c => {
-                            const dleft = daysUntil(c.follow_up_date!)
-                            const proj = c.closed_won_data?.combined_outstanding
-                            return (
-                                <tr key={c.id} onClick={() => onOpen(c.id)} className="hover:bg-purple-50/30 cursor-pointer transition-colors">
-                                    <td className="px-4 py-3 text-slate-600 font-medium">{c.profiles?.name ?? '—'}</td>
-                                    <td className="px-4 py-3">
-                                        <p className="font-medium text-slate-800">{c.client_name || 'Unnamed'}</p>
-                                        {c.client_mobile && <p className="text-xs text-slate-400 mt-0.5">{c.client_mobile}</p>}
-                                    </td>
-                                    <td className="px-4 py-3 text-slate-600">{c.case_type}</td>
-                                    <td className="px-4 py-3 text-slate-600">{c.stage}</td>
-                                    <td className="px-4 py-3">
-                                        <span className="text-slate-700">{formatDate(c.follow_up_date!)}</span>
-                                        <span className="text-xs ml-2" style={{ color: dleft < 0 ? '#dc2626' : '#94a3b8' }}>
-                                            {dleft < 0 ? `${Math.abs(dleft)}d overdue` : dleft === 0 ? 'today' : `in ${dleft}d`}
-                                        </span>
-                                    </td>
-                                    <td className="px-4 py-3 text-right">
-                                        {proj ? (
-                                            <span className="inline-flex items-center gap-1 font-semibold text-[#03a9e7]">
-                                                <TrendingUp size={12} /> {formatCurrency(calculateCommission(proj).agent)}
-                                            </span>
-                                        ) : <span className="text-slate-300">—</span>}
-                                    </td>
-                                </tr>
-                            )
-                        })}
-                    </tbody>
-                </table>
-            </div>
-            {/* Appends the next page, so scroll position is preserved. */}
-            {hasMore && (
-                <div className="px-4 py-3 border-t border-slate-100 text-right">
-                    <button
-                        onClick={onLoadMore}
-                        disabled={loadingMore}
-                        className="text-xs font-semibold text-purple-600 hover:text-purple-800 disabled:text-slate-300"
-                    >
-                        {loadingMore ? 'Loading…' : `Load more (${total - rows.length} remaining)`}
-                    </button>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+function AgentSections({ agent }: { agent: string }) {
+    const today = todaySgt()
+    const yesterday = addDays(today, -1)
+    const [tab, setTab] = useState<Section>('overdue')
+    const common = { stage: 'all', agent, hasFollowUp: true, sort: 'follow_up_date', dir: 'asc' } as const
+    const missing = usePagedCases({ stage: 'all', agent, missingFollowUp: true })
+    const overdue = usePagedCases({ ...common, followUpTo: yesterday })
+    const dueToday = usePagedCases({ ...common, followUpAfter: yesterday, followUpTo: today })
+    const soon = usePagedCases({ ...common, followUpAfter: today, followUpTo: addDays(today, SOON_DAYS) })
+    const q = { missing, overdue, today: dueToday, soon }[tab]
+    return (
+        <Panel title="Follow-ups" action={<Tabs value={tab} onChange={setTab} tabs={[
+            { key: 'overdue', label: 'Overdue', count: overdue.total }, { key: 'missing', label: 'Needs a date', count: missing.total },
+            { key: 'today', label: 'Today', count: dueToday.total }, { key: 'soon', label: `Next ${SOON_DAYS} days`, count: soon.total },
+        ]} />}>
+            {q.error ? <p className="text-sm text-red-600">{q.error}</p> : q.loading ? <Skeleton height={160} radius={12} /> : q.rows.length === 0 ? <Empty>Nothing here.</Empty> : (
+                <div className="divide-y divide-slate-100 -my-2">
+                    {q.rows.map(c => <Row key={c.id} c={c} tab={tab} today={today} />)}
+                    {q.hasMore && <button type="button" onClick={q.loadMore} disabled={q.loadingMore} className="w-full min-h-[44px] text-sm font-semibold text-[#0369a1]">{q.loadingMore ? 'Loading…' : `Load more (${q.total - q.rows.length} remaining)`}</button>}
                 </div>
             )}
-        </div>
+        </Panel>
+    )
+}
+
+const ICON = { missing: CalendarPlus, overdue: AlertCircle, today: CalendarClock, soon: CalendarDays }
+
+function Row({ c, tab, today }: { c: CaseListRow; tab: Section; today: string }) {
+    const Icon = ICON[tab]
+    const badge = stageBadge(c.stage)
+    const date = c.follow_up_date?.slice(0, 10)
+    return (
+        <Link href={`/admin/insurance/cases/${c.id}`} className="py-3 flex items-center gap-3 flex-wrap no-underline text-sm">
+            <Icon size={17} className={tab === 'overdue' ? 'text-red-500' : tab === 'missing' ? 'text-amber-500' : 'text-[#03a9e7]'} />
+            <span className="flex-1 min-w-[160px]"><b className="text-slate-800">{c.client_name || 'Unnamed'}</b><span className="block text-xs text-slate-500">{[c.case_type, c.follow_up_remark].filter(Boolean).join(' · ')}</span></span>
+            <span className="text-xs font-semibold px-2 py-1 rounded-full" style={{ color: badge.text, background: badge.bg }}>{stageLabel(c.stage)}</span>
+            {!!c.loan_value && <span className="text-slate-500">{money(c.loan_value)}</span>}
+            <span className={`w-[130px] text-right ${tab === 'overdue' ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>{date ? day(date) : 'No date'}{tab === 'overdue' && date && <span className="block text-xs">{daysBetween(date, today)} days late</span>}</span>
+        </Link>
     )
 }

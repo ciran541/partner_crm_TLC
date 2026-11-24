@@ -32,11 +32,13 @@ interface Payout {
 
 const dmy = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`
 
-export default function RecordPayoutModal({ caseId, clientName, owed, onClose, onSaved }: {
+export default function RecordPayoutModal({ caseId, clientName, owed, warning, onClose, onSaved }: {
     caseId: string
     clientName: string
     /** Agent share owed for this case (after any correction fee). */
     owed: number
+    /** Shown above the form, e.g. the bank hasn't paid TLC yet. */
+    warning?: string
     onClose: () => void
     onSaved: () => void
 }) {
@@ -56,7 +58,7 @@ export default function RecordPayoutModal({ caseId, clientName, owed, onClose, o
             const out = Math.max(0, Math.round((owed - paid) * 100) / 100)
             setAmount(out > 0 ? out.toFixed(2) : '')
         })
-        .catch(() => setPayouts([]))
+        .catch(() => setErr('Could not load this case’s payouts. Close and try again.'))
     useEffect(() => { load() }, [caseId])   // eslint-disable-line react-hooks/exhaustive-deps
 
     const paid = (payouts ?? []).reduce((s, p) => s + Number(p.amount), 0)
@@ -81,7 +83,7 @@ export default function RecordPayoutModal({ caseId, clientName, owed, onClose, o
     }
 
     const amt = Number(amount)
-    const canRecord = !busy && outstanding > 0 && amt > 0 && amt <= outstanding + 0.005 && !!paidOn
+    const canRecord = !busy && payouts !== null && outstanding > 0 && amt > 0 && amt <= outstanding + 0.005 && !!paidOn
 
     return (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ background: 'rgba(5,45,74,0.55)', backdropFilter: 'blur(3px)' }} onClick={onClose}>
@@ -136,6 +138,7 @@ export default function RecordPayoutModal({ caseId, clientName, owed, onClose, o
                         )}
                     </div>
 
+                    {warning && outstanding > 0 && <p className="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-2.5 text-sm text-amber-900">{warning}</p>}
                     {outstanding > 0 ? (
                         <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 space-y-3">
                             <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide">Record a payout</p>

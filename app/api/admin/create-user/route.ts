@@ -27,6 +27,10 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
         }
 
+        if (role !== 'agent' && role !== 'super_admin') {
+            return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+        }
+
         const supabaseAdmin = createAdminClient()
 
         // 1. Create Auth User

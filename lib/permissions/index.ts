@@ -75,8 +75,8 @@ export function planName(appType: AppType | null | undefined, tier?: Subscriptio
 
 /** Plan name for an agent, or the admin title for admins. */
 export function accountLabel(role: UserRole | null | undefined, appType: AppType | null | undefined, tier?: SubscriptionTier | null): string {
-    if (role === 'super_admin') return 'Super Admin'
-    if (role === 'admin') return 'Admin'
+    // One admin role; 'admin' and 'super_admin' are the same thing stored two ways.
+    if (role === 'admin' || role === 'super_admin') return 'Admin'
     return planName(appType, tier)
 }
 
