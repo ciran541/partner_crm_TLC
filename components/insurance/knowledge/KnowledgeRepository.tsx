@@ -1,237 +1,229 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { KnowledgeArticle, KnowledgeArticleInput, KNOWLEDGE_CATEGORIES } from '@/lib/types/knowledge'
+import { KnowledgeArticle, KnowledgeArticleInput } from '@/lib/types/knowledge'
+import type { QuestionGroup } from '@/lib/insurance/knowledgeQuestions'
+import { CheckAnswers, NotCovered } from '@/components/insurance/knowledge/KnowledgeQuestions'
 import KnowledgeEditorModal from '@/components/insurance/knowledge/KnowledgeEditorModal'
 import InlineAlert from '@/components/shared/InlineAlert'
-import Spinner from '@/components/shared/Spinner'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
-import { BookOpen, Plus, Pencil, Trash2, Search, RefreshCcw, HelpCircle } from 'lucide-react'
+import { BookOpen, CheckCircle2, CircleAlert, Plus, Search, Trash2 } from 'lucide-react'
 
-// Admin-only knowledge repository manager. Agents consume knowledge via search
-// (KnowledgeAsk) on /insurance/dashboard/knowledge; authoring lives in the console.
+interface EditorGap { question: string; ids: string[]; answer?: string | null; source?: string; addWording: boolean }
+type Tab = 'gaps' | 'check' | 'articles'
+type Filter = 'all' | 'unchecked' | 'nosource' | 'draft'
+
+const PAGE = 25
+const FILTERS: { key: Filter; label: string; test: (a: KnowledgeArticle) => boolean }[] = [
+    { key: 'all', label: 'All', test: () => true },
+    { key: 'unchecked', label: 'Not checked', test: a => a.status === 'published' && !a.checked_on },
+    { key: 'nosource', label: 'No source', test: a => a.status === 'published' && !a.source },
+    { key: 'draft', label: 'Drafts', test: a => a.status === 'draft' },
+]
+
+const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null)
+
+/** Admin: what agents asked, which answers need checking, and the articles. */
 export default function KnowledgeRepository() {
     const [articles, setArticles] = useState<KnowledgeArticle[]>([])
+    const [gaps, setGaps] = useState<QuestionGroup[]>([])
     const [loading, setLoading] = useState(true)
+    const [loadFailed, setLoadFailed] = useState(false)
+    const [picked, setPicked] = useState<Tab | null>(null)
     const [search, setSearch] = useState('')
-    const [categoryFilter, setCategoryFilter] = useState('')
-    const [editorOpen, setEditorOpen] = useState(false)
-    const [editing, setEditing] = useState<KnowledgeArticle | null>(null)
+    const [filter, setFilter] = useState<Filter>('all')
+    const [shown, setShown] = useState(PAGE)
+    const [editor, setEditor] = useState<{ article: KnowledgeArticle | null; gap: EditorGap | null } | null>(null)
     const [saving, setSaving] = useState(false)
+    const [saveError, setSaveError] = useState<string | null>(null)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
-
-    const [gaps, setGaps] = useState<{ question: string; count: number; lastAsked: string; ids: string[] }[]>([])
-    const [seedTitle, setSeedTitle] = useState('')
+    const [reindexing, setReindexing] = useState(false)
 
     const load = async () => {
-        setLoading(true)
-        const [aRes, gRes] = await Promise.all([
-            fetch('/api/admin/knowledge'),
-            fetch('/api/admin/knowledge/gaps'),
-        ])
-        const aJson = await aRes.json()
-        setArticles(aJson.data ?? [])
-        try { const gJson = await gRes.json(); setGaps(gJson.data ?? []) } catch { setGaps([]) }
+        try {
+            const [a, g] = await Promise.all([fetch('/api/admin/knowledge'), fetch('/api/admin/knowledge/gaps')])
+            if (!a.ok || !g.ok) throw new Error()
+            setArticles((await a.json()).data ?? [])
+            setGaps((await g.json()).data ?? [])
+            setLoadFailed(false)
+        } catch { setLoadFailed(true) }
         setLoading(false)
     }
     useEffect(() => { load() }, [])
 
-    const dismissGap = async (ids: string[]) => {
-        const res = await fetch('/api/admin/knowledge/gaps/resolve', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
-        })
-        if (res.ok) setGaps(prev => prev.filter(g => g.ids[0] !== ids[0]))
+    const notCovered = gaps.filter(g => g.kind === 'gap')
+    const toCheck = gaps.filter(g => g.kind !== 'gap')
+    const tab: Tab = picked ?? (toCheck.some(g => g.down) ? 'check' : notCovered.length ? 'gaps' : toCheck.length ? 'check' : 'articles')
+    const published = articles.filter(a => a.status === 'published')
+    const checked = published.filter(a => a.checked_on).length
+
+    const needle = search.trim().toLowerCase()
+    const filtered = articles.filter(a => FILTERS.find(f => f.key === filter)!.test(a)
+        && (!needle || [a.title, a.content, ...a.tags].some(t => t.toLowerCase().includes(needle))))
+
+    const open = (article: KnowledgeArticle | null, gap: EditorGap | null = null) => { setSaveError(null); setEditor({ article, gap }) }
+    const close = () => { setEditor(null); setSaveError(null) }
+
+    const dismiss = async (ids: string[]) => {
+        const res = await post('/api/admin/knowledge/gaps/resolve', { ids })
+        if (res?.ok) setGaps(prev => prev.filter(g => g.ids[0] !== ids[0]))
+        else setAlert({ type: 'error', message: "Couldn't remove it. Please try again." })
     }
-
-    const writeFromGap = (question: string) => {
-        setSeedTitle(question)
-        setEditing(null)
-        setEditorOpen(true)
+    // Marking wrong only stops the answer; it leaves the list once it is fixed.
+    const markWrong = async (g: QuestionGroup) => {
+        const res = await post('/api/admin/knowledge/gaps/wrong', { ids: g.ids })
+        if (!res?.ok) setAlert({ type: 'error', message: "Couldn't stop this answer. Please try again." })
+        return !!res?.ok
     }
+    const sourcesOf = (g: QuestionGroup) => [...new Set(articles.filter(a => g.articleIds.includes(a.id) && a.source).map(a => a.source))].join(', ')
 
-    const filtered = articles.filter(a => {
-        if (categoryFilter && a.category !== categoryFilter) return false
-        if (search) {
-            const s = search.toLowerCase()
-            return a.title.toLowerCase().includes(s) || a.content.toLowerCase().includes(s) || a.tags.some(t => t.toLowerCase().includes(s))
-        }
-        return true
-    })
-
-    const handleSave = async (input: KnowledgeArticleInput) => {
+    const save = async (input: KnowledgeArticleInput) => {
         setSaving(true)
-        try {
-            const url = editing ? '/api/admin/knowledge/update' : '/api/admin/knowledge/create'
-            const body = editing ? { id: editing.id, updates: input } : input
-            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-            if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? 'Save failed') }
-            setEditorOpen(false); setEditing(null)
-            setAlert({ type: 'success', message: editing ? 'Article updated.' : 'Article created.' })
+        setSaveError(null)
+        const article = editor?.article
+        const res = article
+            ? await post('/api/admin/knowledge/update', { id: article.id, updates: input })
+            : await post('/api/admin/knowledge/create', input)
+        if (res?.ok) {
+            close()
+            setAlert({ type: 'success', message: input.status === 'draft' ? 'Saved as draft.' : article ? 'Article saved.' : 'Article published.' })
             await load()
-        } catch (e: any) {
-            setAlert({ type: 'error', message: e.message })
-        } finally {
-            setSaving(false)
+        } else {
+            setSaveError((await res?.json().catch(() => null))?.error ?? 'Could not save. Please try again.')
         }
+        setSaving(false)
     }
 
-    const handleDelete = async (a: KnowledgeArticle) => {
-        if (!confirm(`Delete "${a.title}"? This cannot be undone.`)) return
-        const res = await fetch('/api/admin/knowledge/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id }) })
-        if (res.ok) { setAlert({ type: 'success', message: 'Article deleted.' }); await load() }
-        else setAlert({ type: 'error', message: 'Delete failed.' })
+    const remove = async (a: KnowledgeArticle) => {
+        if (!confirm(`Delete "${a.title}"? Agents will stop getting it.`)) return
+        const res = await post('/api/admin/knowledge/delete', { id: a.id })
+        if (res?.ok) { setAlert({ type: 'success', message: 'Article deleted.' }); await load() }
+        else setAlert({ type: 'error', message: "Couldn't delete it. Please try again." })
     }
 
-    const [reindexing, setReindexing] = useState(false)
-    const handleReindex = async () => {
+    const reindex = async () => {
         setReindexing(true)
-        try {
-            const res = await fetch('/api/admin/knowledge/reindex?all=true', { method: 'POST' })
-            const json = await res.json()
-            if (!res.ok) throw new Error(json.error ?? 'Reindex failed')
-            setAlert({ type: 'success', message: `Embeddings rebuilt: ${json.embedded} indexed${json.failed ? `, ${json.failed} failed` : ''}.` })
-        } catch (e: any) {
-            setAlert({ type: 'error', message: e.message })
-        } finally {
-            setReindexing(false)
-        }
+        const res = await post('/api/admin/knowledge/reindex?all=true', {})
+        const json = await res?.json().catch(() => null)
+        if (res?.ok && json) setAlert({ type: json.failed ? 'error' : 'success', message: `Search rebuilt: ${json.embedded} articles${json.failed ? `, ${json.failed} failed` : ''}.` })
+        else setAlert({ type: 'error', message: "Couldn't rebuild search. Please try again." })
+        setReindexing(false)
     }
+
+    const TABS: { key: Tab; label: string; count: number; alert?: boolean }[] = [
+        { key: 'gaps', label: 'Not covered', count: notCovered.length },
+        { key: 'check', label: 'Check answers', count: toCheck.length, alert: toCheck.some(g => g.down) },
+        { key: 'articles', label: 'Articles', count: articles.length },
+    ]
 
     return (
         <div className="max-w-5xl mx-auto space-y-5">
             <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
-                    <h1 className="ios-page-title flex items-center gap-2">
-                        <BookOpen size={24} className="text-[#03a9e7]" /> Knowledge Repository
-                    </h1>
-                    <p className="page-subtitle">The master library. Agents only see this via contextual surfacing and search.</p>
+                    <h1 className="ios-page-title flex items-center gap-2"><BookOpen size={24} className="text-[#03a9e7]" /> Knowledge</h1>
+                    <p className="page-subtitle">Agents see these only as answers to their questions.</p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <button onClick={handleReindex} disabled={reindexing} title="Rebuild semantic search embeddings for all articles"
-                        className="px-3 py-2 text-sm rounded-lg border border-slate-200 text-slate-600 hover:border-[#03a9e7] hover:text-[#03a9e7] transition-colors flex items-center gap-2 disabled:opacity-50">
-                        {reindexing ? <Spinner size="sm" color="#64748b" /> : <RefreshCcw size={15} />}
-                        Reindex
-                    </button>
-                    <button onClick={() => { setEditing(null); setEditorOpen(true) }} className="btn-primary px-4 py-2 text-sm flex items-center gap-2">
-                        <Plus size={16} /> New Article
-                    </button>
-                </div>
+                <button onClick={() => open(null)} className="btn-primary min-h-11 px-4 text-sm flex items-center gap-2"><Plus size={16} /> New article</button>
             </div>
 
             {alert && <InlineAlert type={alert.type} message={alert.message} onDismiss={() => setAlert(null)} />}
 
-            {/* Knowledge gaps — questions agents asked that we couldn't answer */}
-            <div className={`rounded-xl border p-4 ${gaps.length > 0 ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-slate-50/60'}`}>
-                <div className="flex items-center gap-2 mb-1">
-                    <HelpCircle size={16} className={gaps.length > 0 ? 'text-amber-600' : 'text-slate-400'} />
-                    <p className={`text-sm font-bold ${gaps.length > 0 ? 'text-amber-800' : 'text-slate-600'}`}>Knowledge gaps ({gaps.length})</p>
-                </div>
-                {gaps.length === 0 ? (
-                    <p className="text-xs text-slate-400">No gaps yet — agents are finding answers. Questions the knowledge base can&apos;t answer will appear here so you know what to write next.</p>
-                ) : (
-                    <>
-                        <p className="text-xs text-amber-700 mb-3">Agents asked these and we had no answer. Write an article to fill the gap.</p>
-                        <div className="space-y-2">
-                            {gaps.map(g => (
-                                <div key={g.ids[0]} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-100 px-3 py-2">
-                                    <div className="min-w-0">
-                                        <p className="text-sm text-slate-800 truncate">{g.question}</p>
-                                        <p className="text-[11px] text-slate-400">asked {g.count}× · last {new Date(g.lastAsked).toLocaleDateString()}</p>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                        <button onClick={() => writeFromGap(g.question)} className="text-xs font-semibold text-[#03a9e7] hover:text-[#0284c7] px-2 py-1">
-                                            Write article
-                                        </button>
-                                        <button onClick={() => dismissGap(g.ids)} className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1">
-                                            Dismiss
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </>
-                )}
-            </div>
-
-            {/* Filters */}
-            <div className="flex gap-3 flex-wrap">
-                <div className="relative flex-1 min-w-[200px]">
-                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter articles…"
-                        className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 outline-none focus:border-[#03a9e7]" />
-                </div>
-                <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
-                    className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-[#03a9e7]">
-                    <option value="">All categories</option>
-                    {KNOWLEDGE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-            </div>
-
             {loading ? (
-                <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={44} radius={10} />)}
-                </div>
-            ) : filtered.length === 0 ? (
-                <EmptyState
-                    icon={BookOpen}
-                    iconColor="#03a9e7"
-                    title={search || categoryFilter ? 'No articles match' : 'No articles yet'}
-                    description={search || categoryFilter ? 'Try a different search term or category filter.' : 'Create your first knowledge article to get started.'}
-                    action={search || categoryFilter ? undefined : { label: '+ New Article', onClick: () => { setEditing(null); setEditorOpen(true) } }}
-                />
+                <div className="space-y-3">{[0, 1, 2, 3, 4].map(i => <Skeleton key={i} height={72} radius={14} />)}</div>
+            ) : loadFailed ? (
+                <EmptyState icon={CircleAlert} iconColor="#dc2626" title="Couldn't load Knowledge" description="Check the connection and try again." action={{ label: 'Try again', onClick: () => { setLoading(true); load() } }} />
             ) : (
-                <div className="card overflow-hidden">
-                    <div className="table-scroll">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="border-b border-slate-100 text-left text-xs text-slate-400 uppercase tracking-wide">
-                                <th className="px-4 py-3 font-semibold">Title</th>
-                                <th className="px-4 py-3 font-semibold hidden sm:table-cell">Category</th>
-                                <th className="px-4 py-3 font-semibold hidden md:table-cell">Steps</th>
-                                <th className="px-4 py-3 font-semibold">Status</th>
-                                <th className="px-4 py-3 font-semibold text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filtered.map(a => (
-                                <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50/50">
-                                    <td className="px-4 py-3">
-                                        <p className="font-medium text-slate-800">{a.title}</p>
-                                        <p className="text-xs text-slate-400 line-clamp-1">{a.content.slice(0, 80)}</p>
-                                    </td>
-                                    <td className="px-4 py-3 hidden sm:table-cell">
-                                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{a.category}</span>
-                                    </td>
-                                    <td className="px-4 py-3 hidden md:table-cell text-xs text-slate-500">{a.step_keys?.length ? a.step_keys.length : '—'}</td>
-                                    <td className="px-4 py-3">
-                                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${a.status === 'published' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                            {a.status}
-                                        </span>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <div className="flex items-center gap-1 justify-end">
-                                            <button onClick={() => { setEditing(a); setEditorOpen(true) }} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500" title="Edit"><Pencil size={15} /></button>
-                                            <button onClick={() => handleDelete(a)} className="p-1.5 rounded-lg hover:bg-red-50 text-red-500" title="Delete"><Trash2 size={15} /></button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                <>
+                    <div role="tablist" className="flex gap-6 border-b border-slate-200 overflow-x-auto">
+                        {TABS.map(t => (
+                            <button key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setPicked(t.key)}
+                                className={`min-h-11 pb-1 -mb-px border-b-2 text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === t.key ? 'border-[#03a9e7] text-[#052d4a]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                                {t.label}
+                                <span className={`text-xs rounded-full px-2 py-0.5 tabular-nums ${t.alert ? 'bg-red-50 text-red-700' : t.key !== 'articles' && t.count ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{t.count}</span>
+                            </button>
+                        ))}
                     </div>
-                </div>
+
+                    {tab === 'gaps' && <NotCovered groups={notCovered} onDismiss={dismiss} onWrite={g => open(null, { question: g.question, ids: g.ids, addWording: true })} />}
+                    {tab === 'check' && (
+                        <CheckAnswers groups={toCheck} articles={articles} onDismiss={dismiss} onWrong={markWrong}
+                            onSaveAsArticle={g => open(null, { question: g.question, ids: g.ids, answer: g.answer, source: sourcesOf(g), addWording: true })}
+                            onFixArticle={(g, a) => open(a, { question: g.question, ids: g.ids, addWording: false })}
+                            onRewrite={g => open(null, { question: g.question, ids: g.ids, addWording: true })} />
+                    )}
+                    {tab === 'articles' && (
+                        <div className="space-y-4">
+                            <div className="flex items-center gap-3">
+                                <div className="flex-1 max-w-60 h-2 rounded-full bg-slate-200 overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${published.length ? (checked / published.length) * 100 : 0}%` }} /></div>
+                                <p className="text-sm text-slate-600">{checked} of {published.length} live articles checked</p>
+                            </div>
+
+                            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 focus-within:border-[#03a9e7]">
+                                <Search size={16} className="text-slate-400 shrink-0" />
+                                <input value={search} onChange={e => { setSearch(e.target.value); setShown(PAGE) }} aria-label="Search articles" placeholder="Search articles" className="flex-1 min-w-0 min-h-11 text-base sm:text-sm bg-transparent outline-none" />
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {FILTERS.map(f => (
+                                    <button key={f.key} aria-pressed={filter === f.key} onClick={() => { setFilter(f.key); setShown(PAGE) }}
+                                        className={`min-h-11 px-3.5 rounded-full border text-sm font-medium ${filter === f.key ? 'bg-[#052d4a] border-[#052d4a] text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+                                        {f.label} <span className="tabular-nums opacity-70">{articles.filter(f.test).length}</span>
+                                    </button>
+                                ))}
+                            </div>
+
+                            {filtered.length === 0 ? (
+                                <EmptyState icon={BookOpen} iconColor="#03a9e7" title={articles.length ? 'No articles match' : 'No articles yet'} description={articles.length ? 'Try another search or filter.' : 'Write the first one.'}
+                                    action={articles.length ? undefined : { label: 'New article', onClick: () => open(null) }} />
+                            ) : (
+                                <ul className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
+                                    {filtered.slice(0, shown).map(a => <ArticleRow key={a.id} a={a} onOpen={() => open(a)} onDelete={() => remove(a)} />)}
+                                </ul>
+                            )}
+                            {filtered.length > shown && (
+                                <button onClick={() => setShown(s => s + PAGE)} className="btn-ghost w-full min-h-11 text-sm">Load more ({filtered.length - shown} remaining)</button>
+                            )}
+                            <p className="text-xs text-slate-500">
+                                Articles not being found?{' '}
+                                <button onClick={reindex} disabled={reindexing} className="underline py-2 disabled:opacity-50">{reindexing ? 'Rebuilding search…' : 'Rebuild search'}</button>
+                            </p>
+                        </div>
+                    )}
+                </>
             )}
 
-            {editorOpen && (
+            {editor && (
                 <KnowledgeEditorModal
-                    initial={editing}
-                    seedTitle={!editing ? seedTitle : ''}
+                    key={editor.article?.id ?? 'new'}
+                    initial={editor.article}
+                    gap={editor.gap}
                     saving={saving}
-                    onSave={handleSave}
-                    onClose={() => { setEditorOpen(false); setEditing(null); setSeedTitle('') }}
+                    error={saveError}
+                    onSave={save}
+                    onUseExisting={id => { const a = articles.find(x => x.id === id); if (a) open(a, editor.gap) }}
+                    onClose={close}
                 />
             )}
         </div>
+    )
+}
+
+function ArticleRow({ a, onOpen, onDelete }: { a: KnowledgeArticle; onOpen: () => void; onDelete: () => void }) {
+    const host = a.source ? (URL.canParse(a.source) ? new URL(a.source).hostname.replace(/^www\./, '') : a.source) : null
+    return (
+        <li className="flex items-start gap-2 hover:bg-slate-50">
+            <button onClick={onOpen} className="flex-1 min-w-0 text-left px-4 py-3.5">
+                <span className="block text-[15px] font-semibold text-[#052d4a]">{a.title}</span>
+                <span className="text-sm text-slate-600 line-clamp-2 mt-0.5">{a.content}</span>
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-slate-500">
+                    {a.status === 'draft' && <span className="font-semibold rounded-full bg-slate-100 text-slate-600 px-2 py-0.5">Draft</span>}
+                    {a.checked_on
+                        ? <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 size={13} /> Checked {a.checked_on}</span>
+                        : <span className="inline-flex items-center gap-1 text-amber-700"><CircleAlert size={13} /> Not checked</span>}
+                    <span className="truncate max-w-56">{host ?? 'No source'}</span>
+                </span>
+            </button>
+            <button onClick={onDelete} aria-label={`Delete ${a.title}`} className="shrink-0 w-11 h-11 mt-2 mr-2 grid place-items-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>
+        </li>
     )
 }

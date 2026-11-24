@@ -24,10 +24,11 @@ const SYSTEM_INSTRUCTION = `You are a quick-reference assistant for mortgage age
 WHAT YOU MUST DO:
 - Answer ONLY using the reference articles given. Never use outside knowledge or training data.
 - Answer ONLY the specific thing the agent asked. Do not bring up related topics they did not ask about.
-- If the question is vague, answer for the most common scenarios — do not ask for clarification.
 - Keep the answer short: 2–4 sentences for a simple question; a bullet list of 2–4 items when the answer genuinely differs by property type or scenario. Never go longer.
 - Use plain everyday language. Avoid turning the answer into a lecture or a list of formulas.
-- If a specific number is in the question (e.g. an age), compute the result and state it plainly.
+- Never do sums. State the rule and its figures exactly as the articles give them; the HUB's calculators work out amounts.
+- If the articles cover only part of the question, answer that part and say plainly which part is not covered.
+- If the answer depends on a detail the agent did not give, give the answer for each case in one line.
 - Always finish your answer completely — never stop mid-sentence.
 - You are speaking TO the agent ABOUT their client. Say "the borrower's age" or "the client's age" — never "your age" or "you". Agents often paste these answers to clients, and second person makes the answer read as if it is addressed to the borrower.
 - When several articles cover DIFFERENT scenarios (HDB vs private, citizen vs PR, purchase vs refinance), keep each one's figures with its own scenario. Never merge two articles' formulas into a single rule that sounds universal: if one article gives a cap and the other gives a different one, say which applies to which. State a rule as shared ONLY when the articles genuinely both state it.
@@ -42,12 +43,16 @@ WHAT YOU MUST NOT DO:
 IF THE ARTICLES DO NOT CONTAIN THE ANSWER:
 Reply exactly: "I don't have guidance on that in our knowledge base — please check with your admin."`
 
+/** Identifies one answer: same question, articles and instructions. */
+export const composeKey = (question: string, articles: SourceArticle[]) => answerKey(question, articles, SYSTEM_INSTRUCTION, CLAUDE_MODEL)
+
 export async function composeAnswer(question: string, articles: SourceArticle[]): Promise<string | null> {
     if (articles.length === 0 || !question.trim()) return null
 
-    const key = answerKey(question, articles, SYSTEM_INSTRUCTION, CLAUDE_MODEL)
+    const key = composeKey(question, articles)
     const saved = await getSavedAnswer(key)
-    if (saved) return saved
+    // Empty = an admin marked this answer wrong: don't let AI try again.
+    if (saved !== null) return saved || null
 
     const context = articles
         .map((a, i) => `--- Article ${i + 1}: ${a.title} ---\n${a.content}`)
@@ -62,6 +67,21 @@ export async function composeAnswer(question: string, articles: SourceArticle[])
         // the request when the caller can degrade to article cards instead.
         timeoutMs: 25000,
     })
-    if (text && complete) await saveAnswer(key, text)
+    if (!text || !figuresMatch(text, [question, ...articles.flatMap(a => [a.title, a.content])])) {
+        if (text) console.error('[askKnowledge] answer had a figure that is not in the articles: not shown')
+        return null
+    }
+    if (complete) await saveAnswer(key, text)
     return text
+}
+
+const UNIT: Record<string, number> = { k: 1e3, m: 1e6, mil: 1e6, million: 1e6 }
+const figures = (s: string) => [...s.toLowerCase().replace(/(\d),(?=\d{3})/g, '$1').matchAll(/(\d+(?:\.\d+)?)\s*(k|mil|million|m)?\b/g)]
+    .map(m => parseFloat(m[1]) * (m[2] ? UNIT[m[2]] : 1))
+
+/** Every figure in the answer must appear in the question or the articles. */
+export function figuresMatch(answer: string, given: string[]): boolean {
+    const known = new Set(given.flatMap(figures))
+    // List numbering isn't a figure.
+    return figures(answer.replace(/^\s*\d+[.)]\s/gm, '')).every(n => known.has(n))
 }

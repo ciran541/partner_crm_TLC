@@ -63,7 +63,14 @@ export interface ClaudeOptions {
     sensitive?: boolean
 }
 
-export const isClaudeConfigured = () => !!process.env.ANTHROPIC_API_KEY
+/**
+ * Paid calls happen only on the deployed site. Development and tests can't spend
+ * money except for the labels listed in ALLOW_PAID_AI_LOCALLY (owner's rule).
+ */
+export const isPaidAiBlocked = (label = '') =>
+    !process.env.VERCEL && !process.env.VERCEL_ENV && !process.env.AWS_LAMBDA_FUNCTION_NAME && !(label && (process.env.ALLOW_PAID_AI_LOCALLY ?? '').split(',').includes(label))
+
+export const isClaudeConfigured = (label?: string) => !!process.env.ANTHROPIC_API_KEY && !isPaidAiBlocked(label)
 
 let client: Anthropic | null = null
 
@@ -79,7 +86,11 @@ function fileBlock(f: ClaudeFile): Anthropic.ContentBlockParam {
 }
 
 export async function callClaude(opts: ClaudeOptions): Promise<ClaudeResult> {
-    if (!isClaudeConfigured()) return { text: null, failure: 'not_configured' }
+    if (isPaidAiBlocked(opts.label)) {
+        console.log(`[${opts.label}] paid Claude call blocked on this computer`)
+        return { text: null, failure: 'not_configured' }
+    }
+    if (!isClaudeConfigured(opts.label)) return { text: null, failure: 'not_configured' }
     if (!opts.user.trim()) return { text: null, failure: 'failed' }
     client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 

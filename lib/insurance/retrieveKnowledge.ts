@@ -16,8 +16,9 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { embedText } from '@/lib/insurance/embed'
+import { rankArticles, type Confidence } from '@/lib/insurance/knowledgeRank'
 
-const SELECT = 'id, title, content, category, tags, case_types'
+const SELECT = 'id, title, content, category, tags, case_types, source, checked_by, checked_on'
 
 const STOP_WORDS = new Set([
     'what', 'is', 'the', 'a', 'an', 'my', 'for', 'of', 'to', 'in', 'on', 'at',
@@ -33,6 +34,9 @@ export interface RetrievedArticle {
     category: string | null
     tags: string[] | null
     case_types: string[] | null
+    source?: string | null
+    checked_by?: string | null
+    checked_on?: string | null
 }
 
 export type RetrievalMode = 'semantic' | 'fulltext' | 'substring' | 'none'
@@ -149,4 +153,27 @@ export async function retrieveArticles(
     }
 
     return { articles: [], mode: 'none' }
+}
+
+export async function loadPublished(): Promise<RetrievedArticle[]> {
+    const { data, error } = await createAdminClient().from('knowledge_articles').select(SELECT).eq('status', 'published').limit(1000)
+    if (error) throw error
+    return (data ?? []) as RetrievedArticle[]
+}
+
+/** Meaning score per published article; empty when the embedder is down. */
+export async function similarities(embedding: number[] | null): Promise<Map<string, number>> {
+    const out = new Map<string, number>()
+    if (!embedding) return out
+    const { data } = await createAdminClient().rpc('match_knowledge_articles', {
+        query_embedding: embedding, match_threshold: -1, match_count: 1000, filter_case_type: null,
+    })
+    for (const r of (data ?? []) as { id: string; similarity: number }[]) out.set(r.id, r.similarity)
+    return out
+}
+
+/** Ask: rank every published article (words first, meaning as tie-breaker). */
+export async function rankPublished(question: string, published: RetrievedArticle[]): Promise<{ articles: RetrievedArticle[]; confidence: Confidence }> {
+    const { ranked, confidence } = rankArticles(question, published, await similarities(await embedText(question)))
+    return { articles: ranked.map(r => r.article), confidence }
 }

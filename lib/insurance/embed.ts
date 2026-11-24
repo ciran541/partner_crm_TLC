@@ -23,6 +23,7 @@ export async function embedText(input: string): Promise<number[] | null> {
                 Authorization: `Bearer ${serviceKey}`,
             },
             body: JSON.stringify({ input: input.trim() }),
+            signal: AbortSignal.timeout(5000),
         })
 
         if (!res.ok) return null

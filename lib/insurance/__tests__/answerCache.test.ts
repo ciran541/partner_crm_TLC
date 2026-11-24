@@ -18,7 +18,7 @@ const callClaude = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/ai/claude', () => ({ callClaude, CLAUDE_MODEL: 'm' }))
 
 import { answerKey } from '../answerCache'
-import { composeAnswer } from '../composeAnswer'
+import { composeAnswer, composeKey } from '../composeAnswer'
 
 const A = [{ title: 'TDSR', content: '55%' }]
 
@@ -47,6 +47,13 @@ describe('composeAnswer', () => {
         callClaude.mockResolvedValueOnce({ text: null, failure: 'failed' }).mockResolvedValueOnce({ text: '55', failure: null, complete: false }).mockResolvedValueOnce({ text: '55%', failure: null, complete: true })
         expect([await composeAnswer('q', A), await composeAnswer('q', A), await composeAnswer('q', A)]).toEqual([null, '55', '55%'])
         expect(callClaude).toHaveBeenCalledTimes(3)
+    })
+    it('never repeats or retries an answer marked wrong', async () => {
+        store.set(composeKey('q', A), '')
+        expect(await composeAnswer('q', A)).toBeNull()
+        expect(callClaude).not.toHaveBeenCalled()
+        callClaude.mockResolvedValue({ text: '60%', failure: null, complete: true })
+        expect(await composeAnswer('q', [{ title: 'TDSR', content: '60%' }])).toBe('60%')
     })
     it('still answers when the database is down', async () => {
         db.broken = true

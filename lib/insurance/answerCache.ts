@@ -48,3 +48,10 @@ export async function saveAnswer(key: string, answer: string): Promise<void> {
         console.error('[answerCache] save failed:', String(err))
     }
 }
+
+/** Stop giving a wrong answer, and stop AI repeating it, until an article changes. */
+export async function blockAnswer(key: string): Promise<boolean> {
+    const { error } = await createAdminClient().from('ai_answer_cache').upsert({ key, answer: '', created_at: new Date().toISOString() })
+    if (error) console.error('[answerCache] block failed:', error.message)
+    return !error
+}

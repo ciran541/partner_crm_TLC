@@ -24,7 +24,7 @@ export async function GET() {
         db.rpc('agent_follow_up_health'),
         db.from('bank_intelligence_reports').select('id', head).eq('is_published', false).eq('hidden', false),
         db.from('mortgage_packages').select('id', head).eq('status', 'draft'),
-        db.from('knowledge_gaps').select('id', head).eq('status', 'open'),
+        db.from('knowledge_gaps').select('id', head).eq('status', 'open').or('kind.eq.gap,rating.eq.-1'),
         db.from('agent_invites').select('id', head).eq('status', 'pending').gt('expires_at', new Date().toISOString()),
         db.from('bank_promotions').select('id, bank, title, ends_on').eq('status', 'published').gte('ends_on', today).lte('ends_on', addDays(today, 7)).order('ends_on'),
         db.from('sora_rates').select('value_date').order('value_date', { ascending: false }).limit(1).maybeSingle(),
