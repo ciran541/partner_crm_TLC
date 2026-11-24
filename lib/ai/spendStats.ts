@@ -47,8 +47,18 @@ export function groupBy(rows: SpendRow[], key: (r: SpendRow) => string): (SpendT
     return [...m].map(([k, rs]) => ({ key: k, ...totals(rs) })).sort((a, b) => b.cost - a.cost || b.calls - a.calls)
 }
 
-/** scope: 'YYYY-MM' | 'YYYY' | 'all' */
+/** scope: 'YYYY-MM-DD' | 'YYYY-MM' | 'YYYY' | 'all' */
 export const inScope = (day: string, scope: string) => scope === 'all' || day.startsWith(scope)
+
+/** Every day of a month ('YYYY-MM') and how many blanks a Monday-first calendar needs before the 1st. */
+export function monthDays(month: string): { blanks: number; days: string[] } {
+    const [y, m] = month.split('-').map(Number)
+    const count = new Date(Date.UTC(y, m, 0)).getUTCDate()
+    return {
+        blanks: (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7,
+        days: Array.from({ length: count }, (_, i) => `${month}-${String(i + 1).padStart(2, '0')}`),
+    }
+}
 
 /**
  * This month's cost at the current daily pace. Counts from the first recorded

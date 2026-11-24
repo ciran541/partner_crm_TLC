@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { aiCostUsd } from '@/lib/ai/pricing'
-import { groupBy, inScope, modelLabel, projectMonth, totals, usd, type SpendRow } from '@/lib/ai/spendStats'
+import { groupBy, inScope, modelLabel, monthDays, projectMonth, totals, usd, type SpendRow } from '@/lib/ai/spendStats'
 
 const row = (o: Partial<SpendRow>): SpendRow => ({
     day: '2026-11-10', feature: 'news-classify', model: 'claude-haiku-5-5', environment: 'production',
@@ -24,6 +24,12 @@ describe('AI spend page maths', () => {
         const rows = [row({ cost: 0.1 }), row({ feature: 'askKnowledge', cost: 0.5 }), row({ cost: 0.2 })]
         expect(totals(rows).cost).toBeCloseTo(0.8)
         expect(groupBy(rows, r => r.feature).map(g => [g.key, g.calls])).toEqual([['askKnowledge', 1], ['news-classify', 2]])
+    })
+    it('lays out a month and scopes by one day', () => {
+        const nov = monthDays('2026-11')
+        expect([nov.blanks, nov.days.length, nov.days[0], nov.days[29]]).toEqual([6, 30, '2026-11-01', '2026-11-30'])
+        expect([monthDays('2028-02').days.length, monthDays('2026-06').blanks]).toEqual([29, 0])
+        expect([inScope('2026-11-10', '2026-11-10'), inScope('2026-11-11', '2026-11-10')]).toEqual([true, false])
     })
     it('scopes by month, year or all', () => {
         expect(['2026-11', '2026', 'all', '2026-12'].map(s => inScope('2026-11-10', s))).toEqual([true, true, true, false])
