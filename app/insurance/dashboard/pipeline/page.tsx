@@ -284,12 +284,12 @@ function Sources({ data, year }: { data: DashboardData; year: number }) {
                     <div className="hidden md:grid grid-cols-[1.3fr_2fr_70px_70px_60px_90px] gap-3 px-1 pb-2 text-[11px] font-bold text-slate-500 uppercase tracking-wide border-b border-slate-100">
                         <span>Source</span><span className="flex gap-4">
                             <span className="text-[#0369a1]">Closed in {year}</span>
-                            {laterLabel && <span className="text-red-600">{laterLabel}</span>}
+                            <span className="text-red-600">{laterLabel}</span>
                         </span><span className="text-right">Leads</span><span className="text-right">Won</span><span className="text-right">Open</span><span className="text-right">Conversion</span>
                     </div>
                     <p className="md:hidden flex gap-4 pb-1 text-xs font-bold">
                         <span className="text-[#0369a1]">Closed in {year}</span>
-                        {laterLabel && <span className="text-red-600">{laterLabel}</span>}
+                        <span className="text-red-600">{laterLabel}</span>
                     </p>
                     {rows.map(r => (
                         <div key={r.source} className="grid grid-cols-[1fr_auto] md:grid-cols-[1.3fr_2fr_70px_70px_60px_90px] gap-x-3 gap-y-1.5 items-center px-1 py-3 border-b border-slate-50 last:border-b-0">
@@ -412,9 +412,10 @@ function Lost({ data, year }: { data: DashboardData; year: number }) {
     const lost = data.lost ?? []
     const rows = lostReasons(lost, allTime ? null : year)
     const total = rows.reduce((s, r) => s + r.cases, 0)
+    const quantum = rows.reduce((s, r) => s + r.loanVolume, 0)
     const undated = lost.filter(r => !r.month).reduce((s, r) => s + Number(r.cases), 0)
     return (
-        <Section title="Why deals are lost" subtitle={`${total} case${total === 1 ? '' : 's'} marked Closed Lost${allTime ? '' : ` in ${year}`}, by reason.`}
+        <Section title="Why deals are lost" subtitle={`${total} case${total === 1 ? '' : 's'} marked Closed Lost${allTime ? '' : ` in ${year}`}, by reason · Total quantum ${quantum > 0 ? compact(quantum) : '$0'}`}
             action={
                 <div className="flex gap-1 p-1 rounded-xl bg-slate-100">
                     {[true, false].map(v => (

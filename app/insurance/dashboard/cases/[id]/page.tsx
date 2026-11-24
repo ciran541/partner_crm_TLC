@@ -43,6 +43,7 @@ import CaseChanges from '@/components/insurance/cases/CaseChanges'
 import CorrectionNotice from '@/components/insurance/cases/CorrectionNotice'
 import FollowUpUpdateForm, { type FollowUpSaved } from '@/components/insurance/followup/FollowUpUpdateForm'
 import FollowUpHistory from '@/components/insurance/followup/FollowUpHistory'
+import { LOST_REASONS } from '@/lib/insurance/lostReasons'
 import { autoRemark, defaultClosedWonFollowUp, estimateLockInEnd, followUpBucket, lockInLimit, needsFollowUp } from '@/lib/insurance/followUps'
 import { LEAD_SOURCES, leadSourceLabel } from '@/lib/insurance/leadSources'
 
@@ -50,17 +51,6 @@ type TabKey = 'overview' | 'workflow'
 
 // Progress dots show the live pipeline only — Inactive sits before it, Closed Lost beside it.
 const PROGRESS_STAGES = PIPELINE_STAGES.filter(s => s !== INACTIVE_STAGE && s !== 'Closed Lost')
-
-const CLOSED_LOST_REASONS = [
-    'Client chose another bank directly',
-    'Client used another broker',
-    'Rate not competitive enough',
-    'Client decided not to refinance',
-    'Client selling property',
-    'Loan not approved',
-    'Client unresponsive / lost contact',
-    'Other',
-]
 
 export default function CaseDetailPage() {
     return (
@@ -1667,7 +1657,7 @@ function ClosedLostModal({ onConfirm, onCancel }: {
                         autoFocus
                     >
                         <option value="">Select a reason…</option>
-                        {CLOSED_LOST_REASONS.map(r => (
+                        {LOST_REASONS.map(r => (
                             <option key={r} value={r}>{r}</option>
                         ))}
                     </select>

@@ -71,10 +71,10 @@ describe('sourceBreakdown', () => {
         const rows = sourceBreakdown({ ...data, leads }, 2026)
         expect(rows.map(r => r.source)).toEqual(['social_media', 'referral', 'not_set'])
     })
-    it('names the later year only when there is one', () => {
+    it('names the later year, defaulting to the next one', () => {
         expect(laterClosingsLabel(data, 2026)).toBe('Closed in 2027')
         expect(laterClosingsLabel({ ...data, won_by_year: [...data.won_by_year!, { year: 2026, closed_year: 2028, source: 'referral', cases: 1, loan_volume: 1 }] }, 2026)).toBe('Closed in 2027 onwards')
-        expect(laterClosingsLabel(data, 2024)).toBeNull()
+        expect(laterClosingsLabel(data, 2024)).toBe('Closed in 2025')
     })
 })
 
@@ -114,11 +114,18 @@ describe('lostReasons', () => {
     ]
     it('all time includes undated; a year only counts dated ones', () => {
         expect(lostReasons(lost, null)).toEqual([
-            { reason: 'Rate not competitive enough', cases: 3, loanVolume: 1000, pct: 75 },
-            { reason: 'Other', cases: 1, loanVolume: 100, pct: 25 },
+            { reason: 'Competition', cases: 3, loanVolume: 1000, pct: 75 },
+            { reason: 'Others', cases: 1, loanVolume: 100, pct: 25 },
         ])
-        expect(lostReasons(lost, 2026).map(r => r.reason)).toEqual(['Rate not competitive enough'])
+        expect(lostReasons(lost, 2026).map(r => r.reason)).toEqual(['Competition'])
         expect(lostReasons([], null)).toEqual([])
+    })
+    it('old detailed reasons merge into the five', () => {
+        const row = (reason: string) => ({ month: '2026-11', reason, cases: 1, loan_volume: 100 })
+        const r = lostReasons(['Client used another broker', 'Competition', 'Client chose another bank directly', 'Loan not approved',
+            'Client selling property', 'Client decided not to refinance', 'Client unresponsive / lost contact', 'No reason given'].map(row), null)
+        expect(Object.fromEntries(r.map(x => [x.reason, x.cases])))
+            .toEqual({ Competition: 3, 'Not Proceeding': 2, 'Not Eligible': 1, Unresponsive: 1, Others: 1 })
     })
 })
 

@@ -19,6 +19,7 @@
  */
 
 import { LEAD_SOURCES, NOT_SET, NOT_SET_LABEL } from '@/lib/insurance/leadSources'
+import { lostReasonGroup, type LostReasonGroup } from '@/lib/insurance/lostReasons'
 
 export interface ClosedRow { month: string; source: string; cases: number; loan_volume: number }
 export interface LeadRow { month: string; source: string; activated: number; won: number; lost: number; open: number }
@@ -155,10 +156,10 @@ export function sourceBreakdown(data: DashboardData, year: number): SourceRow[] 
         || b.leads - a.leads)
 }
 
-/** Heading for the later closings of `year`'s leads; null when there are none yet. */
-export function laterClosingsLabel(data: DashboardData, year: number): string | null {
+/** Heading for the later closings of `year`'s leads. Always shown, as the next year until there are any. */
+export function laterClosingsLabel(data: DashboardData, year: number): string {
     const ys = (data.won_by_year ?? []).filter(r => r.year === year && r.closed_year > year).map(r => r.closed_year)
-    if (ys.length === 0) return null
+    if (ys.length === 0) return `Closed in ${year + 1}`
     const first = Math.min(...ys)
     return first === Math.max(...ys) ? `Closed in ${first}` : `Closed in ${first} onwards`
 }
@@ -194,15 +195,16 @@ export function cohort(leads: LeadRow[], scope: string): Cohort {
 
 // ─── 5. Why deals are lost ──────────────────────────────────────────────────
 
-export interface LostReason { reason: string; cases: number; loanVolume: number; pct: number }
+export interface LostReason { reason: LostReasonGroup; cases: number; loanVolume: number; pct: number }
 
-/** `year` = lost in that year; null = all time (includes cases lost before dates were recorded). */
+/** Grouped into the five reasons. `year` = lost in that year; null = all time (includes cases lost before dates were recorded). */
 export function lostReasons(lost: LostRow[], year: number | null): LostReason[] {
-    const by = new Map<string, { cases: number; loanVolume: number }>()
+    const by = new Map<LostReasonGroup, { cases: number; loanVolume: number }>()
     for (const r of lost) {
         if (year != null && !(r.month && inYear(r.month, year))) continue
-        const t = by.get(r.reason) ?? { cases: 0, loanVolume: 0 }
-        by.set(r.reason, { cases: t.cases + Number(r.cases), loanVolume: t.loanVolume + Number(r.loan_volume) })
+        const reason = lostReasonGroup(r.reason)
+        const t = by.get(reason) ?? { cases: 0, loanVolume: 0 }
+        by.set(reason, { cases: t.cases + Number(r.cases), loanVolume: t.loanVolume + Number(r.loan_volume) })
     }
     const total = [...by.values()].reduce((s, r) => s + r.cases, 0)
     return [...by.entries()]
