@@ -77,7 +77,7 @@ function Content() {
             </div>
 
             {isTrack && <TrackBoard search={search} agent={agent || undefined} readOnly hrefFor={id => `/admin/insurance/cases/${id}`} />}
-            {isWon && <ClosedWonMonthly key={agent} scope={closedMonth} currentMonth={currentMonth} onScope={setClosedMonth} loanVolume={q.loanVolume} cases={q.total} loading={q.loading || q.refreshing} agent={agent || undefined} />}
+            {isWon && <ClosedWonMonthly key={agent} scope={closedMonth} currentMonth={currentMonth} onScope={setClosedMonth} loanVolume={q.loanVolume} cases={q.total} loading={q.loading || q.refreshing} failed={!!q.error} agent={agent || undefined} />}
             {!isTrack && (q.error ? <ErrorBox message={q.error} /> : q.loading ? <Skeleton height={320} radius={14} /> : q.rows.length === 0 ? <div className="card"><Empty>No cases match.</Empty></div> : (
                 <div className="card overflow-hidden transition-opacity" style={{ opacity: q.refreshing ? 0.55 : 1 }}>
                     <div className="overflow-x-auto"><table className="w-full text-sm">

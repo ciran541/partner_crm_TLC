@@ -72,6 +72,12 @@ export const isPaidAiBlocked = (label = '') =>
 
 export const isClaudeConfigured = (label?: string) => !!process.env.ANTHROPIC_API_KEY && !isPaidAiBlocked(label)
 
+/** Why an admin's AI action can't run here, in words they can act on; null when it can. */
+export function claudeOffReason(label: string): string | null {
+    if (isPaidAiBlocked(label)) return 'AI imports are switched off on this computer to avoid spending. Use the live HUB, or ask the developer to switch this one on.'
+    return isClaudeConfigured(label) ? null : 'AI is not set up: ANTHROPIC_API_KEY is missing.'
+}
+
 let client: Anthropic | null = null
 
 function fileBlock(f: ClaudeFile): Anthropic.ContentBlockParam {

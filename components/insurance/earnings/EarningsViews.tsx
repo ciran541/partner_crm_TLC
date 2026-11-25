@@ -1,13 +1,16 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { DollarSign, ArrowRight, ArrowLeft, Check, Clock } from 'lucide-react'
 import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import { commissionWithFee } from '@/lib/insurance/commission'
-import { useCaseSummary } from '@/lib/insurance/useCaseSummary'
-import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
+import { useKeptList } from '@/lib/insurance/useOwnCases'
+import { earningsKey, type EarningsMeta, type EarningsTab as Tab } from '@/lib/insurance/ownCases'
+import LoadMore from '@/components/shared/LoadMore'
+import LoadFailed from '@/components/shared/LoadFailed'
+import type { CaseListRow } from '@/lib/insurance/caseQuery'
 import type { CommissionBucket, AgentCommissionRow } from '@/lib/insurance/commission'
 import EarningsOverview from '@/components/insurance/earnings/EarningsOverview'
 import MonthPicker, { compact } from '@/components/insurance/shared/MonthPicker'
@@ -93,14 +96,11 @@ export function MasterEarningsTable({ rows, onOpen }: { rows: AgentCommissionRow
 // or paid. Active ("open") cases are pipeline, not earnings — they live in
 // Cases (Potential Revenue). So a revisited case only shows here once it is
 // itself Closed Won again, regardless of whether the earlier case was paid.
-type Tab = 'all' | 'closed_unpaid' | 'closed_paid'
 
 /**
- * Owns its own data rather than receiving a case array.
- *
- * The tabs are a server-side filter now, so the component that knows which tab
- * is selected has to be the one issuing the query — passing rows in from the
- * parent would mean every parent re-implementing the tab-to-query mapping.
+ * Owns its own data: ONE request per period + tab (own_earnings()) brings every
+ * total, count and month subtotal plus the first cases; more cases on scroll.
+ * All figures cover every matching case, however many rows are loaded.
  *
  * `agentId` scopes it: omitted for an agent looking at their own earnings (the
  * server scopes by session), set for the admin drill-down.
@@ -121,32 +121,18 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
     // overview above still shows every unpaid case, so nothing is hidden.
     const currentMonth = todaySgt().slice(0, 7)
     const [scope, setScope] = useState(currentMonth.slice(0, 4))
-    const earnedByMonth = useEarnedByMonth(agentId)
+    const q = useKeptList<EarningsMeta>(earningsKey(scope, tab, agentId))
+    const { rows: filtered, total: filteredTotal, meta } = q
+    const earnedByMonth = useMemo(() => new Map((meta?.months ?? []).map(m => [m.month, m])), [meta])
     const years = useMemo(() => {
         const thisYear = Number(currentMonth.slice(0, 4))
         const ys = new Set<number>([thisYear, ...[...earnedByMonth.keys()].map(m => Number(m.slice(0, 4)))])
         return [...ys].sort((a, b) => b - a)
     }, [earnedByMonth, currentMonth])
-
-    // Totals and per-tab counts come from the database over EVERY case in scope,
-    // so the hero cards and tab badges stay correct however many rows are loaded.
-    const { summary, loading: summaryLoading } = useCaseSummary({ agent: agentId })
-    const c = summary.commission
-
-    const {
-        rows: filtered,
-        total: filteredTotal,
-        hasMore,
-        loading: rowsLoading,
-        refreshing,
-        loadingMore,
-        loadMore,
-    } = usePagedCases({ ...scopeQuery(agentId, scope), ...(tab === 'all' ? {} : { bucket: tab }), limit: 200 })
-
-    // Tab badges for the chosen year: one-row queries, the server counts.
-    const countAll = usePagedCases({ ...scopeQuery(agentId, scope), limit: 1 }).total
-    const countUnpaid = usePagedCases({ ...scopeQuery(agentId, scope), bucket: 'closed_unpaid', limit: 1 }).total
-    const countPaid = usePagedCases({ ...scopeQuery(agentId, scope), bucket: 'closed_paid', limit: 1 }).total
+    // From the server: complete even when the month's rows aren't all loaded.
+    const group = (month: string) => meta?.groups.find(g => (g.month ?? '') === month) ?? { cases: 0, agent_share: 0 }
+    // Counts belong to the period on screen; a dash while another one loads.
+    const count = (t: Tab) => (meta && q.ready ? meta.counts[t] : '–')
 
     // Rows grouped by the month they closed (newest first), each with its own
     // total — the agent reads it like a statement.
@@ -159,14 +145,10 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
         return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]))
     })()
 
-    // Empty state only when there's nothing closed at all (any year).
-    const bucketedCount = c.count_closed_unpaid + c.count_closed_paid
-    const loading = summaryLoading || rowsLoading
-
-    const tabs: { key: Tab; label: string; count: number }[] = [
-        { key: 'all', label: 'All', count: countAll },
-        { key: 'closed_unpaid', label: 'Awaiting payout', count: countUnpaid },
-        { key: 'closed_paid', label: 'Paid', count: countPaid },
+    const tabs: { key: Tab; label: string; count: number | string }[] = [
+        { key: 'all', label: 'All', count: count('all') },
+        { key: 'closed_unpaid', label: 'Awaiting payout', count: count('closed_unpaid') },
+        { key: 'closed_paid', label: 'Paid', count: count('closed_paid') },
     ]
 
     const bucketBadge = (b: CommissionBucket) =>
@@ -187,15 +169,18 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
             </div>
 
             <EarningsOverview
-                awaiting={c.closed_unpaid}
-                awaitingCases={c.count_closed_unpaid}
-                currentMonth={todaySgt().slice(0, 7)}
+                awaiting={meta ? Number(meta.awaiting) : null}
+                awaitingCases={meta?.awaiting_cases ?? 0}
+                earned={meta?.months ?? null}
+                currentMonth={currentMonth}
                 agentId={agentId}
             />
 
-            {loading ? (
-                <Skeleton height={320} radius={14} />
-            ) : bucketedCount === 0 ? (
+            {q.refreshError && <LoadFailed message="Couldn’t refresh. Showing what was loaded earlier." onRetry={q.refresh} />}
+            {!meta ? (q.error
+                ? <LoadFailed message="Couldn’t load earnings." onRetry={q.refresh} />
+                : <Skeleton height={320} radius={14} />
+            ) : meta.closed_cases === 0 ? (
                 <EmptyState icon={DollarSign} iconColor="#03a9e7" title="No commission yet"
                     description="When you mark a case Closed Won, its commission shows here until it's paid out." />
             ) : (
@@ -212,13 +197,13 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
                             onScope={setScope}
                             tile={m => {
                                 const t = earnedByMonth.get(m)
-                                const earned = t?.agent_share ?? 0
+                                const earned = Number(t?.agent_share ?? 0)
                                 return { weight: earned, main: compact(earned), sub: t ? `${t.cases} case${t.cases === 1 ? '' : 's'}` : '' }
                             }}
                         />
                         {scope !== 'all' && <StatementButton key={scope} period={scope} agentId={agentId} />}
                     </div>
-                    <div className="scroll-x transition-opacity duration-150" style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4, opacity: refreshing ? 0.55 : 1 }}>
+                    <div className="scroll-x transition-opacity duration-150" style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #f1f5f9', padding: '0 16px', gap: 4, opacity: q.refreshing ? 0.55 : 1 }}>
                         {tabs.map(t => {
                             const active = tab === t.key
                             return (
@@ -236,7 +221,12 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
                         })}
                     </div>
 
-                    <div style={{ overflowX: 'auto' }}>
+                    {q.error ? (
+                        <div className="p-4"><LoadFailed message="Couldn’t load these cases." onRetry={q.refresh} /></div>
+                    ) : q.loading ? (
+                        <div className="p-4"><Skeleton height={220} radius={10} /></div>
+                    ) : <>
+                    <div style={{ overflowX: 'auto', opacity: q.refreshing ? 0.55 : 1 }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
@@ -263,11 +253,11 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
                                         <td colSpan={4} className="table-td" style={{ fontWeight: 800, color: '#052d4a', fontSize: 14 }}>
                                             {monthLabel(monthKey)}
                                             <span style={{ fontWeight: 500, color: '#64748b', fontSize: 12, marginLeft: 8 }}>
-                                                {rows.length} case{rows.length === 1 ? '' : 's'}
+                                                {group(monthKey).cases} case{group(monthKey).cases === 1 ? '' : 's'}
                                             </span>
                                         </td>
-                                        <td className="table-td" style={{ textAlign: 'right', fontWeight: 800, color: '#059669', fontSize: 15 }}>
-                                            {money(rows.reduce((sum, r) => sum + commissionWithFee(r.loan_value ?? 0, r.correction_fee).agent, 0))}
+                                        <td className="table-td" style={{ textAlign: 'right', fontWeight: 800, color: '#052d4a', fontSize: 15 }}>
+                                            {money(Number(group(monthKey).agent_share))}
                                         </td>
                                         <td colSpan={isAdmin ? 3 : 2} className="table-td" style={{ fontSize: 11, color: '#64748b' }}>earned this month</td>
                                     </tr>
@@ -322,25 +312,13 @@ export function AgentEarningsView({ agentId, title, subtitle, isAdmin, onRecordP
                             </tbody>
                         </table>
                     </div>
-                    {/* Appends the next page, so scroll position is preserved. */}
-                    {hasMore && (
-                        <button
-                            onClick={loadMore}
-                            disabled={loadingMore}
-                            style={{
-                                width: '100%', padding: '11px 20px', borderTop: '1px solid #f1f5f9',
-                                background: 'none', border: 'none', cursor: loadingMore ? 'default' : 'pointer',
-                                fontSize: 13, fontWeight: 600, color: '#0369a1',
-                            }}
-                        >
-                            {loadingMore ? 'Loading…' : `Load more (${filteredTotal - filtered.length} remaining)`}
-                        </button>
-                    )}
+                    <div className="px-4 pb-2"><LoadMore hasMore={q.hasMore} loading={q.loadingMore} failed={q.moreError} onLoad={q.loadMore} remaining={filteredTotal - filtered.length} /></div>
                     <div style={{ padding: '12px 20px', borderTop: '1px solid #f1f5f9', background: '#f8fafc' }}>
                         <span style={{ fontSize: 12, color: '#94a3b8' }}>
                             Showing {filtered.length} of {filteredTotal} case{filteredTotal !== 1 ? 's' : ''}
                         </span>
                     </div>
+                    </>}
                 </div>
             )}
         </div>
@@ -386,33 +364,10 @@ function EarningsLog({ c }: { c: CaseListRow }) {
     )
 }
 
-/** Earnings list scope: Closed Won cases closed in a year ('YYYY'), a month ('YYYY-MM') or ever ('all'). */
-function scopeQuery(agentId: string | undefined, scope: string) {
-    return { agent: agentId, stage: 'Closed Won', closedMonth: scope === 'all' ? undefined : scope }
-}
-
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 /** 'YYYY-MM' → "July 2025"; 'YYYY' → "2025". */
 function monthLabel(key: string): string {
     if (key.length === 4) return key
     const m = Number(key.slice(5))
     return m >= 1 && m <= 12 ? `${MONTH_NAMES[m - 1]} ${key.slice(0, 4)}` : key
-}
-
-/** Commission EARNED per closing month (paid or not) — the picker's tiles. */
-function useEarnedByMonth(agentId: string | undefined): Map<string, { cases: number; agent_share: number }> {
-    const [map, setMap] = useState<Map<string, { cases: number; agent_share: number }>>(new Map())
-    useEffect(() => {
-        let alive = true
-        fetch(`/api/insurance/cases/closed-by-month${agentId ? `?agent=${agentId}` : ''}`)
-            .then(r => (r.ok ? r.json() : { months: [] }))
-            .then(d => {
-                if (!alive) return
-                const rows = (d.months ?? []) as { month: string; cases: number; agent_share: number }[]
-                setMap(new Map(rows.map(r => [r.month, { cases: r.cases, agent_share: Number(r.agent_share ?? 0) }])))
-            })
-            .catch(() => {})
-        return () => { alive = false }
-    }, [agentId])
-    return map
 }

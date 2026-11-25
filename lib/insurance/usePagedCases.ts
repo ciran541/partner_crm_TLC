@@ -53,24 +53,29 @@ const DEBOUNCE_MS = 250
 /** Module-level so switching screens and coming back costs nothing. */
 const cache = new Map<string, PageState>()
 
+/** Bumped on sign-out, so a response still in flight can't refill the cache. */
+let session = 0
+
+/** Most rows one refresh re-reads (the API's own cap). */
+const MAX_REFRESH = 200
+
 /** Mounted hooks, so an invalidation can make them refetch immediately. */
 const listeners = new Set<() => void>()
 
 /** Reset on sign-out so the next user never sees the previous user's data. */
 export function clearPagedCasesCache() {
+    session++
     cache.clear()
 }
 
 /**
- * Drop every cached query and make mounted screens refetch.
+ * Mark every cached query out of date and make mounted screens refetch.
  *
- * Call after a mutation that could change which cases match a query — clearing
- * the cache alone is not enough, because a mounted screen holds its rows in the
- * module cache and would happily keep rendering the stale copy until something
- * else caused it to re-run.
+ * Call after a mutation that could change which cases match a query. Cached rows
+ * stay (so the next screen still opens instantly) and are re-read on next use.
  */
 export function invalidatePagedCases() {
-    cache.clear()
+    cache.forEach(page => { page.fetchedAt = 0 })
     listeners.forEach(l => l())
 }
 
@@ -102,9 +107,9 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
     const [, forceRender] = useState(0)
     const rerender = useCallback(() => forceRender(n => n + 1), [])
 
-    const [loading, setLoading] = useState(!cache.has(key))
     const [loadingMore, setLoadingMore] = useState(false)
-    const [error, setError] = useState<string | null>(null)
+    // Keyed: an error belongs to the query that failed, never to the next one.
+    const [failure, setFailure] = useState<{ key: string; message: string } | null>(null)
 
     // Identifies the query a response belongs to. A slow response for an
     // abandoned query must never overwrite the current one.
@@ -117,23 +122,31 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
             const controller = new AbortController()
             abortRef.current = controller
 
-            if (mode === 'append') setLoadingMore(true)
-            else setLoading(!cache.has(k))
-            setError(null)
+            const startedIn = session
+
+            setLoadingMore(mode === 'append')
+            setFailure(null)
 
             try {
-                const res = await fetch(`/api/insurance/cases?${buildCaseParams(q, cursor)}`, {
-                    signal: controller.signal,
-                })
+                const params = buildCaseParams(q, cursor)
+                // A refresh re-reads as many rows as are loaded, so the list
+                // doesn't shrink under someone who has scrolled down.
+                const loaded = cache.get(k)?.rows.length ?? 0
+                if (mode === 'replace' && loaded > Number(params.get('limit'))) {
+                    params.set('limit', String(Math.min(MAX_REFRESH, loaded)))
+                }
+                const res = await fetch(`/api/insurance/cases?${params}`, { signal: controller.signal })
                 if (!res.ok) throw new Error(`Request failed (${res.status})`)
                 const body = await res.json()
 
                 // The query moved on while this was in flight — discard it.
-                if (activeKey.current !== k) return
+                if (activeKey.current !== k || startedIn !== session) return
 
                 const previous = mode === 'append' ? cache.get(k)?.rows ?? [] : []
+                const seen = new Set(previous.map(r => r.id))
+                const fresh = ((body.rows ?? []) as CaseListRow[]).filter(r => !seen.has(r.id))
                 cache.set(k, {
-                    rows: [...previous, ...((body.rows ?? []) as CaseListRow[])],
+                    rows: [...previous, ...fresh],
                     total: body.total ?? 0,
                     loanVolume: body.loanVolume ?? 0,
                     agentShare: body.agentShare ?? 0,
@@ -145,12 +158,11 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
             } catch (err) {
                 if ((err as Error)?.name === 'AbortError') return
                 if (activeKey.current !== k) return
-                setError('Could not load cases. Please try again.')
+                setFailure({ key: k, message: 'Could not load cases. Please try again.' })
             } finally {
-                if (activeKey.current === k) {
-                    setLoading(false)
-                    setLoadingMore(false)
-                }
+                // Only the latest request may say loading is over: a cancelled
+                // one used to, which made screens say "empty" mid-load.
+                if (abortRef.current === controller) setLoadingMore(false)
             }
         },
         [rerender],
@@ -159,12 +171,7 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
     useEffect(() => {
         activeKey.current = key
 
-        if (!enabled) {
-            // Nothing to wait for — clear the cold-load flag so the caller shows
-            // its idle state rather than a spinner that never resolves.
-            setLoading(false)
-            return
-        }
+        if (!enabled) return
 
         const cached = cache.get(key)
 
@@ -173,7 +180,6 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
             return
         }
         // Cached: render instantly, and only revalidate if it has gone stale.
-        setLoading(false)
         if (Date.now() - cached.fetchedAt > STALE_MS) {
             fetchPage(effective, key, null, 'replace')
         }
@@ -213,12 +219,20 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
     }, [fetchPage, loadingMore, key])
 
     const refresh = useCallback(() => {
-        cache.delete(key)
         fetchPage(effective, key, null, 'replace')
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fetchPage, key])
 
+    // Derived, never stored: "still waiting" is simply "no answer for this query
+    // yet, and it hasn't failed". (Typing counts as waiting: the search on screen
+    // is not the one the rows answer.)
+    const error = failure?.key === key ? failure.message : null
+    const waiting = enabled && ((!current && !error) || (query.search ?? '') !== debouncedSearch)
+    const hasRows = (displayed?.rows.length ?? 0) > 0
+
     return {
+        /** The server has answered THIS query: its total and "empty" can be trusted. */
+        ready: !!current,
         rows: displayed?.rows ?? [],
         /** Rows matching the filters server-side — may exceed rows.length. */
         total: displayed?.total ?? 0,
@@ -231,12 +245,15 @@ export function usePagedCases(query: CaseQuery, options?: { enabled?: boolean })
         // otherwise "Load more" during a pending search would append the previous
         // query's next page.
         hasMore: !!current?.nextCursor,
-        /** True only on a genuinely cold load, when there is nothing to show. */
-        loading: loading && !displayed,
+        /** Waiting with no rows to show, so "empty" must not be shown yet. */
+        loading: waiting && !hasRows,
         /** True while a new query loads over existing rows; dim, don't blank. */
-        refreshing: loading && !!displayed && !current,
+        refreshing: waiting && hasRows,
         loadingMore,
-        error,
+        /** This query could not be loaded, and there is nothing to show for it. */
+        error: current ? null : error,
+        /** Rows are showing, but the last refresh or "Load more" failed. */
+        refreshError: current ? error : null,
         loadMore,
         refresh,
     }

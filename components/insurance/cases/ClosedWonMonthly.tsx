@@ -1,6 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useList } from '@/lib/shared/useList'
+import { ownCasesStore } from '@/lib/insurance/ownCasesStore'
+import { CLOSED_MONTHS_API } from '@/lib/insurance/ownCases'
+import LoadFailed from '@/components/shared/LoadFailed'
+import { useMemo, useState } from 'react'
 import { TrendingDown, TrendingUp } from 'lucide-react'
 import MonthPicker, { compact } from '@/components/insurance/shared/MonthPicker'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
@@ -38,13 +42,15 @@ function prevMonth(ym: string): string {
     return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
 }
 
-export default function ClosedWonMonthly({ scope, currentMonth, onScope, loanVolume, cases, loading, agent }: {
+export default function ClosedWonMonthly({ scope, currentMonth, onScope, loanVolume, cases, loading, failed, agent }: {
     scope: string
     currentMonth: string
     onScope: (scope: string) => void
     loanVolume: number
     cases: number
     loading: boolean
+    /** The list query failed: its totals are unknown, not zero. */
+    failed?: boolean
     agent?: string
 }) {
     const thisYear = Number(currentMonth.slice(0, 4))
@@ -53,15 +59,10 @@ export default function ClosedWonMonthly({ scope, currentMonth, onScope, loanVol
     const wholeYear = scope.length === 4
 
     // One small row per month that has a closing; fetched once.
-    const [totals, setTotals] = useState<MonthTotal[]>([])
-    useEffect(() => {
-        let alive = true
-        fetch(`/api/insurance/cases/closed-by-month${agent ? `?agent=${agent}` : ''}`)
-            .then(r => (r.ok ? r.json() : { months: [] }))
-            .then(d => { if (alive) setTotals(d.months ?? []) })
-            .catch(() => {})
-        return () => { alive = false }
-    }, [agent])
+    const months = useList<never, { months: MonthTotal[] }>(ownCasesStore, `${CLOSED_MONTHS_API}${agent ? `?agent=${agent}` : ''}`)
+    const totals = useMemo(() => months.meta?.months ?? [], [months.meta])
+    const known = !!months.meta
+    const listKnown = !loading && !failed
 
     const revenue = useMemo(() => {
         const map = new Map<string, number>()
@@ -106,6 +107,7 @@ export default function ClosedWonMonthly({ scope, currentMonth, onScope, loanVol
 
     return (
         <div className="card p-4 sm:p-5 space-y-4">
+            {(months.status === 'error' || months.outOfDate) && <LoadFailed message="Couldn’t load the monthly figures." onRetry={months.retry} />}
             {/* Shared picker (same as Earnings): year · whole year · all time · month tiles */}
             <MonthPicker
                 scope={scope}
@@ -113,11 +115,12 @@ export default function ClosedWonMonthly({ scope, currentMonth, onScope, loanVol
                 years={years}
                 onScope={go}
                 tile={m => {
+                    if (!known) return { weight: 0, main: '…' }
                     const v = rev(m)
                     return { weight: v, main: compact(v), sub: `${compact(loan(m))} closed` }
                 }}
-                yearSummary={<Totals revenue={yearRev(viewYear)} loans={yearLoan(viewYear)} />}
-                allTimeSummary={<Totals revenue={lifetimeRev} loans={lifetimeLoan} />}
+                yearSummary={known ? <Totals revenue={yearRev(viewYear)} loans={yearLoan(viewYear)} /> : '…'}
+                allTimeSummary={known ? <Totals revenue={lifetimeRev} loans={lifetimeLoan} /> : '…'}
             />
 
             {/* ── What the list below shows ───────────────────────────────────── */}
@@ -126,16 +129,16 @@ export default function ClosedWonMonthly({ scope, currentMonth, onScope, loanVol
                     <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">{scopeLabel}</p>
                     <div className="flex gap-8 flex-wrap mt-1">
                         <div>
-                            <p className="text-3xl font-extrabold text-emerald-600 leading-tight">{money(current)}</p>
+                            <p className="text-3xl font-extrabold text-emerald-600 leading-tight">{listKnown ? money(current) : '–'}</p>
                             <p className="text-xs text-slate-500">Closed revenue</p>
                         </div>
                         <div>
-                            <p className="text-3xl font-extrabold text-[#052d4a] leading-tight">{money(loanVolume)}</p>
-                            <p className="text-xs text-slate-500">Loans closed · {cases} case{cases === 1 ? '' : 's'}</p>
+                            <p className="text-3xl font-extrabold text-[#052d4a] leading-tight">{listKnown ? money(loanVolume) : '–'}</p>
+                            <p className="text-xs text-slate-500">Loans closed{listKnown && ` · ${cases} case${cases === 1 ? '' : 's'}`}</p>
                         </div>
                     </div>
                 </div>
-                {!allTime && (current > 0 || compareRev > 0) && delta !== 0 && (
+                {known && listKnown && !allTime && (current > 0 || compareRev > 0) && delta !== 0 && (
                     <p className={`text-sm font-semibold flex items-center gap-1 ${delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {delta > 0 ? <TrendingUp size={15} /> : <TrendingDown size={15} />}
                         {delta > 0 ? '+' : '−'}{money(Math.abs(delta))} vs {compareLabel}

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireAdminUser } from '@/lib/auth/requireAdmin'
+import { claudeOffReason } from '@/lib/ai/claude'
 import { extractPackages } from '@/lib/insurance/extractPackages'
 
 export const maxDuration = 60
@@ -15,9 +16,8 @@ export async function POST(request: Request) {
     if (!bank?.trim() || !text?.trim()) {
         return NextResponse.json({ error: 'Pick a bank and paste the rate block.' }, { status: 400 })
     }
-    if (!process.env.ANTHROPIC_API_KEY) {
-        return NextResponse.json({ error: 'Extraction needs ANTHROPIC_API_KEY — not configured.' }, { status: 503 })
-    }
+    const off = claudeOffReason('extractPackages')
+    if (off) return NextResponse.json({ error: off }, { status: 503 })
 
     const packages = await extractPackages(text, bank)
     if (!packages) {

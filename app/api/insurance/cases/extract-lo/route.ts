@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     // it". Both used to surface as the same generic 422, which is impossible to
     // act on — and the keys living in a local .env.local that never deploys is
     // exactly how a feature works locally and silently does nothing in prod.
-    if (!isClaudeConfigured()) {
+    if (!isClaudeConfigured('extractLoanOffer')) {
         console.error('[extract-lo] ANTHROPIC_API_KEY is not set')
         return NextResponse.json(
             { error: 'Document reading is not configured on this server. Ask your admin to set the AI key.' },

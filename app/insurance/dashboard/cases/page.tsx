@@ -1,8 +1,8 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, Search, Briefcase, ChevronDown, ArrowRight, AlertCircle, TrendingUp, TrendingDown, Upload } from 'lucide-react'
+import { Plus, Search, Briefcase, ChevronDown, ArrowRight, TrendingUp, TrendingDown, Upload } from 'lucide-react'
 import NewCaseModal from '@/components/insurance/cases/NewCaseModal'
 import CaseImportModal from '@/components/insurance/cases/CaseImportModal'
 import { PIPELINE_STAGES, INACTIVE_STAGE, stageLabel } from '@/lib/insurance/stages'
@@ -11,7 +11,10 @@ import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
+import LoadFailed from '@/components/shared/LoadFailed'
+import LoadMore from '@/components/shared/LoadMore'
+import { useOwnCases } from '@/lib/insurance/useOwnCases'
+import type { CaseListRow } from '@/lib/insurance/caseQuery'
 import TrackBoard from '@/components/insurance/cases/TrackBoard'
 import BulkInactiveBar, { BULK_MAX } from '@/components/insurance/cases/BulkInactiveBar'
 import InlineAlert from '@/components/shared/InlineAlert'
@@ -88,9 +91,7 @@ function CasesList() {
     // (whole year), SGT. Opens on this month.
     const currentMonth = todaySgt().slice(0, 7)
     const [closedMonth, setClosedMonth] = useState(currentMonth)
-    const [agentFilter, setAgentFilter] = useState('all')
     const [search, setSearch] = useState('')
-    const [agentList, setAgentList] = useState<{ id: string; name: string }[]>([])
 
     // Date filter — by range or by month, both off "account / case creation date".
     const [dateMode, setDateMode] = useState<DateMode>('all')
@@ -107,39 +108,25 @@ function CasesList() {
         rows: cases,
         total,
         loanVolume,
-        isAdmin,
         hasMore,
         loading,
         refreshing,
         loadingMore,
+        moreError,
         error,
+        refreshError,
+        refresh,
         loadMore,
-    } = usePagedCases({
+    } = useOwnCases({
         search,
-        stage: stageFilter,
-        agent: agentFilter === 'all' ? undefined : agentFilter,
+        stage: isTrack ? undefined : stageFilter,
         from: dateMode === 'range' ? fromDate || undefined : undefined,
         to: dateMode === 'range' ? toDate || undefined : undefined,
         month: dateMode === 'month' ? month || undefined : undefined,
         // 'all' = every closed case (All time); otherwise a month or a year.
-        closedMonth: isClosedWon && closedMonth !== 'all' ? closedMonth : undefined,
-    }, { enabled: !isTrack })   // the board loads its own four columns
-
-    // Admin-only: load the full agent roster for the agent filter. Gated on
-    // isAdmin so the agent path never makes this call.
-    useEffect(() => {
-        if (!isAdmin) return
-        let active = true
-        fetch('/api/admin/get-profiles')
-            .then(res => (res.ok ? res.json() : []))
-            .then(profiles => {
-                if (active && Array.isArray(profiles)) {
-                    setAgentList(profiles.map((p: { id: string; name: string }) => ({ id: p.id, name: p.name })))
-                }
-            })
-            .catch(() => { /* non-fatal: filter just won't populate */ })
-        return () => { active = false }
-    }, [isAdmin])
+        closed: isClosedWon && closedMonth !== 'all' ? closedMonth : undefined,
+        countOnly: isInactive,   // no revenue banner there
+    }, { enabled: !isTrack })   // the board loads itself
 
     // The date pickers used to take their floor from the earliest loaded case.
     // With paging we no longer hold the whole history, and guessing a floor from
@@ -164,10 +151,10 @@ function CasesList() {
     const todayStr = todaySgt()
 
     const filterLabel = stageLabel(stageFilter)
-    const hasFilters = stageFilter !== TRACK || agentFilter !== 'all' || !!search || dateActive
+    const hasFilters = stageFilter !== TRACK || !!search || dateActive
 
     const resetFilters = () => {
-        changeStageFilter(TRACK); setAgentFilter('all'); setSearch('')
+        changeStageFilter(TRACK); setSearch('')
         setDateMode('all'); setFromDate(''); setToDate(''); setMonth('')
     }
 
@@ -178,7 +165,7 @@ function CasesList() {
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <h1 className="ios-page-title">Cases</h1>
-                        {!loading && !isTrack && (
+                        {!loading && !error && !isTrack && (
                             <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 9999, background: '#f1f5f9', color: '#64748b' }}>
                                 {total}
                             </span>
@@ -255,23 +242,6 @@ function CasesList() {
                             onChange={e => setMonth(e.target.value)} style={inputStyle} aria-label="Month" />
                     )}
 
-                    {/* Admin agent filter */}
-                    {isAdmin && (
-                        <div style={{ position: 'relative' }}>
-                            <select
-                                value={agentFilter}
-                                onChange={e => setAgentFilter(e.target.value)}
-                                style={{ ...inputStyle, appearance: 'none', padding: '8px 32px 8px 12px', color: '#475569', cursor: 'pointer' }}
-                            >
-                                <option value="all">All Agents</option>
-                                {agentList.map(a => (
-                                    <option key={a.id} value={a.id}>{a.name}</option>
-                                ))}
-                            </select>
-                            <ChevronDown size={13} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
-                        </div>
-                    )}
-
                     {hasFilters && (
                         <button
                             onClick={resetFilters}
@@ -285,7 +255,7 @@ function CasesList() {
             </div>
 
             {isTrack && (
-                <TrackBoard search={search} agent={agentFilter === 'all' ? undefined : agentFilter} />
+                <TrackBoard search={search} />
             )}
 
             {/* Closed Won: every month of every year in one grid; tap a month or year to list it. */}
@@ -297,7 +267,7 @@ function CasesList() {
                     loanVolume={loanVolume}
                     cases={total}
                     loading={loading || refreshing}
-                    agent={agentFilter === 'all' ? undefined : agentFilter}
+                    failed={!!error}
                 />
             )}
 
@@ -338,11 +308,10 @@ function CasesList() {
             )}
 
             {!isTrack && error && !loading && (
-                <div className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626', fontSize: 14 }}>
-                    <AlertCircle size={16} style={{ flexShrink: 0 }} />
-                    {error}
-                </div>
+                <LoadFailed message={error} onRetry={refresh} />
             )}
+
+            {!isTrack && refreshError && <LoadFailed message="Couldn’t refresh. Showing what was loaded earlier." onRetry={refresh} />}
 
             {!isTrack && !loading && !error && cases.length === 0 && (
                 <EmptyState
@@ -380,7 +349,6 @@ function CasesList() {
                                             </th>
                                         )}
                                         <th className="table-th">Client</th>
-                                        {isAdmin && <th className="table-th">Agent</th>}
                                         <th className="table-th">Type</th>
                                         <th className="table-th" style={{ textAlign: 'right' }}>Loan Amount</th>
                                         <th className="table-th">Banker</th>
@@ -415,9 +383,6 @@ function CasesList() {
                                                 {c.client_mobile && <p style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{c.client_mobile}</p>}
                                                 {c.client_email && <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 1, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.client_email}</p>}
                                             </td>
-                                            {isAdmin && (
-                                                <td className="table-td" style={{ color: '#475569' }}>{c.profiles?.name || 'Unknown Agent'}</td>
-                                            )}
                                             <td className="table-td" style={{ color: '#475569' }}>{c.case_type}</td>
                                             <td className="table-td" style={{ textAlign: 'right', fontWeight: 600, color: '#0f172a' }}>{caseLoanAmount(c)}</td>
                                             <td className="table-td">
@@ -457,7 +422,7 @@ function CasesList() {
                     {/* Mobile card list */}
                     <div className="md:hidden flex flex-col gap-2.5">
                         {cases.map(c => (
-                            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div key={c.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 130px', display: 'flex', alignItems: 'center', gap: 10 }}>
                             {isInactive && (
                                 <input type="checkbox" aria-label={`Select ${c.client_name || 'client'}`} checked={selected.has(c.id)}
                                     onChange={() => toggleSelected(c.id)} className="w-6 h-6 shrink-0 accent-[#03a9e7]" />
@@ -486,9 +451,6 @@ function CasesList() {
                                         </p>
                                     )}
                                     {c.follow_up_remark && <p style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>{c.follow_up_remark}</p>}
-                                    {isAdmin && c.profiles?.name && (
-                                        <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Agent: {c.profiles.name}</p>
-                                    )}
                                     {c.referred_bankers && c.referred_bankers.length > 0 && (
                                         <p style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>
                                             Banker: {c.referred_bankers.map(b => `${b.name} (${b.bank})`).join(', ')}
@@ -507,21 +469,7 @@ function CasesList() {
                         ))}
                     </div>
 
-                    {/* Appends the next page, so scroll position is preserved. */}
-                    {hasMore && (
-                        <button
-                            onClick={loadMore}
-                            disabled={loadingMore}
-                            className="card"
-                            style={{
-                                padding: '12px 20px', width: '100%', cursor: loadingMore ? 'default' : 'pointer',
-                                background: 'none', border: '1px solid #e2e8f0',
-                                fontSize: 13, fontWeight: 600, color: '#0369a1',
-                            }}
-                        >
-                            {loadingMore ? 'Loading…' : `Load more (${total - cases.length} remaining)`}
-                        </button>
-                    )}
+                    <LoadMore hasMore={hasMore} loading={loadingMore} failed={moreError} onLoad={loadMore} remaining={total - cases.length} />
                 </div>
             )}
             {isInactive && selected.size > 0 && (

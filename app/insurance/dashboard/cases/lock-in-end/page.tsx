@@ -2,11 +2,13 @@
 
 import { useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, ArrowLeft, ArrowRight, AlertCircle } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight } from 'lucide-react'
 import EmptyState from '@/components/shared/EmptyState'
 import Skeleton from '@/components/shared/Skeleton'
 import { formatDate } from '@/lib/utils/formatDate'
-import { usePagedCases } from '@/lib/insurance/usePagedCases'
+import LoadFailed from '@/components/shared/LoadFailed'
+import LoadMore from '@/components/shared/LoadMore'
+import { useOwnCases } from '@/lib/insurance/useOwnCases'
 import { stageLabel } from '@/lib/insurance/stages'
 
 function daysLeft(dateString: string) {
@@ -47,17 +49,18 @@ export default function UpcomingLockInsPage() {
         hasMore,
         loading,
         loadingMore,
+        moreError,
         error,
+        refresh,
         loadMore,
-    } = usePagedCases({
-        stage: 'all',
-        // Drafts were never filtered out here, and still are not.
-        includeDrafts: true,
-        excludeStages: ['Closed Lost'],
+    } = useOwnCases({
+        // Drafts were never filtered out here, and still are not. (Closed Lost is:
+        // the lock-in window leaves it out on the server.)
+        drafts: true,
+        countOnly: true,
         lockInFrom: from,
         lockInTo: to,
-        sort: 'lock_in_end_date',
-        dir: 'asc',
+        sort: 'lock_in',
     })
 
     return (
@@ -88,9 +91,7 @@ export default function UpcomingLockInsPage() {
             )}
 
             {error && !loading && (
-                <div className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 10, color: '#dc2626', fontSize: 14 }}>
-                    <AlertCircle size={16} style={{ flexShrink: 0 }} /> {error}
-                </div>
+                <LoadFailed message={error} onRetry={refresh} />
             )}
 
             {!loading && !error && cases.length === 0 && (
@@ -171,21 +172,7 @@ export default function UpcomingLockInsPage() {
                         })}
                     </div>
 
-                    {/* Appends, so scroll position is preserved. */}
-                    {hasMore && (
-                        <button
-                            onClick={loadMore}
-                            disabled={loadingMore}
-                            className="card"
-                            style={{
-                                padding: '12px 20px', width: '100%', cursor: loadingMore ? 'default' : 'pointer',
-                                background: 'none', border: '1px solid #e2e8f0',
-                                fontSize: 13, fontWeight: 600, color: '#0369a1',
-                            }}
-                        >
-                            {loadingMore ? 'Loading…' : `Load more (${total - cases.length} remaining)`}
-                        </button>
-                    )}
+                    <LoadMore hasMore={hasMore} loading={loadingMore} failed={moreError} onLoad={loadMore} remaining={total - cases.length} />
                 </>
             )}
         </div>

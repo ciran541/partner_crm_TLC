@@ -7,8 +7,9 @@ import { useRouter, usePathname } from 'next/navigation'
 import { canAccessInsurance, getSafeRoute, isAdmin as isAdminRole } from '@/lib/permissions'
 import type { UserRole } from '@/lib/types/shared'
 import { clearCaseCaches } from '@/lib/insurance/caseCache'
-import { todaySgt } from '@/lib/insurance/promotions'
-import { addDays } from '@/lib/insurance/followUps'
+import { actionCentreStore } from '@/lib/insurance/actionCentreStore'
+import { NOW_KEY, type ActionMeta, type ActionRow } from '@/lib/insurance/actionCentre'
+import { useList } from '@/lib/shared/useList'
 import { removeLinkedAccount, saveLinkedAccount } from '@/lib/auth/accountSwitcher'
 import AccountSwitcher from '@/components/shared/AccountSwitcher'
 import { needsReconsent } from '@/lib/legal/checkConsent'
@@ -184,17 +185,11 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     const [internalOpen, setInternalOpen] = useState(false)
     // Overdue follow-ups, shown as a red count on the Action Centre link. Only
     // visible once Internal is open, so a client glancing at the screen never sees it.
-    const [overdueCount, setOverdueCount] = useState(0)
-    useEffect(() => {
-        const q = new URLSearchParams({
-            stage: 'all', includeDrafts: 'true', hasFollowUp: 'true',
-            followUpTo: addDays(todaySgt(), -1), limit: '1',
-        })
-        fetch(`/api/insurance/cases?${q}`)
-            .then(r => (r.ok ? r.json() : null))
-            .then(d => setOverdueCount(typeof d?.total === 'number' ? d.total : 0))
-            .catch(() => {})
-    }, [pathname])
+    // Same request as the Action Centre page (so opening it is instant); re-read
+    // on navigation only once it is out of date.
+    const { meta } = useList<ActionRow, ActionMeta>(actionCentreStore, NOW_KEY)
+    const overdueCount = meta?.counts.overdue ?? 0
+    useEffect(() => { actionCentreStore.ensure(NOW_KEY) }, [pathname])
     const internalExpanded = internalOpen || internalActive
     const rail = useSyncExternalStore(railStore.subscribe, railStore.get, railStore.serverGet)
     const [moreOpen, setMoreOpen] = useState(false)

@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     const auth = await requirePropertyUser()
     if (!auth.authorized) return auth.response
 
-    if (!isClaudeConfigured()) {
+    if (!isClaudeConfigured('extractLetterOfOffer')) {
         console.error('[extract-lo] ANTHROPIC_API_KEY is not set')
         return NextResponse.json(
             { error: 'Document reading is not configured on this server. Ask your admin to set the AI key.' },

@@ -1,8 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, Info, Landmark, CheckCircle2, Calculator, TrendingUp, TrendingDown } from 'lucide-react'
 import Skeleton from '@/components/shared/Skeleton'
+import LoadFailed from '@/components/shared/LoadFailed'
+import { useList } from '@/lib/shared/useList'
+import { ownCasesStore } from '@/lib/insurance/ownCasesStore'
+import { DASHBOARD_KEY } from '@/lib/insurance/ownCases'
 import MonthPicker, { YearPicker, compact } from '@/components/insurance/shared/MonthPicker'
 import { todaySgt } from '@/lib/insurance/promotions'
 import {
@@ -57,23 +61,17 @@ export default function DashboardPage() {
     const currentMonth = todaySgt().slice(0, 7)
     const thisYear = Number(currentMonth.slice(0, 4))
 
-    const [data, setData] = useState<DashboardData | null>(null)
-    const [error, setError] = useState<string | null>(null)
+    const q = useList<never, Partial<DashboardData>>(ownCasesStore, DASHBOARD_KEY)
+    const data = useMemo<DashboardData | null>(() => q.meta ? {
+        won_by_year: q.meta.won_by_year ?? [], closed: q.meta.closed ?? [], leads: q.meta.leads ?? [],
+        lost: q.meta.lost ?? [], coming_due: q.meta.coming_due ?? [],
+    } : null, [q.meta])
     const [year, setYear] = useState(thisYear)
     const [metric, setMetric] = useState<TrendMetric>('quantum')
     // Month picked on the trend chart (0–11) → Business performance shows that month.
     const [month, setMonth] = useState<number | null>(null)
     // Conversion: a cohort month ('YYYY-MM'), the whole year ('YYYY') or 'all'.
     const [cohortScope, setCohortScope] = useState(String(thisYear))
-
-    useEffect(() => {
-        let alive = true
-        fetch('/api/insurance/dashboard')
-            .then(r => (r.ok ? r.json() : Promise.reject(new Error('load'))))
-            .then(d => { if (alive) setData({ won_by_year: d.won_by_year ?? [], closed: d.closed ?? [], leads: d.leads ?? [], lost: d.lost ?? [], coming_due: d.coming_due ?? [] }) })
-            .catch(() => { if (alive) setError('Could not load your dashboard. Please refresh.') })
-        return () => { alive = false }
-    }, [])
 
     const years = useMemo(() => {
         const ys = new Set<number>([thisYear])
@@ -93,8 +91,9 @@ export default function DashboardPage() {
                 <div className="card px-2 py-1"><YearPicker year={year} years={years} maxYear={thisYear} onChange={pickYear} /></div>
             </div>
 
-            {error ? (
-                <div className="card p-6 text-sm text-red-600">{error}</div>
+            {q.outOfDate && <LoadFailed message="Couldn’t refresh. Showing what was loaded earlier." onRetry={q.retry} />}
+            {q.status === 'error' ? (
+                <LoadFailed message="Couldn’t load your dashboard." onRetry={q.retry} />
             ) : !data ? (
                 <div className="flex flex-col gap-5">
                     <Skeleton height={160} radius={14} /><Skeleton height={260} radius={14} /><Skeleton height={260} radius={14} />
@@ -104,15 +103,29 @@ export default function DashboardPage() {
                     <Performance data={data} year={year} month={month} currentMonth={currentMonth} onClearMonth={() => setMonth(null)} />
                     <Trend data={data} year={year} currentMonth={currentMonth} metric={metric} onMetric={setMetric}
                         selected={month} onSelect={i => setMonth(m => (m === i ? null : i))} />
-                    <Sources data={data} year={year} />
-                    <Conversion data={data} year={year} currentMonth={currentMonth} years={years}
-                        scope={cohortScope} onScope={s => { setCohortScope(s); if (s !== 'all') setYear(Number(s.slice(0, 4))) }} />
-                    <Lost data={data} year={year} />
-                    <ComingDue data={data} currentMonth={currentMonth} />
+                    <WhenReached height={300}><Sources data={data} year={year} /></WhenReached>
+                    <WhenReached height={380}><Conversion data={data} year={year} currentMonth={currentMonth} years={years}
+                        scope={cohortScope} onScope={s => { setCohortScope(s); if (s !== 'all') setYear(Number(s.slice(0, 4))) }} /></WhenReached>
+                    <WhenReached height={260}><Lost data={data} year={year} /></WhenReached>
+                    <WhenReached height={260}><ComingDue data={data} currentMonth={currentMonth} /></WhenReached>
                 </>
             )}
         </div>
     )
+}
+
+/** Draws a section just before it scrolls into view; then keeps it. */
+function WhenReached({ height, children }: { height: number; children: React.ReactNode }) {
+    const ref = useRef<HTMLDivElement>(null)
+    const [reached, setReached] = useState(false)
+    useEffect(() => {
+        const el = ref.current
+        if (!el || reached) return
+        const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) setReached(true) }, { rootMargin: '400px 0px' })
+        io.observe(el)
+        return () => io.disconnect()
+    }, [reached])
+    return reached ? <>{children}</> : <div ref={ref} style={{ minHeight: height }} aria-hidden />
 }
 
 // ─── Shared bits ─────────────────────────────────────────────────────────────

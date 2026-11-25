@@ -1,7 +1,7 @@
 'use client'
 
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import type { CaseListRow } from '@/lib/insurance/usePagedCases'
+import type { ActionDay } from '@/lib/insurance/actionCentre'
 
 /**
  * Month grid of follow-up dates — the in-app alternative to syncing follow-ups
@@ -9,9 +9,8 @@ import type { CaseListRow } from '@/lib/insurance/usePagedCases'
  * account (lib/google/syncFollowUpInsurance.ts stays opt-in).
  *
  * Presentational only: the page owns the month, the query and every mutation,
- * so the day-detail panel below the grid reuses the same FollowUpCard — and its
- * Adjust / Mark done / View case actions — that list view already uses, rather
- * than growing a second copy of that logic here.
+ * and the day panel below the grid reuses the list view's cards. It gets a count
+ * and the first names per day; a day's cases load when it is tapped.
  */
 
 /** Local-date YYYY-MM-DD. Never toISOString() — that shifts to UTC and would
@@ -20,20 +19,10 @@ export function ymd(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** The month's inclusive bounds, as the query wants them.
- *  `after` is EXCLUSIVE server-side (follow_up_date > after), so it is the last
- *  day of the previous month — not the 1st, which would drop the 1st itself. */
-export function monthRange(month: Date): { after: string; to: string } {
-    const y = month.getFullYear()
-    const m = month.getMonth()
-    return { after: ymd(new Date(y, m, 0)), to: ymd(new Date(y, m + 1, 0)) }
-}
-
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const MAX_CHIPS = 3
 
 interface Props {
-    rows: CaseListRow[]
+    days: ActionDay[]
     month: Date
     today: string
     selectedDate: string | null
@@ -45,22 +34,13 @@ interface Props {
 }
 
 export default function FollowUpCalendar({
-    rows, month, today, selectedDate, loading,
+    days, month, today, selectedDate, loading,
     onPrevMonth, onNextMonth, onToday, onSelectDate,
 }: Props) {
     const year = month.getFullYear()
     const monthIndex = month.getMonth()
 
-    // Group by date once, so each cell is a map lookup rather than a filter over
-    // every row — a busy month is otherwise 42 passes over the whole list.
-    const byDate = new Map<string, CaseListRow[]>()
-    for (const r of rows) {
-        if (!r.follow_up_date) continue
-        const key = r.follow_up_date.slice(0, 10)
-        const list = byDate.get(key)
-        if (list) list.push(r)
-        else byDate.set(key, [r])
-    }
+    const byDate = new Map(days.map(d => [d.id, d]))
 
     const leadingBlanks = new Date(year, monthIndex, 1).getDay()
     const daysInMonth = new Date(year, monthIndex + 1, 0).getDate()
@@ -116,7 +96,7 @@ export default function FollowUpCalendar({
                     if (day === null) return <div key={`blank-${i}`} className="min-h-[68px] rounded-lg bg-slate-50/40" />
 
                     const date = ymd(new Date(year, monthIndex, day))
-                    const items = byDate.get(date) ?? []
+                    const items = byDate.get(date)
                     const isToday = date === today
                     const isSelected = date === selectedDate
                     const isPast = date < today
@@ -128,7 +108,7 @@ export default function FollowUpCalendar({
                             className={`min-h-[68px] p-1 rounded-lg border text-left align-top transition-colors ${
                                 isSelected
                                     ? 'border-[#03a9e7] bg-sky-50 ring-2 ring-[#03a9e7]/20'
-                                    : items.length > 0
+                                    : items
                                         ? 'border-slate-200 hover:bg-slate-50'
                                         : 'border-transparent hover:bg-slate-50'
                             }`}
@@ -140,22 +120,22 @@ export default function FollowUpCalendar({
                             </span>
 
                             <span className="block space-y-0.5">
-                                {items.slice(0, MAX_CHIPS).map(c => (
+                                {items?.names.map((name, n) => (
                                     <span
-                                        key={c.id}
-                                        title={c.client_name || 'Unnamed client'}
+                                        key={n}
+                                        title={name}
                                         className={`block truncate text-[10px] leading-tight font-semibold px-1 py-0.5 rounded ${
                                             isPast
                                                 ? 'bg-red-50 text-red-600'
                                                 : 'bg-sky-100 text-[#0369a1]'
                                         }`}
                                     >
-                                        {c.client_name || 'Unnamed'}
+                                        {name}
                                     </span>
                                 ))}
-                                {items.length > MAX_CHIPS && (
+                                {items && items.count > items.names.length && (
                                     <span className="block text-[10px] font-semibold text-slate-400 px-1">
-                                        +{items.length - MAX_CHIPS} more
+                                        +{items.count - items.names.length} more
                                     </span>
                                 )}
                             </span>

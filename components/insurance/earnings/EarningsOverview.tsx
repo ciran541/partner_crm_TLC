@@ -35,25 +35,19 @@ function prevMonth(ym: string): string {
     return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
 }
 
-export default function EarningsOverview({ awaiting, awaitingCases, currentMonth, agentId }: {
-    awaiting: number
+export default function EarningsOverview({ awaiting, awaitingCases, earned: months, currentMonth, agentId }: {
+    /** null = not known yet (loading or failed). */
+    awaiting: number | null
     awaitingCases: number
+    /** Earned per closing month; null = not known yet. */
+    earned: MonthTotal[] | null
     currentMonth: string
     agentId?: string
 }) {
     const [period, setPeriod] = useState<Period>('month')
-    const [earned, setEarned] = useState<MonthTotal[]>([])
-    const [loaded, setLoaded] = useState(false)
+    const loaded = months != null
+    const earned = useMemo(() => months ?? [], [months])
     const [historyOpen, setHistoryOpen] = useState(false)
-
-    useEffect(() => {
-        let alive = true
-        fetch(`/api/insurance/cases/closed-by-month${agentId ? `?agent=${agentId}` : ''}`)
-            .then(r => (r.ok ? r.json() : { months: [] }))
-            .then(d => { if (alive) { setEarned(d.months ?? []); setLoaded(true) } })
-            .catch(() => { if (alive) setLoaded(true) })
-        return () => { alive = false }
-    }, [agentId])
 
     const sum = useMemo(() => (pred: (ym: string) => boolean) =>
         earned.filter(p => pred(p.month)).reduce((s, p) => s + Number(p.agent_share ?? 0), 0), [earned])
@@ -99,8 +93,8 @@ export default function EarningsOverview({ awaiting, awaitingCases, currentMonth
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Tile tag="Awaiting payout" tagClass="text-amber-700 bg-amber-50"
-                    value={money(awaiting)}
-                    sub={`Total outstanding · ${awaitingCases} case${awaitingCases === 1 ? '' : 's'}`} />
+                    value={awaiting == null ? '…' : money(awaiting)}
+                    sub={awaiting == null ? 'Total outstanding' : `Total outstanding · ${awaitingCases} case${awaitingCases === 1 ? '' : 's'}`} />
                 <Tile tag="Commission earned" tagClass="text-emerald-700 bg-emerald-50"
                     value={loaded ? money(total) : '…'} sub={`${totalSub} · paid or awaiting payout`} />
             </div>
@@ -110,9 +104,9 @@ export default function EarningsOverview({ awaiting, awaitingCases, currentMonth
                     <>
                         <div>
                             <p className="text-xs font-semibold text-slate-500 flex items-center gap-1.5"><Trophy size={13} className="text-amber-500" /> Best month</p>
-                            <p className="text-xl font-extrabold text-[#052d4a] mt-0.5">{best ? money(Number(best.agent_share)) : '—'}</p>
+                            <p className="text-xl font-extrabold text-[#052d4a] mt-0.5">{!loaded ? '…' : best ? money(Number(best.agent_share)) : '—'}</p>
                         </div>
-                        <p className="text-xs text-slate-500 text-right">{best ? monthName(best.month, true) : 'Nothing closed yet'}</p>
+                        <p className="text-xs text-slate-500 text-right">{!loaded ? '' : best ? monthName(best.month, true) : 'Nothing closed yet'}</p>
                     </>
                 ) : (
                     <>
@@ -120,7 +114,7 @@ export default function EarningsOverview({ awaiting, awaitingCases, currentMonth
                             <p className="text-xs font-semibold text-slate-500">
                                 {period === 'month' ? `Last month (${monthName(lastMonth)})` : `Last year (${lastYear})`}
                             </p>
-                            <p className="text-xl font-extrabold text-[#052d4a] mt-0.5">{money(previous)}</p>
+                            <p className="text-xl font-extrabold text-[#052d4a] mt-0.5">{loaded ? money(previous) : '…'}</p>
                         </div>
                         <div className="text-right">
                             {change != null && (

@@ -4,7 +4,7 @@ const create = vi.fn()
 vi.mock('@anthropic-ai/sdk', () => ({ default: class { messages = { create } } }))
 vi.mock('@/lib/ai/usage', () => ({ recordUsage: vi.fn() }))
 
-import { callClaude, isClaudeConfigured } from '@/lib/ai/claude'
+import { callClaude, claudeOffReason, isClaudeConfigured } from '@/lib/ai/claude'
 import { groupQuestions, type QuestionRow } from '@/lib/insurance/knowledgeQuestions'
 import { figuresMatch } from '@/lib/insurance/composeAnswer'
 import { clashes, exactMatch, oneEditApart, rankArticles, terms } from '@/lib/insurance/knowledgeRank'
@@ -26,6 +26,8 @@ describe('paid AI block', () => {
         vi.stubEnv('VERCEL', ''); vi.stubEnv('VERCEL_ENV', ''); vi.stubEnv('AWS_LAMBDA_FUNCTION_NAME', ''); vi.stubEnv('ALLOW_PAID_AI_LOCALLY', 'askKnowledge')
         vi.stubEnv('ANTHROPIC_API_KEY', 'fake')
         expect([isClaudeConfigured('askKnowledge'), isClaudeConfigured('extractPackages'), isClaudeConfigured()]).toEqual([true, false, false])
+        expect(claudeOffReason('askKnowledge')).toBeNull()
+        expect(claudeOffReason('extractPackages')).toContain('switched off on this computer')
     })
     it('works on the deployed site', () => {
         vi.stubEnv('VERCEL', '1'); vi.stubEnv('ANTHROPIC_API_KEY', 'fake')

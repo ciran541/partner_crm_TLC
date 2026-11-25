@@ -8,14 +8,19 @@ import {
 } from '@dnd-kit/core'
 import type { TouchEvent as ReactTouchEvent } from 'react'
 import { AlertCircle, ArrowRightLeft, CalendarDays, Clock, GripVertical, Phone } from 'lucide-react'
-import { usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
-import { invalidateCaseData } from '@/lib/insurance/caseCache'
+import LoadFailed from '@/components/shared/LoadFailed'
+import { useDebouncedValue, usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
+import { useKeptList } from '@/lib/insurance/useOwnCases'
+import { applyTrackMove, ownCasesStore } from '@/lib/insurance/ownCasesStore'
+import { MIN_SEARCH, trackColumnKey, trackKey } from '@/lib/insurance/ownCases'
+import { invalidateAfterMove } from '@/lib/insurance/caseCache'
+import { useList } from '@/lib/shared/useList'
 import { stageLabel } from '@/lib/insurance/stages'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { addDays } from '@/lib/insurance/followUps'
 import { daysInStage, isStuck } from '@/lib/insurance/stageAge'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
-import FollowUpUpdateForm from '@/components/insurance/followup/FollowUpUpdateForm'
+import FollowUpUpdateForm, { type FollowUpSaved } from '@/components/insurance/followup/FollowUpUpdateForm'
 import BankerMultiSelect from '@/components/insurance/BankerMultiSelect'
 import type { PipelineStage, ReferredBanker } from '@/lib/types'
 
@@ -90,16 +95,18 @@ const fmtShort = (d: string) => new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleD
 interface Banker { name: string; bank: string }
 type Filter = { followUpTo?: string; bankerName?: string; bankerBank?: string }
 
-function useOpenBankers(agent?: string): (Banker & { cases: number })[] {
+/** Admin board only: the agent's board gets its bankers with the columns. */
+function useOpenBankers(enabled: boolean, agent?: string): (Banker & { cases: number })[] {
     const [list, setList] = useState<(Banker & { cases: number })[]>([])
     useEffect(() => {
+        if (!enabled) return
         let alive = true
         fetch(`/api/insurance/cases/bankers${agent ? `?agent=${agent}` : ''}`)
             .then(r => (r.ok ? r.json() : { bankers: [] }))
             .then(d => { if (alive) setList(d.bankers ?? []) })
             .catch(() => { /* the filter just doesn't show */ })
         return () => { alive = false }
-    }, [agent])
+    }, [enabled, agent])
     return list
 }
 
@@ -113,11 +120,20 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
     const today = todaySgt()
     const [overdueOnly, setOverdueOnly] = useState(false)
     const [banker, setBanker] = useState<Banker | null>(null)
-    const bankers = useOpenBankers(agent)
     const filter = {
         ...(overdueOnly ? { followUpTo: addDays(today, -1) } : {}),
         ...(banker ? { bankerName: banker.name, bankerBank: banker.bank } : {}),
     }
+    // Agent: one request brings all four columns and the bankers. Admin (readOnly)
+    // looks across agents, so its columns query the admin list themselves.
+    const typed = search.trim().length >= MIN_SEARCH ? search.trim() : ''
+    const settled = useDebouncedValue(typed)
+    const boardFilter = { ...filter, search: settled }
+    const board = useList<never, { bankers: (Banker & { cases: number })[] }>(ownCasesStore, trackKey(boardFilter), { enabled: !readOnly })
+    const adminBankers = useOpenBankers(!!readOnly, agent)
+    const [boardBankers, setBoardBankers] = useState<(Banker & { cases: number })[]>([])
+    if (board.meta && board.meta.bankers !== boardBankers) setBoardBankers(board.meta.bankers)
+    const bankers = readOnly ? adminBankers : boardBankers
     const [dragging, setDragging] = useState<CaseListRow | null>(null)
     // `to` unset = opened from the Move button: pick the column first.
     const [move, setMove] = useState<{ c: CaseListRow; to?: PipelineStage } | null>(null)
@@ -140,8 +156,15 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
         if (c && to && to !== c.stage) setMove({ c, to })
     }
 
+    // The card moves at once; nothing else reloads under the agent.
+    const onMoved = (c: CaseListRow, saved: FollowUpSaved) => {
+        applyTrackMove(c, { ...c, ...saved, stage_changed_at: saved.stage !== c.stage ? new Date().toISOString() : c.stage_changed_at })
+        invalidateAfterMove()
+    }
+
     return (
         <>
+            {!readOnly && board.outOfDate && <div className="mb-3"><LoadFailed message="Couldn’t refresh. Showing what was loaded earlier." onRetry={board.retry} /></div>}
             <div className="flex flex-wrap items-center gap-2 mb-3">
                 <button type="button" onClick={() => setOverdueOnly(v => !v)} aria-pressed={overdueOnly}
                     className={`h-10 px-3.5 rounded-full text-sm font-semibold border flex items-center gap-1.5 transition-colors ${
@@ -172,10 +195,12 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
             </div>
             <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => { lastDragAt = Date.now(); setDragging(null) }}>
                 <div className="grid grid-flow-col auto-cols-[minmax(232px,1fr)] gap-3 overflow-x-auto pb-2 -mx-1 px-1">
-                    {COLUMNS.map(col => (
-                        <Column key={col.stage} col={col} filter={filter} readOnly={readOnly} hrefFor={hrefFor} search={search} agent={agent} today={today} draggingId={dragging?.id}
-                            onMove={c => setMove({ c })} />
-                    ))}
+                    {COLUMNS.map(col => {
+                        const view = { col, readOnly, hrefFor, today, draggingId: dragging?.id, onMove: (c: CaseListRow) => setMove({ c }), filtered: !!search || Object.keys(filter).length > 0 }
+                        return readOnly
+                            ? <AdminColumn key={col.stage} {...view} filter={filter} search={search} agent={agent} />
+                            : <OwnColumn key={col.stage} {...view} listKey={trackColumnKey(col.stage, boardFilter)} failed={board.status === 'error' || board.outOfDate} retry={board.retry} settling={settled !== typed} />
+                    })}
                 </div>
                 <DragOverlay dropAnimation={null}>
                     {dragging ? <CardBody c={dragging} today={today} showBanker={dragging.stage !== 'Touched Base'} lifted /> : null}
@@ -183,18 +208,42 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
             </DndContext>
 
             {move && (
-                <MoveModal c={move.c} to={move.to} onClose={() => setMove(null)} />
+                <MoveModal c={move.c} to={move.to} onClose={() => setMove(null)} onMoved={onMoved} />
             )}
         </>
     )
 }
 
-function Column({ col, filter, search, agent, today, draggingId, onMove, readOnly, hrefFor }: {
-    readOnly?: boolean; hrefFor: (id: string) => string
-    col: Col; filter: Filter; search: string; agent?: string; today: string; draggingId?: string
+interface ColumnQuery {
+    rows: CaseListRow[]; total: number; loanVolume: number; ready: boolean
+    loading: boolean; refreshing: boolean; error: boolean; refreshError: boolean
+    hasMore: boolean; loadingMore: boolean; moreError: boolean
+    loadMore: () => void; refresh: () => void
+}
+interface ColumnView {
+    col: Col; readOnly?: boolean; hrefFor: (id: string) => string; today: string; draggingId?: string
     onMove: (c: CaseListRow) => void
-}) {
-    const q = usePagedCases({ ...filter, stage: col.stage, search, agent, sort: 'follow_up_date', dir: 'asc', limit: PAGE })
+    /** A search or filter is on (words the empty state). */
+    filtered: boolean
+}
+
+function OwnColumn({ listKey, failed, retry, settling, ...view }: ColumnView & { listKey: string; failed: boolean; retry: () => void; settling: boolean }) {
+    // Filled by the board's request; only "Show more" loads here.
+    const q = useKeptList<{ loanVolume?: number }>(listKey, { enabled: false, settling })
+    const none = !q.ready
+    return <Column {...view} q={{
+        ...q, loanVolume: q.meta?.loanVolume ?? 0,
+        loading: none && !failed && q.rows.length === 0, refreshing: none && !failed && q.rows.length > 0,
+        error: none && failed, refreshError: false, refresh: retry,
+    }} />
+}
+
+function AdminColumn({ filter, search, agent, ...view }: ColumnView & { filter: Filter; search: string; agent?: string }) {
+    const q = usePagedCases({ ...filter, stage: view.col.stage, search, agent, sort: 'follow_up_date', dir: 'asc', limit: PAGE })
+    return <Column {...view} q={{ ...q, error: !!q.error, refreshError: !!q.refreshError, moreError: false }} />
+}
+
+function Column({ col, q, readOnly, hrefFor, today, draggingId, onMove, filtered }: ColumnView & { q: ColumnQuery }) {
     const { setNodeRef, isOver } = useDroppable({ id: col.stage })
 
     return (
@@ -204,26 +253,27 @@ function Column({ col, filter, search, agent, today, draggingId, onMove, readOnl
             <header className="rounded-t-2xl px-3.5 py-3" style={{ background: col.head }}>
                 <div className="flex items-center justify-between gap-2">
                     <h3 className="text-sm font-bold" style={{ color: col.accent }}>{stageLabel(col.stage)}</h3>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-white/70" style={{ color: col.accent }}>{q.total}</span>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-white/70" style={{ color: col.accent }}>{q.ready ? q.total : '–'}</span>
                 </div>
-                <p className="text-lg font-extrabold text-[#052d4a] leading-tight mt-0.5">{q.loanVolume > 0 ? formatCurrency(q.loanVolume * REVENUE_RATE) : '$0'}</p>
+                <p className="text-lg font-extrabold text-[#052d4a] leading-tight mt-0.5">{!q.ready ? '–' : q.loanVolume > 0 ? formatCurrency(q.loanVolume * REVENUE_RATE) : '$0'}</p>
                 <p className="text-[10px] text-slate-500">potential revenue</p>
             </header>
 
             <div className={`flex-1 p-2 space-y-2 ${q.refreshing ? 'opacity-60' : ''}`}>
-                {q.loading ? (
+                {q.refreshError && <LoadFailed message="Couldn’t refresh." onRetry={q.refresh} />}
+                {q.error ? <LoadFailed message="Couldn’t load." onRetry={q.refresh} /> : q.loading ? (
                     <p className="text-xs text-slate-400 text-center py-6">Loading…</p>
                 ) : q.rows.length === 0 ? (
                     <p className="text-xs text-slate-400 text-center py-8 border-2 border-dashed border-slate-200 rounded-xl">
-                        {search || Object.keys(filter).length > 0 ? 'No matches' : readOnly ? 'No cases' : 'Drag a case here'}
+                        {filtered ? 'No matches' : readOnly ? 'No cases' : 'Drag a case here'}
                     </p>
                 ) : q.rows.map(c => (
                     <DraggableCard key={c.id} c={c} today={today} hidden={draggingId === c.id} onMove={() => onMove(c)} readOnly={readOnly} href={hrefFor(c.id)} />
                 ))}
                 {q.hasMore && (
                     <button onClick={q.loadMore} disabled={q.loadingMore}
-                        className="w-full py-2 text-xs font-semibold rounded-lg bg-white/70 text-slate-600 hover:bg-white">
-                        {q.loadingMore ? 'Loading…' : `Show more (${q.total - q.rows.length})`}
+                        className="w-full min-h-[44px] text-xs font-semibold rounded-lg bg-white/70 text-slate-600 hover:bg-white">
+                        {q.loadingMore ? 'Loading…' : q.moreError ? 'Couldn’t load more. Try again' : `Show more (${q.total - q.rows.length})`}
                     </button>
                 )}
             </div>
@@ -298,7 +348,7 @@ function CardBody({ c, today, showBanker, lifted, onMove, readOnly }: { readOnly
     )
 }
 
-function MoveModal({ c, to: initialTo, onClose }: { c: CaseListRow; to?: PipelineStage; onClose: () => void }) {
+function MoveModal({ c, to: initialTo, onClose, onMoved }: { c: CaseListRow; to?: PipelineStage; onClose: () => void; onMoved: (c: CaseListRow, saved: FollowUpSaved) => void }) {
     const [to, setTo] = useState<PipelineStage | undefined>(initialTo)
     const [bankers, setBankers] = useState<ReferredBanker[]>(c.referred_bankers ?? [])
     const askBanker = to === 'Pending Docs'
@@ -340,7 +390,7 @@ function MoveModal({ c, to: initialTo, onClose }: { c: CaseListRow; to?: Pipelin
                         </div>
                     ) : undefined}
                     extraBody={askBanker ? { referred_bankers: bankers } : undefined}
-                    onSaved={() => { onClose(); invalidateCaseData() }}
+                    onSaved={saved => { onClose(); onMoved(c, saved) }}
                     onCancel={onClose}
                 />
             </div>
