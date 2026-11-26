@@ -10,15 +10,22 @@ export async function GET(request: Request) {
     const auth = await requireAdminUser()
     if (!auth.authorized) return auth.response
     const bank = new URL(request.url).searchParams.get('bank')?.trim()
-    if (!bank) return NextResponse.json({ error: 'Choose a bank' }, { status: 400 })
+    if (!bank) {
+        // No bank: the warnings marked as correct for every bank, for the bank list.
+        const { data, error } = await createAdminClient().from('rate_checks_ok').select('key')
+        return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ checkedOk: (data ?? []).map(r => r.key) })
+    }
     try {
         const db = createAdminClient()
-        const [master, aliases, note, versions] = await Promise.all([
+        const [master, aliases, note, versions, checks] = await Promise.all([
             loadBank(bank),
             db.from('rate_aliases').select('id, banker, phrase, ladder_key').eq('bank', bank).order('created_at', { ascending: false }),
             db.from('bank_rate_notes').select('note').eq('bank', bank).maybeSingle(),
             db.from('rate_versions').select('id, summary, source, changes, restored_from, created_by, created_at').eq('bank', bank).order('created_at', { ascending: false }).limit(50),
+            db.from('rate_checks_ok').select('key').eq('bank', bank),
         ])
+        // Marked-correct warnings only hide warnings: if that read fails, show them all.
+        if (checks.error) console.error('[rates] checks load failed:', checks.error.message)
         const failed = aliases.error ?? note.error ?? versions.error
         if (failed) return NextResponse.json({ error: failed.message }, { status: 500 })
 
@@ -36,7 +43,7 @@ export async function GET(request: Request) {
             }
         }
         return NextResponse.json({
-            ...master, aliases: aliases.data, note: note.data?.note ?? '', recent: [...recent.values()],
+            ...master, aliases: aliases.data, note: note.data?.note ?? '', recent: [...recent.values()], checkedOk: checks.error ? [] : (checks.data ?? []).map(c => c.key),
             versions: rows.map(v => ({ ...v, by: nameOf.get(v.created_by) ?? 'Admin' })),
         })
     } catch (e) { return rateErrorResponse(e) }
@@ -61,12 +68,19 @@ export async function PUT(request: Request) {
     } catch (e) { return rateErrorResponse(e) }
 }
 
-// PATCH { bank, note } saves the bank-wide note; { forgetAlias } removes a saved answer.
+// PATCH { bank, note } saves the bank-wide note; { forgetAlias } removes a saved answer;
+// { bank, checkOk: key, ok } marks a warning as correct (or shows it again).
 export async function PATCH(request: Request) {
     const auth = await requireAdminUser()
     if (!auth.authorized) return auth.response
-    const { bank, note, forgetAlias } = await request.json().catch(() => ({}))
+    const { bank, note, forgetAlias, checkOk, ok } = await request.json().catch(() => ({}))
     const db = createAdminClient()
+    if (typeof checkOk === 'string' && checkOk && bank?.trim()) {
+        const { error } = ok === false
+            ? await db.from('rate_checks_ok').delete().eq('key', checkOk)
+            : await db.from('rate_checks_ok').upsert({ key: checkOk.slice(0, 2000), bank, created_by: auth.userId })
+        return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ success: true })
+    }
     if (forgetAlias) {
         const { error } = await db.from('rate_aliases').delete().eq('id', forgetAlias)
         return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ success: true })

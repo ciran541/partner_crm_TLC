@@ -12,7 +12,7 @@ export const maxDuration = 60
 const MAX_BYTES = 4_000_000
 const EXT: Record<string, string> = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
 // Change when the prompt changes, so an old read isn't reused.
-const READ_VERSION = '1'
+const READ_VERSION = '2'   // 2: PDF text layer + column rules
 
 // POST multipart { bank, text? , file* }  Reads the message; changes no rates.
 export async function POST(request: Request) {

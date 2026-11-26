@@ -40,7 +40,7 @@ const SYSTEM = `You transcribe a Singapore bank's mortgage rate update into stru
 
 RULES
 1. Transcribe ONLY what is stated. Use null or an empty list for anything not stated. Never infer a lock-in, minimum loan, property type, thereafter rate or feature.
-2. One item per package per loan-size step. A table with 4 loan-size columns is 4 items. Check the columns of merged cells on the page itself.
+2. One item per package per loan-size step. A table with 4 loan-size columns is exactly 4 items, each with the rates in ITS OWN column: never copy one column's rates to another, and never list a package twice. A merged cell (one value spanning several columns) applies only to the columns it spans. When a text layer is given, take the exact figures from it and the table layout from the page.
 3. rates: one entry per year. "First 2 years 2.30%" or "Y1&2" is year 1 and year 2. "Year 2 to 4" is years 2, 3 and 4. Thereafter / TA has thereafter=true and year=null. Fixed: rate only. Floating: reference and spread only; "SORA - 0.10%" is spread -0.10. If one rate is given for an N-year fixed package ("2y fixed 2.05%"), give it for years 1 to N.
 4. reference: "1M SORA", "3M SORA", "1M/3M SORA" (for "1M or 3M", "1m/3m", "1/3m"), or the bank's own name (FHR6). If a table says "SORA Benchmark" under a heading "1M or 3M Compounded SORA", it is "1M/3M SORA". Never change 1M to 3M or back.
 5. category: "Fixed" if year 1 is fixed; "BUC" for uncompleted / under construction; otherwise "Floating (Completed)". fixed_years: number of fixed years for Fixed, else null. name: the package's name as written, short, without loan size.
@@ -58,11 +58,28 @@ RULES
 
 export const numberLines = (text: string) => text.split(/\r?\n/).map((l, i) => `${i + 1}| ${l}`).join('\n')
 
+/** A PDF's own text, so figures are copied rather than recognised from pixels. Empty when it has none. */
+async function pdfText(files: ClaudeFile[]): Promise<string> {
+    const out: string[] = []
+    for (const f of files.filter(x => x.mime === 'application/pdf')) {
+        try {
+            const { PDFParse } = await import('pdf-parse')
+            const parser = new PDFParse({ data: f.buffer })
+            out.push((await parser.getText()).text ?? '')
+            await parser.destroy()
+        } catch (err) {
+            console.error('[rateUpdate] pdf text failed:', String(err))
+        }
+    }
+    return out.join('\n').trim().slice(0, 40_000)
+}
+
 export async function readRateMessage(bank: string, text: string | null, files: ClaudeFile[]): Promise<{ read: RateRead | null; complete: boolean }> {
+    const layer = text?.trim() ? '' : await pdfText(files)
     const { text: reply, complete } = await callClaude({
         label: 'rateUpdate',
         system: SYSTEM,
-        user: text?.trim() ? `Bank: ${bank}\n\n${numberLines(text)}` : `Bank: ${bank}\n\nRead the attached rate update.`,
+        user: text?.trim() ? `Bank: ${bank}\n\n${numberLines(text)}` : `Bank: ${bank}\n\nRead the attached rate update.${layer ? `\n\nThe PDF's text layer, for exact figures (a table's columns may run together here, so use the page for layout):\n${layer}` : ''}`,
         files,
         schema: SCHEMA,
         maxTokens: 20000,   // includes thinking; the SDK refuses ~21,300+ without streaming

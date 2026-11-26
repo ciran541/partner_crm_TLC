@@ -18,6 +18,9 @@ export interface RateLadder {
 }
 
 const STALE_DAYS = 30
+
+/** Stable id of a warning: which packages, and exactly what it says (figures included). */
+export const issueKey = (i: LadderIssue) => `${[...i.packageIds].sort().join(',')}|${i.text}`
 export const money = (n: number) => n >= 1e6 ? `${n / 1e6}m` : `${n / 1e3}k`
 export const normFeature = (f: string) => f.toLowerCase().replace(/[^a-z0-9%$]/g, '')
 

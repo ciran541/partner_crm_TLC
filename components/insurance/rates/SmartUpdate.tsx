@@ -1,17 +1,18 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Check, FileUp, Pencil, Plus, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, FileUp, Pencil, Plus, Sparkles, X } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import { buildLadders, byCategoryAndLoan, money } from '@/lib/insurance/rateLadders'
 import { restrictedTo } from '@/lib/insurance/rateFilters'
 import { formatRateEntry } from '@/lib/insurance/rateSchedule'
 import {
-    applyFeatureChoice, applyProposals, setFeatures, flagDuplicates, isCash, ladderTitle, matchRead, packageLabel, phraseOf, resolveItem, unmentioned, unreadRateLines,
+    applyFeatureChoice, applyProposals, setFeatures, setRate, flagDuplicates, isCash, ladderTitle, matchRead, phraseOf, resolveItem, unmentioned, unreadRateLines,
     type FeatureDiff, type MatchContext, type Proposal, type RateAlias, type RateRead, type RecentSource,
 } from '@/lib/insurance/rateUpdate'
 import type { RateSource } from '@/lib/insurance/rateMaster'
-import type { MortgagePackage } from '@/lib/types/rates'
+import type { MortgagePackage, RateScheduleEntry } from '@/lib/types/rates'
+import { RATE_REFERENCES } from '@/lib/types/rates'
 
 interface Props {
     bank: string
@@ -82,10 +83,13 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
     const cash = [...new Set((state?.read.items ?? []).flatMap(i => i.features.filter(isCash)))]
     const choose = (d: FeatureDiff, useBanker: boolean) => setProposals(ps => applyFeatureChoice(ps, d, useBanker))
     const editFeatures = (p: Proposal, features: string[]) => setProposals(ps => ps.map(x => x.id === p.id ? setFeatures(x, features) : x))
+    const editRate = (p: Proposal, year: number | null, e: RateScheduleEntry) => setProposals(ps => ps.map(x => x.id === p.id ? setRate(x, year, e) : x))
     const pkgOf = (p: Proposal) => (p.proposed ?? p.current)!
     const sorted = (ps: Proposal[]) => [...ps].sort((a, b) => byCategoryAndLoan(pkgOf(a), pkgOf(b)))
-    const unchanged = sorted(proposals.filter(isUnchanged))
-    const decide = proposals.filter(p => p.kind !== 'ask' && !isUnchanged(p))
+    // Unchanged packages show in full too, in their place, so each product reads top to bottom.
+    const decide = proposals.filter(p => p.kind !== 'ask')
+    const askGroups = [...proposals.filter(p => p.kind === 'ask' && p.item).reduce((m, p) => m.set(phraseOf(p.item!), [...(m.get(phraseOf(p.item!)) ?? []), p]), new Map<string, Proposal[]>()).values()]
+        .map(g => [...g].sort((x, y) => (x.item!.min_loan ?? 0) - (y.item!.min_loan ?? 0)))
     const asks = proposals.filter(p => p.kind === 'ask')
     const ticked = proposals.filter(p => p.accepted && p.kind !== 'ask' && p.level !== 'red')
     const waiting = proposals.filter(p => !p.accepted && p.kind !== 'ask')
@@ -131,7 +135,7 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
     )
 
     return (
-        <div className="space-y-4 pb-24">
+        <div className="space-y-4">
             <Steps at={2} />
             <div className="flex items-center gap-3 flex-wrap text-sm text-slate-600">
                 <button type="button" onClick={() => setState(null)} className="btn-ghost px-3 py-2 text-sm border border-slate-200">Back to message</button>
@@ -150,37 +154,21 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
                 </div>
             )}
 
-            {asks.map(p => (
-                <div key={p.id} className="rounded-xl border-2 border-amber-300 bg-white p-4">
-                    <p className="font-semibold text-sm text-[#052d4a]">{p.item!.name || p.item!.category} {p.item!.min_loan != null && `· ${money(p.item!.min_loan)}`} <span className="font-normal text-slate-500">{p.item!.rates.map(formatRateEntry).join(', ')}</span></p>
-                    <p className="text-sm text-amber-800 mt-1">{p.warnings.join('. ')}{p.candidates.length ? '. Which one is it?' : ''}</p>
-                    <div className="flex flex-wrap gap-2 mt-2">
-                        {p.candidates.map(c => <button key={c.key} type="button" onClick={() => answer(p, c.key)} className="px-3 py-2.5 text-sm rounded-lg border border-[#03a9e7] text-[#0277a8] font-medium hover:bg-sky-50">{c.label}</button>)}
-                        {p.item!.action === 'offer' && <button type="button" onClick={() => answer(p, null)} className="px-3 py-2.5 text-sm rounded-lg border border-slate-200 text-slate-600">A new product</button>}
-                        <button type="button" onClick={() => skip(p)} className="px-3 py-2.5 text-sm rounded-lg text-slate-500">Skip this one</button>
-                    </div>
-                </div>
-            ))}
+            {askGroups.map(group => <AskCard key={group[0].id} group={group} onAnswer={key => answer(group[0], key)} onSkip={() => group.forEach(skip)} />)}
 
             {[...ladders.map(l => ({ key: l.key, title: ladderTitle(l) })), { key: null, title: 'New products' }].map(g => {
                 const group = sorted(decide.filter(p => p.ladderKey === g.key))
                 return group.length > 0 && (
                     <section key={g.key ?? 'new'} className="space-y-3">
                         <h3 className="font-bold text-[#052d4a] pt-2">{g.title}</h3>
-                        {group.map(p => <CompareCard key={p.id} p={p} text={state.text} onToggle={() => toggle(p)} onChoose={choose} onFeatures={f => editFeatures(p, f)} />)}
+                        {group.map(p => <CompareCard key={p.id} p={p} text={state.text} onToggle={() => toggle(p)} onChoose={choose} onFeatures={f => editFeatures(p, f)} onRate={(y, e) => editRate(p, y, e)} />)}
                     </section>
                 )
             })}
-            {unchanged.length > 0 && (
-                <div className="bg-white rounded-2xl border border-slate-200 p-4 text-sm text-slate-600">
-                    <p className="font-semibold flex items-center gap-1.5"><Check size={15} className="text-emerald-500" /> No change ({unchanged.length}), marked as confirmed today</p>
-                    <ul className="mt-1 text-slate-500">{unchanged.map(p => <li key={p.id}>{packageLabel(p.current!)}</li>)}</ul>
-                </div>
-            )}
-            {cash.length > 0 && <details className="text-xs text-slate-500"><summary className="cursor-pointer py-2">Cash rewards in the message ({cash.length}), not added to packages</summary><ul className="list-disc pl-5">{cash.map(c => <li key={c}>{c}</li>)}</ul></details>}
-            {state.read.ignored.length > 0 && <details className="text-xs text-slate-500"><summary className="cursor-pointer py-2">Ignored ({state.read.ignored.length})</summary><ul className="list-disc pl-5">{state.read.ignored.map((i, n) => <li key={n}>{i.text}</li>)}</ul></details>}
+            {cash.length > 0 && <Leftover title="Cash rewards in the message, not added to packages" items={cash} />}
+            {state.read.ignored.length > 0 && <Leftover title="Not used: not a home loan package (e.g. commercial)" items={state.read.ignored.map(i => i.text)} />}
 
-            <div className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 px-4 py-3 flex items-center justify-end gap-4 flex-wrap">
+            <div className="sticky bottom-0 z-30 bg-white border border-slate-200 rounded-2xl shadow-lg px-4 py-3 flex items-center justify-end gap-4 flex-wrap">
                 {learned.length > 0 && <label className="text-sm text-slate-600 inline-flex items-center gap-2"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember my answers</label>}
                 <span className="text-sm text-slate-500">{blocked ? (asks.length ? 'Answer the questions first' : 'Check the unused lines first') : `${ticked.length} ticked${waiting.length ? `, ${waiting.length} not ticked` : ''}`}</span>
                 <button type="button" disabled={blocked || !ticked.length} onClick={apply} className="btn-primary px-5 py-2.5 text-sm inline-flex items-center gap-2 disabled:opacity-40">Review final list <ArrowRight size={15} /></button>
@@ -189,13 +177,55 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
     )
 }
 
+/** A question HUB can't answer by itself, once per product, in plain words. */
+function AskCard({ group, onAnswer, onSkip }: { group: Proposal[]; onAnswer: (key: string | null) => void; onSkip: () => void }) {
+    const first = group[0], item = first.item!
+    const lockin = first.warnings.some(w => w.includes('different lock-in'))
+    const removing = item.action === 'remove'
+    const said = item.lockin_years == null ? null : item.lockin_years ? `${item.lockin_years}-year lock-in` : 'no lock-in'
+    const question = removing ? `The banker says "${item.name}" is removed. HUB has no package that matches it.`
+        : lockin ? `The banker says ${said}. HUB has this product with a different lock-in. Is it the same product?`
+        : first.candidates.length ? 'HUB has more than one product this could be. Which one is it?'
+        : first.warnings.join('. ')
+    return (
+        <div className="rounded-2xl border-2 border-amber-300 bg-white overflow-hidden">
+            <div className="px-4 py-3 bg-amber-50 border-b border-amber-200">
+                <p className="font-semibold text-[#052d4a]">{item.name || item.category}{group.length > 1 ? ` · ${group.length} loan sizes` : ''}</p>
+                <p className="text-sm text-amber-900 mt-0.5">{question}</p>
+            </div>
+            {!removing && (
+                <table className="w-full text-sm">
+                    <tbody>{group.map(p => (
+                        <tr key={p.id} className="border-b border-slate-100 align-top">
+                            <td className="px-4 py-2 font-semibold text-[#052d4a] w-20">{p.item!.min_loan != null ? money(p.item!.min_loan) : '–'}</td>
+                            <td className="px-2 py-2 text-slate-600">{p.item!.rates.map(e => formatRateEntry(e).replace('Thereafter', 'After')).join(' · ')}</td>
+                        </tr>
+                    ))}</tbody>
+                </table>
+            )}
+            <div className="p-4 flex flex-col sm:flex-row flex-wrap gap-2">
+                {first.candidates.map(c => (
+                    <button key={c.key} type="button" onClick={() => onAnswer(c.key)} className="text-left px-4 py-2.5 rounded-xl bg-[#052d4a] text-white text-sm">
+                        <span className="block font-semibold">{removing ? `Remove "${c.label}"` : `Same product: update "${c.label}"`}</span>
+                        {lockin && <span className="block text-xs text-sky-200">Lock-in changes to {item.lockin_years ? `${item.lockin_years} year${item.lockin_years > 1 ? 's' : ''}` : 'none'}</span>}
+                    </button>
+                ))}
+                {!removing && <button type="button" onClick={() => onAnswer(null)} className="text-left px-4 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-700">
+                    <span className="block font-semibold">A different product</span><span className="block text-xs text-slate-500">Add as new; keep HUB&apos;s as it is</span>
+                </button>}
+                <button type="button" onClick={onSkip} className="px-4 py-2.5 text-sm text-slate-500">Skip{group.length > 1 ? ' all' : ''}</button>
+            </div>
+        </div>
+    )
+}
+
 /** Same as HUB, nothing to decide. */
 const isUnchanged = (p: Proposal) => p.kind === 'same' && p.level === 'green' && p.accepted && !p.featureDiffs.length
 
-const PILL = { change: 'Changed', new: 'New', remove: 'Remove', same: 'No change', ask: '' } as const
+const PILL = { change: 'Changed', new: 'New', remove: 'Remove', same: 'No change · confirmed today', ask: '' } as const
 
 /** One package, complete on both sides and lined up row by row. Only differences are coloured. */
-function CompareCard({ p, text, onToggle, onChoose, onFeatures }: { p: Proposal; text: string | null; onToggle: () => void; onChoose: (d: FeatureDiff, useBanker: boolean) => void; onFeatures: (f: string[]) => void }) {
+function CompareCard({ p, text, onToggle, onChoose, onFeatures, onRate }: { p: Proposal; text: string | null; onToggle: () => void; onChoose: (d: FeatureDiff, useBanker: boolean) => void; onFeatures: (f: string[]) => void; onRate: (year: number | null, e: RateScheduleEntry) => void }) {
     const old = p.current, now = p.proposed
     const pkg = now ?? old!
     const on = p.accepted && p.level !== 'red'
@@ -210,9 +240,11 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures }: { p: Proposal;
     const lock = (x: MortgagePackage | null) => !x ? '' : x.lockin_years ? `${x.lockin_years} year${x.lockin_years > 1 ? 's' : ''}` : 'None'
     const loan = (x: MortgagePackage | null) => !x ? '' : money(Number(x.min_loan_size)) + (x.priority_min_loan != null ? ` (Priority ${money(Number(x.priority_min_loan))})` : '')
     const who = (x: MortgagePackage | null) => !x ? '' : [x.property_type, restrictedTo(x) ? `${restrictedTo(x)} only` : ''].filter(Boolean).join(', ')
-    const rows: [string, string, string][] = [
-        ...Array.from({ length: Math.max(yearsOf(old), yearsOf(now)) }, (_, i): [string, string, string] => [`Year ${i + 1}`, rate(old, i + 1), rate(now, i + 1)]),
-        ['Thereafter', rate(old, null), rate(now, null)],
+    const entry = (y: number | null) => now?.rate_schedule.find(r => y == null ? r.thereafter : !r.thereafter && r.year === y)
+    // The fourth value is the year to edit (null = thereafter); rows without one aren't editable here.
+    const rows: [string, string, string, (number | null)?][] = [
+        ...Array.from({ length: Math.max(yearsOf(old), yearsOf(now)) }, (_, i): [string, string, string, number] => [`Year ${i + 1}`, rate(old, i + 1), rate(now, i + 1), i + 1]),
+        ['Thereafter', rate(old, null), rate(now, null), null],
         ['Min loan', loan(old), loan(now)],
         ['Lock-in', lock(old), lock(now)],
         ['For', who(old), who(now)],
@@ -228,7 +260,7 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures }: { p: Proposal;
     const usesBanker = (d: FeatureDiff) => d.to ? newFeatures.includes(d.to) : !newFeatures.includes(d.from)
 
     return (
-        <div className={`bg-white rounded-2xl border-2 overflow-hidden ${p.level === 'red' ? 'border-red-300' : on ? 'border-emerald-300' : 'border-amber-300'}`}>
+        <div className={`bg-white rounded-2xl border-2 overflow-hidden ${p.level === 'red' ? 'border-red-300' : isUnchanged(p) ? 'border-slate-200' : on ? 'border-emerald-300' : 'border-amber-300'}`}>
             <label className={`flex items-center gap-3 px-4 py-3 border-b border-slate-100 ${p.level === 'red' ? '' : 'cursor-pointer'}`}>
                 <input type="checkbox" className="w-5 h-5 shrink-0 accent-emerald-600" checked={on} disabled={p.level === 'red'} onChange={onToggle} />
                 <span className="font-semibold text-[#052d4a] text-sm flex-1">{money(Number(pkg.min_loan_size))} · {pkg.package_name}</span>
@@ -237,7 +269,7 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures }: { p: Proposal;
             {p.warnings.map(w => (
                 <p key={w} className={`px-4 py-2 text-sm flex gap-2 ${p.level === 'red' ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-900'}`}><AlertTriangle size={15} className="mt-0.5 shrink-0" /> {w}</p>
             ))}
-            {p.level === 'red' && <p className="px-4 py-2 text-sm bg-red-50 text-red-800">This can&apos;t be used as it is. Add it in the Packages tab instead.</p>}
+            {p.level === 'red' && <p className="px-4 py-2 text-sm bg-red-50 text-red-800">Correct the rates with the pencil below, or add it in the Packages tab instead.</p>}
             <table className="w-full text-sm table-fixed">
                 <thead>
                     <tr className="text-left text-[11px] uppercase text-slate-400">
@@ -247,13 +279,17 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures }: { p: Proposal;
                     </tr>
                 </thead>
                 <tbody className="align-top">
-                    {rows.map(([label, a, b]) => {
+                    {rows.map(([label, a, b, y]) => {
                         const diff = !!old && !!now && a !== b
+                        const e = y !== undefined ? entry(y) : undefined
+                        const editable = !!e && !!now && p.kind !== 'remove'
                         return (
                             <tr key={label} className="border-t border-slate-100">
                                 <td className="px-4 py-1.5 text-slate-400 text-xs">{label}</td>
                                 <td className={`px-3 py-1.5 ${diff ? 'text-red-600 line-through' : 'text-slate-700'}`}>{a || (old ? '' : 'Not in HUB')}</td>
-                                <td className={`px-3 py-1.5 bg-slate-50 ${diff ? 'text-emerald-700 font-bold' : 'text-slate-700'}`}>{now ? b || 'None' : 'Removed'}</td>
+                                <td className={`px-3 py-1.5 bg-slate-50 ${diff ? 'text-emerald-700 font-bold' : 'text-slate-700'}`}>
+                                    {editable ? <RateEdit entry={e!} text={b} onSave={v => onRate(y!, v)} /> : now ? b || 'None' : 'Removed'}
+                                </td>
                             </tr>
                         )
                     })}
@@ -285,6 +321,43 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures }: { p: Proposal;
                 </details>
             )}
         </div>
+    )
+}
+
+/** A rate you can correct in place, when the message was read wrong. */
+function RateEdit({ entry, text, onSave }: { entry: RateScheduleEntry; text: string; onSave: (e: RateScheduleEntry) => void }) {
+    const start = entry.type === 'fixed' ? entry.rate : entry.spread == null ? undefined : entry.spreadSign === '-' ? -entry.spread : entry.spread
+    const [open, setOpen] = useState(false)
+    const [type, setType] = useState(entry.type)
+    const [ref, setRef] = useState(entry.reference ?? '3M SORA')
+    const [v, setV] = useState(start != null ? String(start) : '')
+    if (!open) return (
+        <span className="flex items-center gap-1.5">
+            <span className="flex-1">{text || 'None'}</span>
+            <button type="button" aria-label="Correct this rate" onClick={() => setOpen(true)} className="p-1.5 -my-1 text-slate-400 hover:text-[#03a9e7]"><Pencil size={13} /></button>
+        </span>
+    )
+    const n = Number(v)
+    const valid = v.trim() !== '' && Number.isFinite(n) && Math.abs(n) <= 20
+    const save = () => {
+        if (!valid) return
+        onSave(type === 'fixed' ? { type: 'fixed', rate: n } : { type: 'floating', reference: ref, spread: Math.abs(n), ...(n < 0 ? { spreadSign: '-' as const } : {}) })
+        setOpen(false)
+    }
+    const refs = RATE_REFERENCES.includes(ref) ? RATE_REFERENCES : [...RATE_REFERENCES, ref]
+    return (
+        <span className="flex flex-wrap items-center gap-1.5 font-normal text-slate-700">
+            <select aria-label="Rate type" value={type} onChange={e => setType(e.target.value as 'fixed' | 'floating')} className="px-2 py-1.5 rounded-md border border-slate-300 text-sm bg-white">
+                <option value="fixed">Fixed</option><option value="floating">Floating</option>
+            </select>
+            {type === 'floating' && <select aria-label="Benchmark" value={ref} onChange={e => setRef(e.target.value)} className="px-2 py-1.5 rounded-md border border-slate-300 text-sm bg-white">{refs.map(r => <option key={r}>{r}</option>)}</select>}
+            {type === 'floating' && <span>+</span>}
+            <input autoFocus aria-label="Rate" inputMode="decimal" value={v} onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setOpen(false) }}
+                className={`w-20 px-2 py-1.5 rounded-md border text-sm outline-none ${valid ? 'border-[#03a9e7]' : 'border-red-400'}`} />
+            <span>%</span>
+            <button type="button" disabled={!valid} onClick={save} className="btn-primary px-3 py-1.5 text-xs disabled:opacity-40">Done</button>
+            <button type="button" onClick={() => setOpen(false)} className="px-2 py-1.5 text-xs text-slate-500">Cancel</button>
+        </span>
     )
 }
 
@@ -344,6 +417,16 @@ function Steps({ at }: { at: number }) {
                 </li>
             ))}
         </ol>
+    )
+}
+
+/** Parts of the message that didn't become packages, so nothing disappears silently. */
+function Leftover({ title, items }: { title: string; items: string[] }) {
+    return (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 text-sm">
+            <p className="font-semibold text-slate-600">{title} ({items.length})</p>
+            <ul className="mt-1.5 space-y-1 text-slate-500">{items.map(t => <li key={t} className="flex gap-1.5"><span className="text-slate-300">•</span>{t}</li>)}</ul>
+        </div>
     )
 }
 

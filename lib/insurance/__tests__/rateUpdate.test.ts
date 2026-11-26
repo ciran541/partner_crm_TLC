@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MortgagePackage, RateScheduleEntry } from '@/lib/types/rates'
 import {
-    applyProposals, bankChanges, inventedRates, matchRead, compareFeatures, applyFeatureChoice, setFeatures, mergeSchedule, newWarnings,
+    applyProposals, bankChanges, inventedRates, matchRead, compareFeatures, applyFeatureChoice, setFeatures, setRate, mergeSchedule, newWarnings,
     normalizeRead, packageErrors, parseMinSize, phraseOf, unreadRateLines, type MatchContext,
 } from '../rateUpdate'
 
@@ -132,6 +132,40 @@ describe('gaps and wrong reads', () => {
     it('unticks two parts of a message that land on one package', () => {
         const ps = match(flexi(), [raw({ rates: yr(1.85, 1, 2, 3) }), raw({ rates: yr(1.8, 1, 2, 3) })])
         expect(ps.map(p => p.accepted)).toEqual([false, false])
+    })
+})
+
+describe('correcting a misread rate', () => {
+    it('changes the figure, the change and the sort key, and notes it', () => {
+        const [p] = match(flexi(), [raw({ rates: yr(1.85, 1, 2, 3) })])
+        const fixed = setRate(p, 1, { type: 'fixed', rate: 1.88 })
+        expect(fixed.proposed!.rate_schedule[0]).toEqual({ year: 1, type: 'fixed', rate: 1.88 })
+        expect(fixed.proposed!.first_year_rate).toBe(1.88)
+        expect(fixed.warnings).toContain('Rates edited by you')
+        expect(setRate(fixed, null, { type: 'floating', reference: '1M SORA', spread: 0.9 }).proposed!.rate_schedule.at(-1)).toEqual({ thereafter: true, type: 'floating', reference: '1M SORA', spread: 0.9 })
+    })
+    it('makes a red card usable once its figures are fixed', () => {
+        const [p] = match(flexi(), [raw({ rates: [{ year: 1, rate: null, reference: null, spread: null, thereafter: false }, ...yr(1.9, 2, 3)] })])
+        expect(p.level).toBe('red')
+        expect(setRate(p, 1, { type: 'fixed', rate: 1.9 }).level).toBe('amber')
+    })
+})
+
+describe('a copied table column (SCB PDF, Nov 2026)', () => {
+    const fl = (id: string, min: number, s: number) => pkg({ id, min_loan_size: min, category: 'Floating (Completed)', lockin_years: 2, package_name: 'SCB - SORA Floating',
+        rate_schedule: [...fl2(s, 1, 2), ta('1M/3M SORA', 1)] })
+    const fl2 = (s: number, ...ys: number[]) => ys.map(year => ({ year, type: 'floating' as const, reference: '1M/3M SORA', spread: s }))
+    const item = (min: string, s: number) => raw({ category: 'Floating (Completed)', fixed_years: null, lockin_years: 2, reference: '1M/3M SORA', mins: [{ property_type: null, min }],
+        rates: [{ year: 1, reference: '1M/3M SORA', spread: s }, { year: 2, reference: '1M/3M SORA', spread: s }, { thereafter: true, reference: '1M/3M SORA', spread: 1 }] })
+    const hub = [fl('a', 100000, 0.85), fl('b', 500000, 0.5), fl('c', 700000, 0.35)]
+    it('flags every loan size that got the first column, and ticks none of them', () => {
+        const out = match(hub, [item('100k', 0.85), item('500k', 0.85), item('700k', 0.85)])
+        expect(out.map(p => p.accepted)).toEqual([false, false, false])
+        expect(out[1].warnings.join()).toContain('A table column may have been copied')
+    })
+    it('leaves a normal update alone', () => {
+        const out = match(hub, [item('100k', 0.85), item('500k', 0.5), item('700k', 0.3)])
+        expect(out.every(p => !p.warnings.join().includes('copied'))).toBe(true)
     })
 })
 

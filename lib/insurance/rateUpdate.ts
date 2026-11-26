@@ -6,7 +6,7 @@ import type { MortgagePackage, RateCategory, RateScheduleEntry } from '@/lib/typ
 import { PROPERTY_TYPES } from '@/lib/types/rates'
 import { cleanReference, deriveFirstYearRate, formatRateEntry } from '@/lib/insurance/rateSchedule'
 import { restrictedTo } from '@/lib/insurance/rateFilters'
-import { buildLadders, conversionMonths, money, normFeature, overlap, type RateLadder } from '@/lib/insurance/rateLadders'
+import { buildLadders, conversionMonths, issueKey, money, normFeature, overlap, type RateLadder } from '@/lib/insurance/rateLadders'
 
 // ── What the AI read ────────────────────────────────────────────────────────
 
@@ -291,6 +291,28 @@ export function setFeatures(p: Proposal, features: string[]): Proposal {
     return { ...p, proposed, diffs, kind, featureDiffs }
 }
 
+/**
+ * The admin's own figure for one year (null = thereafter), when the read was wrong.
+ * A red card whose only problem was the figures becomes usable once they are fixed.
+ */
+export function setRate(p: Proposal, year: number | null, entry: RateScheduleEntry): Proposal {
+    if (!p.proposed) return p
+    const at = p.proposed.rate_schedule.findIndex(e => year == null ? e.thereafter : !e.thereafter && e.year === year)
+    if (at < 0) return p
+    const next: RateScheduleEntry = year == null ? { ...entry, thereafter: true, year: undefined } : { ...entry, year, thereafter: undefined }
+    const rate_schedule = p.proposed.rate_schedule.map((e, i) => i === at ? next : e)
+    const proposed = { ...p.proposed, rate_schedule, first_year_rate: deriveFirstYearRate(rate_schedule) }
+    const diffs = diffPackages(p.current, proposed, p.item)
+    const kind = p.current ? (diffs.some(x => x.state === 'changed') ? 'change' as const : 'same' as const) : p.kind
+    const note = 'Rates edited by you'
+    const fixed = p.level === 'red' && !packageErrors(proposed).length
+    return {
+        ...p, proposed, diffs, kind,
+        level: fixed ? 'amber' : p.level,
+        warnings: fixed ? [note] : p.warnings.includes(note) ? p.warnings : [...p.warnings, note],
+    }
+}
+
 /** "Use banker's" for one difference, on every proposal that has it. */
 export function applyFeatureChoice(ps: Proposal[], d: FeatureDiff, useBanker: boolean): Proposal[] {
     return ps.map(p => {
@@ -507,8 +529,31 @@ export function matchRead(ctx: MatchContext): Proposal[] {
         } else out.push(...resolveItem(item, found[0] ?? null, ctx, id))
     })
     flagDuplicates(out)
+    flagCopiedColumns(out)
     if (ctx.fullList) out.push(...unmentioned(ctx, out))
     return out
+}
+
+/**
+ * Several loan sizes read with exactly the same rates, where HUB's differ: a table column
+ * was probably copied across (seen on an SCB PDF). Same property type only: OCBC's HDB 200k
+ * and Private 300k are genuinely identical.
+ */
+export function flagCopiedColumns(ps: Proposal[]) {
+    const sig = (p: Proposal) => [p.ladderKey, p.item!.property_type ?? '', p.item!.rates.map(formatRateEntry).join('|')].join('#')
+    const groups = new Map<string, Proposal[]>()
+    for (const p of ps) if (p.item && p.ladderKey && p.kind !== 'remove' && p.item.min_loan != null) groups.set(sig(p), [...(groups.get(sig(p)) ?? []), p])
+    for (const group of groups.values()) {
+        const sizes = new Set(group.map(p => p.item!.min_loan))
+        const hub = new Set(group.filter(p => p.current).map(p => p.current!.rate_schedule.map(formatRateEntry).join('|')))
+        if (sizes.size < 2 || hub.size < 2) continue
+        const w = `The same rates were read for ${[...sizes].sort((a, b) => a! - b!).map(n => money(n!)).join(', ')}, but HUB's differ. A table column may have been copied: check the original`
+        for (const p of group) {
+            p.accepted = false
+            if (p.level === 'green') p.level = 'amber'
+            if (!p.warnings.includes(w)) p.warnings.push(w)
+        }
+    }
 }
 
 /** Two lines of one message landing on the same package: neither can be trusted alone. */
@@ -588,8 +633,9 @@ export function bankChanges(before: MortgagePackage[], after: MortgagePackage[])
 }
 
 /** Warnings the new list has that the old one didn't. Warn only, never block. */
-export function newWarnings(before: MortgagePackage[], after: MortgagePackage[], today: string): string[] {
-    const list = (ps: MortgagePackage[]) => buildLadders(ps, today).flatMap(l => l.issues.filter(i => i.level === 'check').map(i => `${l.label}: ${i.text}`))
+export function newWarnings(before: MortgagePackage[], after: MortgagePackage[], today: string, checkedOk = new Set<string>()): string[] {
+    const list = (ps: MortgagePackage[]) => buildLadders(ps, today).flatMap(l => l.issues
+        .filter(i => i.level === 'check' && !checkedOk.has(issueKey(i))).map(i => `${l.label}: ${i.text}`))
     const old = new Set(list(before))
     return [...new Set(list(after))].filter(t => !old.has(t))
 }
