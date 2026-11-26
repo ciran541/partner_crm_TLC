@@ -1,15 +1,18 @@
 import { AlertTriangle, Crown, Info } from 'lucide-react'
-import { isExpired, restrictedTo } from '@/lib/insurance/rateFilters'
+import { isExpired, restrictedTo, shortLoan } from '@/lib/insurance/rateFilters'
 import { todaySgt } from '@/lib/insurance/promotions'
 import type { MortgagePackage } from '@/lib/types/rates'
 
 const day = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
 
 /** Badges on every package card: who can take it, and whether the bank's end date has passed. */
-export function PackageBadges({ pkg }: { pkg: MortgagePackage }) {
+export function PackageBadges({ pkg, showPriorityMin = true }: { pkg: MortgagePackage; showPriorityMin?: boolean }) {
     const who = restrictedTo(pkg)
+    // One rate, two ways in: normal clients from the minimum, this bank's Priority clients from less.
+    const pm = pkg.priority_min_loan != null && Number(pkg.priority_min_loan) < Number(pkg.min_loan_size) ? Number(pkg.priority_min_loan) : null
     return (
         <>
+            {showPriorityMin && pm != null && <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200"><Crown size={10} /> Priority from {shortLoan(pm)}</span>}
             {who && <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200"><Crown size={10} /> {who}</span>}
             {isExpired(pkg, todaySgt()) && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">

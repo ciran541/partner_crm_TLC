@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MortgagePackage, RateScheduleEntry } from '@/lib/types/rates'
-import { buildLadders, conversionMonths, namedFixedYears } from '../rateLadders'
+import { buildLadders, byCategoryAndLoan, conversionMonths, namedFixedYears } from '../rateLadders'
 import { applyLoanSizeFilter, parsePriorityMin, restrictedTo } from '../rateFilters'
 
 let n = 0
@@ -99,5 +99,14 @@ describe('order', () => {
             pkg({}),
         ], '2026-11-26')
         expect(ls.map(l => l.category)).toEqual(['Fixed', 'Floating (Completed)', 'BUC'])
+    })
+})
+
+describe('display order', () => {
+    it('sorts any list Fixed, Floating, BUC, then product, then loan size', () => {
+        const fl = (min: number) => pkg({ id: `fl${min}`, category: 'Floating (Completed)', min_loan_size: min, rate_schedule: [{ year: 1, type: 'floating', reference: '3M SORA', spread: 0.3 }] })
+        const list = [fl(800000), pkg({ id: 'buc', category: 'BUC', rate_schedule: [{ year: 1, type: 'floating', reference: '1M SORA', spread: 0.3 }] }),
+            pkg({ id: '3y1m', min_loan_size: 1e6 }), fl(200000), pkg({ id: '2y', package_name: 'B 2Y Fixed', lockin_years: 2, rate_schedule: fixed(1.9, 2) }), pkg({ id: '3y500' })]
+        expect(list.sort(byCategoryAndLoan).map(p => p.id)).toEqual(['2y', '3y500', '3y1m', 'fl200000', 'fl800000', 'buc'])
     })
 })

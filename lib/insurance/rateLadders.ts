@@ -97,6 +97,14 @@ export function buildLadders(packages: MortgagePackage[], today: string): RateLa
 const CATEGORY_ORDER = ['Fixed', 'Floating (Completed)', 'BUC']
 const categoryOrder = (c: string) => (CATEGORY_ORDER.indexOf(c) + 1) || CATEGORY_ORDER.length + 1
 
+/** Display order for any list of packages: Fixed, Floating, BUC; then product; then loan size, smallest first. */
+export function byCategoryAndLoan(a: MortgagePackage, b: MortgagePackage): number {
+    return categoryOrder(a.category) - categoryOrder(b.category)
+        || productLabel(a).localeCompare(productLabel(b), undefined, { numeric: true })
+        || Number(a.min_loan_size) - Number(b.min_loan_size)
+        || Number(a.priority_min_loan ?? a.min_loan_size) - Number(b.priority_min_loan ?? b.min_loan_size)
+}
+
 function conversionLabel(suffix: string): string {
     if (suffix === '') return ''
     if (suffix === 'null') return ' (no conversion)'

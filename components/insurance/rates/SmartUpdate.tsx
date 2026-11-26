@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, ArrowRight, Check, FileUp, Pencil, Plus, Sparkles, X } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
-import { buildLadders, money } from '@/lib/insurance/rateLadders'
+import { buildLadders, byCategoryAndLoan, money } from '@/lib/insurance/rateLadders'
 import { restrictedTo } from '@/lib/insurance/rateFilters'
 import { formatRateEntry } from '@/lib/insurance/rateSchedule'
 import {
@@ -82,7 +82,9 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
     const cash = [...new Set((state?.read.items ?? []).flatMap(i => i.features.filter(isCash)))]
     const choose = (d: FeatureDiff, useBanker: boolean) => setProposals(ps => applyFeatureChoice(ps, d, useBanker))
     const editFeatures = (p: Proposal, features: string[]) => setProposals(ps => ps.map(x => x.id === p.id ? setFeatures(x, features) : x))
-    const unchanged = proposals.filter(isUnchanged)
+    const pkgOf = (p: Proposal) => (p.proposed ?? p.current)!
+    const sorted = (ps: Proposal[]) => [...ps].sort((a, b) => byCategoryAndLoan(pkgOf(a), pkgOf(b)))
+    const unchanged = sorted(proposals.filter(isUnchanged))
     const decide = proposals.filter(p => p.kind !== 'ask' && !isUnchanged(p))
     const asks = proposals.filter(p => p.kind === 'ask')
     const ticked = proposals.filter(p => p.accepted && p.kind !== 'ask' && p.level !== 'red')
@@ -161,7 +163,7 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
             ))}
 
             {[...ladders.map(l => ({ key: l.key, title: ladderTitle(l) })), { key: null, title: 'New products' }].map(g => {
-                const group = decide.filter(p => p.ladderKey === g.key)
+                const group = sorted(decide.filter(p => p.ladderKey === g.key))
                 return group.length > 0 && (
                     <section key={g.key ?? 'new'} className="space-y-3">
                         <h3 className="font-bold text-[#052d4a] pt-2">{g.title}</h3>

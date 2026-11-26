@@ -709,12 +709,14 @@ function RateCard({
                             {appeal && (
                                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(pkg.min_loan_size)}</span>
                             )}
-                            <PackageBadges pkg={pkg} />
+                            <PackageBadges pkg={pkg} showPriorityMin={false} />
                             <SmallChip icon={Building2}>{shortPropType(pkg.property_type)}</SmallChip>
                             <SmallChip icon={Wallet}>
                                 {priorityMin != null && priorityMin < pkg.min_loan_size
                                     ? <><span className="line-through text-slate-300 mr-1">{shortLoan(pkg.min_loan_size)}</span><span className="text-violet-600 font-semibold">Min {shortLoan(priorityMin)}</span></>
-                                    : <>Min {shortLoan(pkg.min_loan_size)}</>
+                                    : pkg.priority_min_loan != null && Number(pkg.priority_min_loan) < pkg.min_loan_size
+                                        ? <>Min {shortLoan(pkg.min_loan_size)} <span className="text-violet-600 font-semibold ml-1">· Priority {shortLoan(Number(pkg.priority_min_loan))}</span></>
+                                        : <>Min {shortLoan(pkg.min_loan_size)}</>
                                 }
                             </SmallChip>
                             {(() => {

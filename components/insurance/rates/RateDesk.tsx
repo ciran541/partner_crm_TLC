@@ -8,6 +8,7 @@ import LoadFailed from '@/components/shared/LoadFailed'
 import Modal from '@/components/shared/Modal'
 import Spinner from '@/components/shared/Spinner'
 import LadderGrid from './LadderGrid'
+import { byCategoryAndLoan } from '@/lib/insurance/rateLadders'
 import SmartUpdate from './SmartUpdate'
 import RatePackageEditorModal from './RatePackageEditorModal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
@@ -279,7 +280,9 @@ function ReviewPage({ bank, before, after, changes, today, errors, warnings, not
     errors: string[]; warnings: string[]; note: string | null; busy: boolean; backLabel: string; onBack: () => void; onPublish: () => void
 }) {
     const count = (t: BankChange['type']) => changes.filter(c => c.type === t).length
-    const real = changes.filter(c => c.type !== 'confirmed')
+    // Same order as the list below: Fixed, Floating, BUC, then loan size.
+    const pkgFor = (id: string) => after.find(p => p.id === id) ?? before.find(p => p.id === id)!
+    const real = changes.filter(c => c.type !== 'confirmed').sort((a, b) => byCategoryAndLoan(pkgFor(a.package_id), pkgFor(b.package_id)))
     return (
         <div className="space-y-5 pb-28">
             <div>
