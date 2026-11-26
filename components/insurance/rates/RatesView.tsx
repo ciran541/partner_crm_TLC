@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MortgagePackage, MortgagePackageInput, RateScheduleEntry, RateCategory } from '@/lib/types/rates'
 import { formatRateEntry, isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
 import { effectiveRate } from '@/lib/insurance/rateRecommend'
-import { fixedRateYears, parsePriorityMin, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, shortLoan, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, PRIORITY_BANK_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
+import { fixedRateYears, priorityMin, isOpenTo, applyLoanSizeFilter, matchesPropType, matchesRateType, matchesFeature, stripBankPrefix, packageStyle, shortLoan, RATE_TYPE_OPTIONS, FEATURE_OPTIONS, PRIORITY_BANK_OPTIONS, type PropTypeFilter } from '@/lib/insurance/rateFilters'
 import RatePackageEditorModal from '@/components/insurance/rates/RatePackageEditorModal'
-import RateIngestionModal from '@/components/insurance/rates/RateIngestionModal'
+import { PackageBadges, PackageDetailNotes } from '@/components/insurance/rates/PackageNotices'
+import Link from 'next/link'
 import RateCompareModal from '@/components/insurance/rates/RateCompareModal'
 import { matchPromotions, type MatchedPromotion } from '@/lib/insurance/promotions'
 import type { BankPromotion } from '@/lib/types/promotions'
@@ -110,7 +111,6 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
     const [q, setQ]                   = useState('')
 
     const [editorOpen, setEditorOpen] = useState(false)
-    const [ingestOpen, setIngestOpen] = useState(false)
     const [compareIds, setCompareIds] = useState<Set<string>>(new Set())
     const [compareOpen, setCompareOpen] = useState(false)
     const [editing, setEditing]       = useState<MortgagePackage | null>(null)
@@ -169,7 +169,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
         if (!hasFilters) return []
         let items: { pkg: MortgagePackage; appeal: boolean }[] = parsedLoan
             ? applyLoanSizeFilter(packages, parsedLoan, priorityBanks)
-            : packages.map(p => ({ pkg: p, appeal: false }))
+            : packages.filter(p => admin || isOpenTo(p, priorityBanks)).map(p => ({ pkg: p, appeal: false }))
         if (currentBank)      items = items.filter(({ pkg }) => pkg.bank !== currentBank)
         if (propType)         items = items.filter(({ pkg }) => matchesPropType(pkg, propType))
         if (rateTypes.size)   items = items.filter(({ pkg }) => matchesRateType(pkg, rateTypes))
@@ -179,7 +179,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
             items = items.filter(({ pkg }) => pkg.package_name.toLowerCase().includes(ql) || pkg.bank.toLowerCase().includes(ql))
         }
         return items
-    }, [packages, parsedLoan, currentBank, propType, rateTypes, features, priorityBanks, q, hasFilters])
+    }, [packages, parsedLoan, currentBank, propType, rateTypes, features, priorityBanks, q, hasFilters, admin])
 
     const columns = useMemo(() =>
         COLUMN_DEFS
@@ -372,10 +372,10 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                         </button>
                     )}
                     {admin && (
-                        <button onClick={() => setIngestOpen(true)}
+                        <Link href="/admin/insurance/rates/update"
                             className="btn-ghost px-3 py-2 text-sm flex items-center gap-1.5 border border-slate-200">
-                            <Upload size={14} /> Import from sheet
-                        </button>
+                            <Upload size={14} /> Update rates
+                        </Link>
                     )}
                     {admin && (
                         <button onClick={() => { setEditing(null); setEditorOpen(true) }}
@@ -591,7 +591,7 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                                             appeal={appeal}
                                             busy={busyId === pkg.id}
                                             confirming={confirmDelete === pkg.id}
-                                            priorityMin={priorityBanks.has(pkg.bank) ? parsePriorityMin(pkg.min_loan_note) : null}
+                                            priorityMin={priorityBanks.has(pkg.bank) ? priorityMin(pkg) : null}
                                             promos={promosByBank.get(pkg.bank) ?? []}
                                             selected={compareIds.has(pkg.id)}
                                             selectDisabled={!compareIds.has(pkg.id) && compareIds.size >= MAX_COMPARE}
@@ -655,12 +655,6 @@ export default function RatesView({ forceReadOnly = false }: { forceReadOnly?: b
                 <RatePackageEditorModal initial={editing} saving={saving}
                     onSave={handleSave} onClose={() => { setEditorOpen(false); setEditing(null) }} />
             )}
-            {ingestOpen && (
-                <RateIngestionModal
-                    onClose={() => setIngestOpen(false)}
-                    onDone={() => { setIngestOpen(false); setAlert({ type: 'success', message: 'Packages replaced from sheet.' }); load() }}
-                />
-            )}
         </div>
     )
 }
@@ -715,6 +709,7 @@ function RateCard({
                             {appeal && (
                                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(pkg.min_loan_size)}</span>
                             )}
+                            <PackageBadges pkg={pkg} />
                             <SmallChip icon={Building2}>{shortPropType(pkg.property_type)}</SmallChip>
                             <SmallChip icon={Wallet}>
                                 {priorityMin != null && priorityMin < pkg.min_loan_size
@@ -810,6 +805,8 @@ function RateCard({
                     {pkg.min_loan_note && (
                         <p className="text-[10px] text-slate-400 italic">{pkg.min_loan_note}</p>
                     )}
+
+                    <PackageDetailNotes pkg={pkg} />
 
                     {/* Admin remarks */}
                     {admin && pkg.remarks && (

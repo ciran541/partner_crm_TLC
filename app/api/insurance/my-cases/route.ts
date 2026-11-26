@@ -2,10 +2,9 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireInsuranceUser } from '@/lib/auth/requireInsuranceUser'
 import { isDay } from '@/lib/insurance/actionCentre'
+import { OWN_CASE_SORTS } from '@/lib/insurance/ownCases'
 import { PIPELINE_STAGES } from '@/lib/insurance/stages'
 import { cursorOf, isPeriod, limitOf, searchOf, toListBody, type OwnCasesResult } from '@/lib/insurance/ownCasesServer'
-
-const SORTS = ['updated', 'follow_up', 'lock_in', 'closed']
 
 /**
  * GET /api/insurance/my-cases — the signed-in user's OWN cases, a page at a time.
@@ -23,7 +22,7 @@ export async function GET(request: Request) {
 
     const stage = get('stage'), sort = get('sort') ?? 'updated', month = get('month'), closed = get('closed')
     if (stage && !(PIPELINE_STAGES as readonly string[]).includes(stage)) return bad('Unknown status')
-    if (!SORTS.includes(sort)) return bad('Unknown sort')
+    if (!OWN_CASE_SORTS.includes(sort)) return bad('Unknown sort')
     if (['from', 'to', 'followUpTo', 'lockInFrom', 'lockInTo'].some(k => get(k) && !isDay(get(k)))) return bad('Dates must be YYYY-MM-DD')
     if (month && !isDay(`${month}-01`)) return bad('month must be YYYY-MM')
     if (closed && !isPeriod(closed)) return bad('closed must be YYYY or YYYY-MM')

@@ -82,7 +82,7 @@ function wantedCategories(q: string): RateCategory[] {
 }
 
 /** Only for special clients. "Priority Banking: min $500K" isn't: that is a lower minimum beside the normal one. */
-export const isRestricted = (p: MortgagePackage) => !!p.min_loan_note && (/\bonly\b|aum|private client|citigold/i.test(p.min_loan_note) || !/\d/.test(p.min_loan_note))
+export const isRestricted = (p: MortgagePackage) => !!p.restricted_to || !!p.min_loan_note && (/\bonly\b|aum|private client|citigold/i.test(p.min_loan_note) || !/\d/.test(p.min_loan_note))
 
 /** Year 1 rate today; null when the HUB can't price it. */
 const todayRate = (p: MortgagePackage, sora: SoraRates | null) => p.rate_schedule[0] ? effectiveRate(p.rate_schedule[0], sora).rate : null

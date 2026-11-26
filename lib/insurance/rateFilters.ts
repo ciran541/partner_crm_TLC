@@ -24,7 +24,7 @@ export const PRIORITY_BANK_OPTIONS = [
 /** Parse a priority-customer minimum loan size from min_loan_note.
  *  Looks for patterns like "Priority Banking: min $300K" or "Privilege: min $500K". */
 export function parsePriorityMin(note: string | null | undefined): number | null {
-    if (!note) return null
+    if (!note || /\baum\b/i.test(note)) return null   // an asset amount is not a loan size
     const lower = note.toLowerCase()
     if (!lower.includes('priority') && !lower.includes('privilege') && !lower.includes('premier')) return null
     const m = note.match(/\$?([\d.]+)\s*([KkMm])?/)
@@ -36,6 +36,26 @@ export function parsePriorityMin(note: string | null | undefined): number | null
     else if (suffix === 'm') n *= 1_000_000
     return n
 }
+
+/** The programme a client needs to take this package at all; null = everyone. */
+export function restrictedTo(p: Pick<MortgagePackage, 'restricted_to' | 'min_loan_note'>): string | null {
+    if (p.restricted_to !== undefined) return p.restricted_to
+    // Rows read before the column existed.
+    const n = p.min_loan_note?.trim()
+    return n && /\bonly\b|\baum\b|premier|treasures|citigold|private client/i.test(n) && !/min\s*\$?\d/i.test(n) ? n : null
+}
+
+/** Priority clients' minimum for this package, or null when there isn't a lower one. */
+export const priorityMin = (p: Pick<MortgagePackage, 'priority_min_loan' | 'min_loan_note'>): number | null =>
+    p.priority_min_loan != null ? Number(p.priority_min_loan) : parsePriorityMin(p.min_loan_note)
+
+/** Restricted packages show only for clients with that bank's Priority status. */
+export const isOpenTo = (p: MortgagePackage, priorityBanks: Set<string>) =>
+    !restrictedTo(p) || priorityBanks.has(p.bank)
+
+/** The bank said the rate ends on a date that has passed. Still shown, with a warning. */
+export const isExpired = (p: Pick<MortgagePackage, 'valid_until'>, today: string) =>
+    !!p.valid_until && p.valid_until < today
 
 /**
  * Loan-size tiering. Groups packages by bank+category+property+lock-in and, within
@@ -53,13 +73,15 @@ export function applyLoanSizeFilter(
 ): { pkg: MortgagePackage; appeal: boolean; priority: boolean }[] {
     const groups = new Map<string, MortgagePackage[]>()
     for (const pkg of pkgs) {
-        const key = `${pkg.bank}|${pkg.category}|${pkg.property_type}|${pkg.lockin_years}`
+        if (!isOpenTo(pkg, priorityBanks)) continue
+        // Restricted packages tier among themselves, so they can't hide a normal one.
+        const key = `${pkg.bank}|${pkg.category}|${pkg.property_type}|${pkg.lockin_years}|${restrictedTo(pkg) ?? ''}`
         if (!groups.has(key)) groups.set(key, [])
         groups.get(key)!.push(pkg)
     }
     const effectiveMin = (pkg: MortgagePackage): number => {
         if (priorityBanks.has(pkg.bank)) {
-            const pm = parsePriorityMin(pkg.min_loan_note)
+            const pm = priorityMin(pkg)
             if (pm != null && pm < pkg.min_loan_size) return pm
         }
         return pkg.min_loan_size
@@ -67,7 +89,7 @@ export function applyLoanSizeFilter(
     // True when the client only qualifies (strict or appeal) thanks to their priority
     // status — i.e. the standard min-loan alone would exclude this package for this loan.
     const usesPriority = (pkg: MortgagePackage): boolean =>
-        priorityBanks.has(pkg.bank) && pkg.min_loan_size > loan && effectiveMin(pkg) < pkg.min_loan_size
+        priorityBanks.has(pkg.bank) && (!!restrictedTo(pkg) || (pkg.min_loan_size > loan && effectiveMin(pkg) < pkg.min_loan_size))
 
     const result: { pkg: MortgagePackage; appeal: boolean; priority: boolean }[] = []
     for (const [, group] of groups) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyMove, earningsKey, ownCasesKey, parseOwnCursor, trackColumnKey, trackFilterOf, trackKey } from '../ownCases'
+import { applyMove, earningsKey, nextSort, ownCasesKey, parseOwnCursor, trackColumnKey, trackFilterOf, trackKey } from '../ownCases'
 import type { CaseListRow } from '../caseQuery'
 import type { ListPage } from '@/lib/shared/listStore'
 
@@ -34,6 +34,27 @@ describe('cursor', () => {
     })
     it('rejects anything else', () => {
         for (const bad of ['x', `drop table_${uid(1)}`, '2026-11-25_1', `_${uid(1)}`]) expect(parseOwnCursor(bad)).toBeNull()
+    })
+})
+
+describe('column sorting', () => {
+    it('loan starts with the largest, everything else ascending; a third tap clears', () => {
+        const a = nextSort(null, 'loan')
+        expect(a).toEqual({ column: 'loan', dir: 'desc' })
+        const b = nextSort(a, 'loan')
+        expect(b).toEqual({ column: 'loan', dir: 'asc' })
+        expect(nextSort(b, 'loan')).toBeNull()
+        expect(nextSort(b, 'due')).toEqual({ column: 'due', dir: 'asc' })
+    })
+    it('accepts amount and encoded-name cursors', () => {
+        for (const k of ['980000', '980000.50', '0', '164796c616e.00009836', '2.02921939']) {
+            expect(parseOwnCursor(`${k}_${uid(1)}`)).toEqual({ key: k, id: uid(1) })
+        }
+    })
+    it('a list sorted by follow-up is not edited as a Track column', () => {
+        const r = row(1, 'Pending Docs', '2026-12-01')
+        const p = page([r])
+        expect(applyMove(ownCasesKey({ stage: 'Pending Docs', sort: 'due_asc' }), p, r, { ...r, stage: 'Inactive' } as CaseListRow)).toBe(p)
     })
 })
 

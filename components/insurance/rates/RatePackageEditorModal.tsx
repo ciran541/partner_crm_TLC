@@ -12,6 +12,8 @@ import Spinner from '@/components/shared/Spinner'
 interface Props {
     initial?: MortgagePackage | null
     defaultBank?: string
+    /** Packages can't move between banks. */
+    lockBank?: boolean
     onSave: (input: MortgagePackageInput) => Promise<void>
     onClose: () => void
     saving: boolean
@@ -27,12 +29,16 @@ function sequenceYears(schedule: RateScheduleEntry[]): RateScheduleEntry[] {
     return schedule.map(e => e.thereafter ? { ...e, year: undefined } : { ...e, year: ++y })
 }
 
-export default function RatePackageEditorModal({ initial, defaultBank, onSave, onClose, saving }: Props) {
+export default function RatePackageEditorModal({ initial, defaultBank, lockBank, onSave, onClose, saving }: Props) {
     const [bank, setBank] = useState(initial?.bank ?? defaultBank ?? '')
     const [propertyType, setPropertyType] = useState(initial?.property_type ?? 'HDB / Private')
     const [category, setCategory] = useState<RateCategory>(initial?.category ?? 'Fixed')
     const [minLoan, setMinLoan] = useState(String(initial?.min_loan_size ?? ''))
     const [minLoanNote, setMinLoanNote] = useState(initial?.min_loan_note ?? '')
+    const [priorityMin, setPriorityMin] = useState(initial?.priority_min_loan != null ? String(initial.priority_min_loan) : '')
+    const [restricted, setRestricted] = useState(initial?.restricted_to ?? '')
+    const [validUntil, setValidUntil] = useState(initial?.valid_until ?? '')
+    const [product, setProduct] = useState(initial?.product ?? '')
     const [packageName, setPackageName] = useState(initial?.package_name ?? '')
     const [lockin, setLockin] = useState(initial?.lockin_years ?? 0)
     const [schedule, setSchedule] = useState<RateScheduleEntry[]>(
@@ -77,6 +83,10 @@ export default function RatePackageEditorModal({ initial, defaultBank, onSave, o
             subsidies: subsidies.trim() || null,
             remarks: remarks.trim() || null,
             min_loan_note: minLoanNote.trim() || null,
+            priority_min_loan: priorityMin ? Number(priorityMin) : null,
+            restricted_to: restricted.trim() || null,
+            valid_until: validUntil || null,
+            product: product.trim() || null,
             status,
         })
     }
@@ -95,7 +105,9 @@ export default function RatePackageEditorModal({ initial, defaultBank, onSave, o
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label className={labelCls}>Bank *</label>
-                            <InsuranceBankDropdown value={bank} onChange={setBank} />
+                            {lockBank || initial
+                                ? <p className={`${inputCls} bg-slate-50 text-slate-600`}>{bank}</p>
+                                : <InsuranceBankDropdown value={bank} onChange={setBank} />}
                         </div>
                         <div>
                             <label className={labelCls}>Property type</label>
@@ -135,6 +147,25 @@ export default function RatePackageEditorModal({ initial, defaultBank, onSave, o
                         <label className={labelCls}>Min. loan note <span className="text-slate-400 normal-case">(Premier / threshold wording)</span></label>
                         <input value={minLoanNote} onChange={e => setMinLoanNote(e.target.value)}
                             placeholder="e.g. ≥$600k Premier / ≥$800k" className={inputCls} />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className={labelCls}>Priority min. loan <span className="text-slate-400 normal-case">(if lower)</span></label>
+                            <input value={priorityMin} onChange={e => setPriorityMin(e.target.value.replace(/[^\d]/g, ''))} inputMode="numeric" placeholder="300000" className={inputCls} />
+                        </div>
+                        <div>
+                            <label className={labelCls}>Only for <span className="text-slate-400 normal-case">(blank = everyone)</span></label>
+                            <input value={restricted} onChange={e => setRestricted(e.target.value)} placeholder="e.g. Premier, Citigold" className={inputCls} />
+                        </div>
+                        <div>
+                            <label className={labelCls}>Valid until</label>
+                            <input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} className={inputCls} />
+                        </div>
+                        <div>
+                            <label className={labelCls}>Group as <span className="text-slate-400 normal-case">(blank = automatic)</span></label>
+                            <input value={product} onChange={e => setProduct(e.target.value)} placeholder="e.g. 3Y Fixed Special" className={inputCls} />
+                        </div>
                     </div>
 
                     {/* Rate schedule builder */}
@@ -225,7 +256,7 @@ function RateRow({ entry, label, onChange, onRemove, canRemove }: {
 
             <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs">
                 {(['fixed', 'floating'] as const).map(t => (
-                    <button key={t} type="button" onClick={() => onChange({ type: t })}
+                    <button key={t} type="button" onClick={() => onChange(t === 'floating' && !entry.reference ? { type: t, reference: '3M SORA' } : { type: t })}
                         className={`px-3 py-2 font-medium capitalize transition-colors ${entry.type === t ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-600'}`}>
                         {t}
                     </button>
@@ -241,7 +272,7 @@ function RateRow({ entry, label, onChange, onRemove, canRemove }: {
             ) : (
                 <div className="flex items-center gap-1 flex-wrap">
                     <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs shrink-0">
-                        {RATE_REFERENCES.map(r => (
+                        {(entry.reference && !RATE_REFERENCES.includes(entry.reference) ? [...RATE_REFERENCES, entry.reference] : RATE_REFERENCES).map(r => (
                             <button key={r} type="button" onClick={() => onChange({ reference: r })}
                                 className={`px-2.5 py-1.5 font-semibold transition-colors ${(entry.reference ?? '3M SORA') === r ? 'bg-[#052d4a] text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
                                 {r}

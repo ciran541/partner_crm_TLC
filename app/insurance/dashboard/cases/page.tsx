@@ -14,6 +14,8 @@ import { formatCurrency } from '@/lib/utils/formatCurrency'
 import LoadFailed from '@/components/shared/LoadFailed'
 import LoadMore from '@/components/shared/LoadMore'
 import { useOwnCases } from '@/lib/insurance/useOwnCases'
+import { nextSort, type ColumnSort, type SortColumn } from '@/lib/insurance/ownCases'
+import { SortButton, SortSelect } from '@/components/insurance/cases/CaseSort'
 import type { CaseListRow } from '@/lib/insurance/caseQuery'
 import TrackBoard from '@/components/insurance/cases/TrackBoard'
 import BulkInactiveBar, { BULK_MAX } from '@/components/insurance/cases/BulkInactiveBar'
@@ -93,6 +95,13 @@ function CasesList() {
     const [closedMonth, setClosedMonth] = useState(currentMonth)
     const [search, setSearch] = useState('')
 
+    // Column sort (kept when switching status). Closed Won shows the closing date
+    // where the other tabs show the input date, so that column sorts by it.
+    const [sort, setSort] = useState<ColumnSort | null>(null)
+    const dateColumn: SortColumn = isClosedWon ? 'closed' : 'input'
+    const activeSort: ColumnSort | null = sort && (sort.column === 'input' || sort.column === 'closed') ? { ...sort, column: dateColumn } : sort
+    const sortBy = (column: SortColumn) => setSort(nextSort(activeSort, column))
+
     // Date filter — by range or by month, both off "account / case creation date".
     const [dateMode, setDateMode] = useState<DateMode>('all')
     const [fromDate, setFromDate] = useState('')
@@ -120,6 +129,7 @@ function CasesList() {
     } = useOwnCases({
         search,
         stage: isTrack ? undefined : stageFilter,
+        sort: activeSort ? `${activeSort.column}_${activeSort.dir}` : undefined,
         from: dateMode === 'range' ? fromDate || undefined : undefined,
         to: dateMode === 'range' ? toDate || undefined : undefined,
         month: dateMode === 'month' ? month || undefined : undefined,
@@ -154,7 +164,7 @@ function CasesList() {
     const hasFilters = stageFilter !== TRACK || !!search || dateActive
 
     const resetFilters = () => {
-        changeStageFilter(TRACK); setSearch('')
+        changeStageFilter(TRACK); setSearch(''); setSort(null)
         setDateMode('all'); setFromDate(''); setToDate(''); setMonth('')
     }
 
@@ -240,6 +250,11 @@ function CasesList() {
                     {!isTrack && !isClosedWon && dateMode === 'month' && (
                         <input type="month" value={month} max={thisMonth}
                             onChange={e => setMonth(e.target.value)} style={inputStyle} aria-label="Month" />
+                    )}
+
+                    {/* Phones show cards, so there are no headings to tap */}
+                    {!isTrack && (
+                        <SortSelect dateColumn={dateColumn} sort={activeSort} onChange={setSort} style={inputStyle} />
                     )}
 
                     {hasFilters && (
@@ -349,10 +364,14 @@ function CasesList() {
                                             </th>
                                         )}
                                         <th className="table-th">Client</th>
-                                        <th className="table-th">Type</th>
-                                        <th className="table-th" style={{ textAlign: 'right' }}>Loan Amount</th>
-                                        <th className="table-th">Banker</th>
-                                        <th className="table-th">{isClosedWon ? 'Closed / Follow-Up' : 'Input / Follow-Up'}</th>
+                                        <th className="table-th"><SortButton column="type" label="Type" sort={activeSort} onSort={sortBy} /></th>
+                                        <th className="table-th" style={{ textAlign: 'right' }}><SortButton column="loan" label="Loan Amount" sort={activeSort} onSort={sortBy} /></th>
+                                        <th className="table-th"><SortButton column="banker" label="Banker" sort={activeSort} onSort={sortBy} /></th>
+                                        <th className="table-th">
+                                            <SortButton column={dateColumn} label={isClosedWon ? 'Closed' : 'Input'} sort={activeSort} onSort={sortBy} />
+                                            {' / '}
+                                            <SortButton column="due" label="Follow-Up" sort={activeSort} onSort={sortBy} />
+                                        </th>
                                         <th className="table-th">Remark</th>
                                     </tr>
                                 </thead>

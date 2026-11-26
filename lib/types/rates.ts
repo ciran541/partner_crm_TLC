@@ -16,7 +16,7 @@ export const LOCKIN_OPTIONS = [0, 1, 2, 3, 4, 5] as const
 // Standard floating references (aligns with the workflow's FloatingRateType),
 // but `reference` is a free string so legacy values like "1M Compounded SORA"
 // or "FD Rate" survive a migration without data loss.
-export const RATE_REFERENCES: readonly string[] = ['3M SORA', '1M SORA', 'FD Rate']
+export const RATE_REFERENCES: readonly string[] = ['3M SORA', '1M SORA', '1M/3M SORA', 'FD Rate']
 
 /** One row of a package's rate schedule. Ordered array; index 0 = first period. */
 export interface RateScheduleEntry {
@@ -47,6 +47,12 @@ export interface MortgagePackage {
     last_updated: string          // YYYY-MM-DD
     created_at?: string
     updated_at?: string
+    priority_min_loan?: number | null   // lower minimum for Priority clients of this bank
+    restricted_to?: string | null       // programme needed to take it at all; null = everyone
+    valid_until?: string | null         // YYYY-MM-DD
+    confirmed_on?: string | null        // last confirmed by a banker, YYYY-MM-DD
+    product?: string | null             // overrides the automatic ladder grouping
+    bank_note?: string | null           // added on read from bank_rate_notes, never saved here
 }
 
 export interface MortgagePackageInput {
@@ -62,6 +68,10 @@ export interface MortgagePackageInput {
     remarks?: string | null
     min_loan_note?: string | null
     status?: 'published' | 'draft'
+    priority_min_loan?: number | null
+    restricted_to?: string | null
+    valid_until?: string | null
+    product?: string | null
 }
 
 // Map a free-text reference down to the workflow's constrained set (phase 2).

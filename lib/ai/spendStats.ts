@@ -11,6 +11,7 @@ const FEATURES: Record<string, string> = {
     normalizeQuery: 'Knowledge: question tidy-up (removed)',
     askKnowledge: 'Knowledge: answers',
     extractPackages: 'Rate import',
+    rateUpdate: 'Rate update reading',
     extractPromotions: 'Bank promotion import',
     extractLoanOffer: 'Letter of Offer (Premium)',
     extractLetterOfOffer: 'Letter of Offer (Basic & Starter)',

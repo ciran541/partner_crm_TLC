@@ -1,5 +1,6 @@
 'use client'
 
+import { PackageBadges, PackageDetailNotes } from '@/components/insurance/rates/PackageNotices'
 import { useEffect, useMemo, useState } from 'react'
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
@@ -308,10 +309,11 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                                 {rec.pkg.lockin_years ? ` · ${rec.pkg.lockin_years}Y lock-in` : ' · No lock-in'}
                             </p>
                             <p className="text-xs text-slate-500 truncate">{stripBankPrefix(rec.pkg.package_name, rec.pkg.bank)}</p>
-                            {(isCheapest || hasSubsidy || rec.appeal || rec.priority || style || promos.length > 0) && (
+                            {(isCheapest || hasSubsidy || rec.appeal || rec.priority || rec.pkg.valid_until || style || promos.length > 0) && (
                                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                                     {isCheapest && !rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Lowest rate</span>}
                                     {rec.priority && <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200"><Crown size={10} /> Priority</span>}
+                                    <PackageBadges pkg={rec.pkg} />
                                     {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(rec.pkg.min_loan_size)}</span>}
                                     {hasSubsidy && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Subsidy / rebate</span>}
                                     <StyleBadge style={style} />
@@ -360,6 +362,7 @@ export default function PurchasePackages({ loan, tenureYears, propertyType, bucO
                         )}
                         {rec.pkg.subsidies && <p><span className="font-semibold text-slate-500">Subsidies: </span>{rec.pkg.subsidies}</p>}
                         {rec.pkg.min_loan_note && <p><span className="font-semibold text-slate-500">Min loan: </span>{rec.pkg.min_loan_note}</p>}
+                        <PackageDetailNotes pkg={rec.pkg} />
                         {rec.pkg.remarks && <p className="text-slate-500 italic">{rec.pkg.remarks}</p>}
                         {promos.map(m => <PromoDetail key={m.promo.id} matched={m} />)}
                         {rec.projection.notes.length > 0 && (

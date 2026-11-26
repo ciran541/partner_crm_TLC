@@ -96,7 +96,7 @@ export default function EarningsOverview({ awaiting, awaitingCases, earned: mont
                     value={awaiting == null ? '…' : money(awaiting)}
                     sub={awaiting == null ? 'Total outstanding' : `Total outstanding · ${awaitingCases} case${awaitingCases === 1 ? '' : 's'}`} />
                 <Tile tag="Commission earned" tagClass="text-emerald-700 bg-emerald-50"
-                    value={loaded ? money(total) : '…'} sub={`${totalSub} · paid or awaiting payout`} />
+                    value={loaded ? money(total) : '…'} sub={totalSub} />
             </div>
 
             <div className="rounded-xl border border-slate-200 px-4 py-3.5 flex items-center justify-between gap-3">

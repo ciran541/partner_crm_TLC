@@ -23,13 +23,17 @@ export async function loadPackages(): Promise<MortgagePackage[]> {
         return packagesCache.rows
     }
     const admin = createAdminClient()
-    const { data, error } = await admin
-        .from('mortgage_packages')
-        .select('*')
-        .order('bank', { ascending: true })
-        .order('first_year_rate', { ascending: true, nullsFirst: false })
+    const [{ data, error }, notes] = await Promise.all([
+        admin.from('mortgage_packages').select('*')
+            .order('bank', { ascending: true })
+            .order('first_year_rate', { ascending: true, nullsFirst: false }),
+        admin.from('bank_rate_notes').select('bank, note'),
+    ])
     if (error) throw error
-    const rows = (data ?? []) as MortgagePackage[]
+    // Notes are an extra: a failure there must never take the rates down.
+    if (notes.error) console.error('[rates] bank notes load failed:', notes.error.message)
+    const noteFor = new Map((notes.data ?? []).map(n => [n.bank as string, n.note as string]))
+    const rows = ((data ?? []) as MortgagePackage[]).map(p => ({ ...p, bank_note: noteFor.get(p.bank) ?? null }))
     packagesCache = { rows, fetchedAt: Date.now() }
     return rows
 }

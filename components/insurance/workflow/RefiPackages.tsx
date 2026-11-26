@@ -1,5 +1,6 @@
 'use client'
 
+import { PackageBadges, PackageDetailNotes } from '@/components/insurance/rates/PackageNotices'
 import { useEffect, useMemo, useState } from 'react'
 import type { MortgagePackage } from '@/lib/types/rates'
 import type { SoraRates } from '@/lib/insurance/sora'
@@ -184,6 +185,7 @@ export default function RefiPackages({
                             <div className="flex flex-wrap gap-1.5 mt-1.5">
                                 {best && !rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#03a9e7]/10 text-[#03a9e7] border border-[#03a9e7]/30">Best match</span>}
                                 {rec.priority && <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200"><Crown size={10} /> Priority</span>}
+                                <PackageBadges pkg={rec.pkg} />
                                 {rec.appeal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">Appeal · needs {shortLoan(rec.pkg.min_loan_size)}</span>}
                                 {saving != null && saving > 0 && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1"><TrendingDown size={10} /> Save {fmt(saving)}</span>}
                                 <StyleBadge style={packageStyle(rec.pkg)} />
@@ -224,6 +226,7 @@ export default function RefiPackages({
                         )}
                         {rec.pkg.subsidies && <p><span className="font-semibold text-slate-500">Subsidies: </span>{rec.pkg.subsidies}</p>}
                         {rec.pkg.min_loan_note && <p><span className="font-semibold text-slate-500">Min loan: </span>{rec.pkg.min_loan_note}</p>}
+                        <PackageDetailNotes pkg={rec.pkg} />
                         {promos.map(m => <PromoDetail key={m.promo.id} matched={m} />)}
                         {rec.savings?.netSaving2yr != null && <p><span className="font-semibold text-slate-500">2-yr net saving: </span>{fmt(rec.savings.netSaving2yr)}</p>}
                         {rec.projection.notes.length > 0 && <p className="text-[11px] text-amber-600">{rec.projection.notes.join(' · ')}</p>}

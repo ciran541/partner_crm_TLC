@@ -7,11 +7,29 @@
 import type { CaseListRow } from '@/lib/insurance/caseQuery'
 import type { ListPage } from '@/lib/shared/listStore'
 
+/** Columns the Cases list can be sorted by. 'due' = follow-up date ('follow_up' is Track's own order). */
+export const SORT_COLUMNS = ['type', 'loan', 'banker', 'input', 'closed', 'due'] as const
+export type SortColumn = (typeof SORT_COLUMNS)[number]
+export type SortDir = 'asc' | 'desc'
+export interface ColumnSort { column: SortColumn; dir: SortDir }
+export type OwnCaseSort = 'updated' | 'follow_up' | 'lock_in' | 'closed' | `${SortColumn}_${SortDir}`
+
+export const OWN_CASE_SORTS: readonly string[] = [
+    'updated', 'follow_up', 'lock_in', 'closed', ...SORT_COLUMNS.flatMap(c => [`${c}_asc`, `${c}_desc`]),
+]
+
+/** A heading tap: first direction, then reversed, then back to the default order. */
+export function nextSort(current: ColumnSort | null, column: SortColumn): ColumnSort | null {
+    const first: SortDir = column === 'loan' ? 'desc' : 'asc'   // largest loan first
+    if (current?.column !== column) return { column, dir: first }
+    return current.dir === first ? { column, dir: first === 'asc' ? 'desc' : 'asc' } : null
+}
+
 export interface OwnCaseQuery {
     /** One stage; unset = every stage. */
     stage?: string
-    /** 'updated' (default) | 'follow_up' | 'lock_in' | 'closed' */
-    sort?: 'updated' | 'follow_up' | 'lock_in' | 'closed'
+    /** Default 'updated' (latest first). */
+    sort?: OwnCaseSort
     search?: string
     /** Created between (YYYY-MM-DD, inclusive) or in a month (YYYY-MM). */
     from?: string
@@ -140,8 +158,9 @@ export const earningsKey = (scope: string, tab: EarningsTab, agent?: string) =>
 // ─── Cursor ──────────────────────────────────────────────────────────────────
 
 const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
-// What the database writes: a date, infinity, or a timestamp with its offset.
-const SORT_KEY = /^(-?infinity|\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}(:?\d{2})?|Z)?)?)$/
+// What the database writes: a date, infinity, a timestamp with its offset, an
+// amount, or a hex-encoded name with its follow-up day.
+const SORT_KEY = /^(-?infinity|\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}(:?\d{2})?|Z)?)?|\d+(\.\d+)?|[012][0-9a-f]*\.\d{8})$/
 
 export function parseOwnCursor(raw: string | null): { key: string; id: string } | null {
     if (!raw) return null
