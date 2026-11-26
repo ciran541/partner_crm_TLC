@@ -90,3 +90,14 @@ describe('who can take a package', () => {
         expect(applyLoanSizeFilter([p], 650000, new Set(['B']))[0].priority).toBe(true)
     })
 })
+
+describe('order', () => {
+    it('lists Fixed, then Floating, then BUC', () => {
+        const ls = buildLadders([
+            pkg({ category: 'BUC', package_name: 'B BUC', rate_schedule: [{ year: 1, type: 'floating', reference: '1M SORA', spread: 0.3 }] }),
+            pkg({ category: 'Floating (Completed)', package_name: 'B Float', rate_schedule: [{ year: 1, type: 'floating', reference: '3M SORA', spread: 0.3 }] }),
+            pkg({}),
+        ], '2026-11-26')
+        expect(ls.map(l => l.category)).toEqual(['Fixed', 'Floating (Completed)', 'BUC'])
+    })
+})

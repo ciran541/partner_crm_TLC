@@ -235,13 +235,23 @@ function facts(f: string, lockinYears: number) {
     }
 }
 
-export interface FeatureDiff { from: string; to: string }
+/** to = '' means the feature is removed for this package. */
+export interface FeatureDiff { from: string; to: string; reason?: string; removeByDefault?: boolean }
+
+/** The loan size a feature is limited to: "(>400k)", "loan sizes > $400k", "above $1M". */
+export function loanThreshold(f: string): number | null {
+    const m = f.match(/(?:>|≥|above|more than|at least|from)\s*(?:S?\$)?\s*(\d+(?:\.\d+)?)\s*(k|mil|m)\b/i)
+    return m ? parseMinSize(m[1] + m[2]) : null
+}
+
+/** A step covers loans from its minimum up to the next step's minimum. */
+export interface LoanRange { min: number; max: number | null }
 
 /**
  * HUB's features are kept: bankers reword the same terms in every message. Only a real
  * difference in timing, percentage or availability is reported, for a person to decide.
  */
-export function compareFeatures(current: string[], said: string[], lockinYears: number): { differ: FeatureDiff[]; mentions: string[] } {
+export function compareFeatures(current: string[], said: string[], lockinYears: number, range?: LoanRange): { differ: FeatureDiff[]; mentions: string[] } {
     const differ: FeatureDiff[] = [], mentions: string[] = []
     const one = (f: string) => { const t = topicsOf(f); return t.length === 1 ? t[0] : null }
     const agree = (x: string, y: string) => {
@@ -259,9 +269,26 @@ export function compareFeatures(current: string[], said: string[], lockinYears: 
         const topic = one(c)
         if (!topic || !['conversion', 'waiver due to sale', 'prepayment'].includes(topic)) continue
         const same = stated.filter(f => one(f) === topic)
-        if (same.length && !same.some(f => agree(c, f))) differ.push({ from: c, to: same[0] })
+        const agreed = same.find(f => agree(c, f))
+        if (same.length && !agreed) { differ.push({ from: c, to: same[0] }); continue }
+        // Same feature, but only above a loan size. Our step may be below it, or straddle it.
+        const t = agreed ? loanThreshold(agreed) : null
+        if (!t || !range || range.min >= t || loanThreshold(c)) continue
+        // Judged by the package's minimum loan (product decision 2026-11-26): below the limit = not offered.
+        differ.push({ from: c, to: '', reason: `The banker says this is only for loans above ${money(t)}, and this package starts at ${money(range.min)}`, removeByDefault: true })
     }
     return { differ, mentions }
+}
+
+/** The admin's own wording. A question about a line they rewrote or deleted is settled by that. */
+export function setFeatures(p: Proposal, features: string[]): Proposal {
+    if (!p.proposed) return p
+    const proposed = { ...p.proposed, features: features.map(f => f.trim()).filter(Boolean) }
+    const has = (f: string) => proposed.features.includes(f)
+    const featureDiffs = p.featureDiffs.filter(d => has(d.from) || (d.to ? has(d.to) : p.proposed!.features.includes(d.from) === has(d.from)))
+    const diffs = diffPackages(p.current, proposed, p.item)
+    const kind = p.current ? (diffs.some(x => x.state === 'changed') ? 'change' as const : 'same' as const) : p.kind
+    return { ...p, proposed, diffs, kind, featureDiffs }
 }
 
 /** "Use banker's" for one difference, on every proposal that has it. */
@@ -269,7 +296,14 @@ export function applyFeatureChoice(ps: Proposal[], d: FeatureDiff, useBanker: bo
     return ps.map(p => {
         if (!p.proposed || !p.featureDiffs.some(x => x.from === d.from && x.to === d.to)) return p
         const [out, into] = useBanker ? [d.from, d.to] : [d.to, d.from]
-        const proposed = { ...p.proposed, features: p.proposed.features.map(f => f === out ? into : f) }
+        const has = (f: string) => p.proposed!.features.includes(f)
+        const back = (list: string[]) => {
+            // A restored feature goes back where it was.
+            const at = (p.current?.features ?? []).indexOf(into)
+            return at < 0 ? [...list, into] : [...list.slice(0, at), into, ...list.slice(at)]
+        }
+        const features = has(out) ? p.proposed.features.map(f => f === out ? into : f) : has(into) || !into ? p.proposed.features : back(p.proposed.features)
+        const proposed = { ...p.proposed, features: features.filter(Boolean) }
         const diffs = diffPackages(p.current, proposed, p.item)
         const kind = p.current ? (diffs.some(x => x.state === 'changed') ? 'change' as const : 'same' as const) : p.kind
         return { ...p, proposed, diffs, kind }
@@ -324,8 +358,8 @@ export function diffPackages(a: MortgagePackage | null, b: MortgagePackage, item
     const na = new Set(a?.features.map(normFeature) ?? []), nb = new Set(b.features.map(normFeature))
     const gone = a?.features.filter(f => !nb.has(normFeature(f))) ?? []
     const added = b.features.filter(f => !na.has(normFeature(f)))
-    if (gone.length || added.length) out.push({ field: 'Features', from: gone.join('; ') || 'none', to: added.join('; ') || 'none', state: 'changed' })
-    else out.push({ field: 'Features', from: '', to: b.features.join('; ') || 'none', state: b.features.length ? 'kept' : 'missing' })
+    if (gone.length || added.length) out.push({ field: 'Features', from: gone.join('\n') || 'none', to: added.join('\n') || 'none', state: 'changed' })
+    else out.push({ field: 'Features', from: '', to: b.features.join('\n') || 'none', state: b.features.length ? 'kept' : 'missing' })
     return out
 }
 
@@ -371,8 +405,12 @@ function build(item: ReadItem, current: MortgagePackage | null, base: MortgagePa
     const red = (w: string) => { warnings.push(w); level = 'red' }
 
     // On a new step only features the whole product shares are safe to copy.
-    const baseFeatures = current ? current.features : ladder?.sharedFeatures ?? []
-    const feats = base ? compareFeatures(baseFeatures, item.features, item.lockin_years ?? base.lockin_years) : { differ: [], mentions: [] }
+    const baseFeatures = (current ?? base)?.features ?? []
+    const min = Number(current?.min_loan_size ?? item.min_loan ?? 0)
+    const sizes = (ladder?.steps ?? []).filter(p => restrictionMatches(item, p) && (!current || overlap(p.property_type, current.property_type))).map(p => Number(p.min_loan_size))
+    const above = sizes.filter(n => n > min)
+    const range: LoanRange = { min, max: above.length ? Math.min(...above) : null }
+    const feats = base ? compareFeatures(baseFeatures, item.features, item.lockin_years ?? base.lockin_years, range) : { differ: [], mentions: [] }
     const { schedule, keptYears } = mergeSchedule(base?.rate_schedule ?? [], item.rates)
     const tidy = (p: MortgagePackage): MortgagePackage => ({ ...p, first_year_rate: deriveFirstYearRate(p.rate_schedule) })
     const proposed = tidy({
@@ -432,10 +470,11 @@ function build(item: ReadItem, current: MortgagePackage | null, base: MortgagePa
     const changed = !current || diffs.some(d => d.state === 'changed')
     // Nothing changed, so there is nothing to decide: it only refreshes "last confirmed".
     const kind = !current ? 'new' : changed ? 'change' : 'same'
-    return {
+    const built: Proposal = {
         id, kind, level, item, current, proposed, ladderKey: ladder?.key ?? null, candidates: [], diffs, warnings: [...new Set(warnings)],
         featureDiffs: feats.differ, mentions: feats.mentions, accepted: level === 'green',
     }
+    return feats.differ.filter(d => d.removeByDefault).reduce((p, d) => applyFeatureChoice([p], d, true)[0], built)
 }
 
 const daysBetween = (a: string, b: string) => Math.abs(Date.parse(b) - Date.parse(a)) / 86_400_000

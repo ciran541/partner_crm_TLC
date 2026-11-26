@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MortgagePackage, RateScheduleEntry } from '@/lib/types/rates'
 import {
-    applyProposals, bankChanges, inventedRates, matchRead, compareFeatures, applyFeatureChoice, mergeSchedule, newWarnings,
+    applyProposals, bankChanges, inventedRates, matchRead, compareFeatures, applyFeatureChoice, setFeatures, mergeSchedule, newWarnings,
     normalizeRead, packageErrors, parseMinSize, phraseOf, unreadRateLines, type MatchContext,
 } from '../rateUpdate'
 
@@ -49,12 +49,12 @@ describe('one-line update', () => {
         expect(match(all, [line], { aliases: [alias] })[0].kind).toBe('change')
         expect(match(all, [line], { aliases: [{ ...alias, banker: 'Other' }] })[0].kind).toBe('ask')
     })
-    it('adds a middle step, copying only what the whole product shares', () => {
+    it('adds a middle step, copying from the nearest loan size', () => {
         const ps = flexi()
         ps[1].features = [...ps[1].features, 'Only on the 1m step']
         const [p] = match(ps, [raw({ mins: [{ property_type: null, min: '800k' }], rates: yr(1.94, 1, 2, 3) })])
         expect(p).toMatchObject({ kind: 'new', level: 'amber', accepted: false })
-        expect(p.proposed).toMatchObject({ min_loan_size: 800000, lockin_years: 3, features: ['One free conversion after 12 months'] })
+        expect(p.proposed).toMatchObject({ min_loan_size: 800000, lockin_years: 3, features: ['One free conversion after 12 months', 'Only on the 1m step'] })
         expect(applyProposals(ps, [{ ...p, accepted: true }])).toHaveLength(3)
     })
     it('warns, but does not block, when a smaller loan becomes cheaper', () => {
@@ -197,6 +197,39 @@ describe('features', () => {
     it('a brand new product takes the stated features, without cash', () => {
         const [p] = match([], [raw({ lockin_years: 3, rates: yr(1.9, 1, 2, 3), features: ['Free conversion after 12 months', 'Cash rebate $2,000'] })])
         expect(p.proposed!.features).toEqual(['Free conversion after 12 months'])
+    })
+})
+
+describe('features limited to a loan size (Maybank "> $400k")', () => {
+    const fc = 'One free conversion after 24 months'
+    const said = ['Free conversion after 24 months (loan sizes > $400k)']
+    it('a package starting above it is unchanged', () => {
+        expect(compareFeatures([fc], said, 2, { min: 800000, max: null }).differ).toEqual([])
+    })
+    it('a package starting below it loses the feature, ready to be switched back', () => {
+        expect(compareFeatures([fc], said, 2, { min: 200000, max: 800000 }).differ).toEqual([{ from: fc, to: '', removeByDefault: true, reason: 'The banker says this is only for loans above 400k, and this package starts at 200k' }])
+    })
+    it('works through matching: 200k loses it by default, 800k keeps it, Keep HUB puts it back', () => {
+        const ps = [pkg({ id: 'a', min_loan_size: 200000, lockin_years: 2, rate_schedule: [...f(2.3, 1, 2), ta('1M SORA', 1.5)], features: [fc, 'Credit card needed'] }),
+            pkg({ id: 'b', min_loan_size: 800000, lockin_years: 2, rate_schedule: [...f(2.15, 1, 2), ta('1M SORA', 1.5)], features: [fc] })]
+        const two = (min: string, r: number) => raw({ fixed_years: 2, lockin_years: 2, mins: [{ property_type: null, min }], rates: yr(r, 1, 2), features: said })
+        const out = match(ps, [two('200k', 1.95), two('800k', 1.85)])
+        expect(out.map(p => p.proposed!.features)).toEqual([['Credit card needed'], [fc]])
+        expect(out.map(p => p.accepted)).toEqual([true, true])
+        expect(applyFeatureChoice(out, out[0].featureDiffs[0], false)[0].proposed!.features).toEqual([fc, 'Credit card needed'])
+    })
+})
+
+describe('editing features on the compare card', () => {
+    it('rewording, removing and adding update the change, and settle the question on that line', () => {
+        const [p] = match(flexi(), [raw({ rates: yr(1.95, 1, 2, 3), features: ['Free conversion after 24 months'] })])
+        expect(p.kind).toBe('same')
+        expect(p.featureDiffs).toHaveLength(1)
+        const edited = setFeatures(p, ['Free conversion after 18 months', '  ', 'Cash back on salary credit'])
+        expect(edited.proposed!.features).toEqual(['Free conversion after 18 months', 'Cash back on salary credit'])
+        expect(edited.kind).toBe('change')
+        expect(edited.featureDiffs).toEqual([])
+        expect(setFeatures(edited, flexi()[0].features).kind).toBe('same')
     })
 })
 

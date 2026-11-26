@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, History, RotateCcw, Save, Table2, Trash2, Wand2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, History, RotateCcw, Save, Table2, Trash2, Wand2 } from 'lucide-react'
 import InlineAlert from '@/components/shared/InlineAlert'
 import LoadFailed from '@/components/shared/LoadFailed'
 import Modal from '@/components/shared/Modal'
@@ -13,9 +13,7 @@ import RatePackageEditorModal from './RatePackageEditorModal'
 import InsuranceBankDropdown from '@/components/insurance/BankDropdown'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { isExpired } from '@/lib/insurance/rateFilters'
-import { buildLadders, money } from '@/lib/insurance/rateLadders'
-import { bankChanges, ladderTitle, newWarnings, packageErrors, packageLabel, type BankChange, type RateAlias, type RecentSource } from '@/lib/insurance/rateUpdate'
-import { formatRateEntry } from '@/lib/insurance/rateSchedule'
+import { bankChanges, newWarnings, packageErrors, packageLabel, type BankChange, type RateAlias, type RecentSource } from '@/lib/insurance/rateUpdate'
 import type { RateSource } from '@/lib/insurance/rateMaster'
 import type { MortgagePackage, MortgagePackageInput } from '@/lib/types/rates'
 
@@ -38,7 +36,8 @@ export default function RateDesk() {
     const [note, setNote] = useState('')
     const [editing, setEditing] = useState<MortgagePackage | null>(null)
     const [adding, setAdding] = useState(false)
-    const [reviewing, setReviewing] = useState(false)
+    // Where the review was opened from, so Back returns there with nothing lost.
+    const [reviewing, setReviewing] = useState<Tab | null>(null)
     const [restoring, setRestoring] = useState<Version | null>(null)
     const [busy, setBusy] = useState(false)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
@@ -88,7 +87,6 @@ export default function RateDesk() {
         }).sort((a, b) => a.name.localeCompare(b.name))
     }, [overview, today])
 
-    const bankers = useMemo(() => [...new Set((data?.versions ?? []).flatMap(v => v.source?.banker ? [v.source.banker] : []))], [data])
     const errors = useMemo(() => {
         const touched = new Set(changes.filter(c => c.type === 'added' || c.type === 'changed').map(c => c.package_id))
         return work.filter(p => touched.has(p.id)).flatMap(p => packageErrors(p).map(e => `${packageLabel(p)}: ${e}`))
@@ -112,7 +110,7 @@ export default function RateDesk() {
         await call('/api/admin/rates/bank', 'PUT', { bank, stamp: data!.stamp, packages: work, summary: parts.join(', '), source: pending?.source, aliases: pending?.aliases })
         // A note found in the message is saved with it.
         if (note.trim() !== data!.note) await call('/api/admin/rates/bank', 'PATCH', { bank, note })
-        setReviewing(false); setTab('packages')
+        setReviewing(null); setTab('packages')
         await Promise.all([loadBank(bank), loadOverview()])
         setAlert({ type: 'success', message: `${bank} published: ${parts.join(', ')}. You can undo this in History.` })
     })
@@ -134,6 +132,13 @@ export default function RateDesk() {
         await call('/api/admin/rates/bank', 'PATCH', { forgetAlias: id })
         setData(d => d && { ...d, aliases: d.aliases.filter(a => a.id !== id) })
     })
+
+    const back = () => {
+        // From an update: back to the comparison, which still has your ticks.
+        if (reviewing === 'update') { setWork(data!.packages); setPending(null); setNote(data!.note) }
+        setReviewing(null); setAlert(null)
+    }
+    const discard = () => { setWork(data!.packages); setPending(null); setNote(data!.note) }
 
     const fromEditor = async (input: MortgagePackageInput) => {
         const base = editing ?? { id: crypto.randomUUID(), first_year_rate: null, last_updated: today, confirmed_on: today }
@@ -163,6 +168,12 @@ export default function RateDesk() {
 
             {bank && (failed ? <LoadFailed message={`Couldn't load ${bank}.`} onRetry={() => loadBank(bank)} /> : !data ? <Spinner size="sm" color="#03a9e7" label={`Loading ${bank}…`} /> : (
                 <>
+                    {reviewing && (
+                        <ReviewPage bank={bank} before={data.packages} after={work} changes={changes} today={today} errors={errors} warnings={warnings}
+                            note={note.trim() !== data.note ? note.trim() || 'Removed' : null} busy={busy}
+                            backLabel={reviewing === 'update' ? 'Back to comparison' : 'Back to editing'} onBack={back} onPublish={publish} />
+                    )}
+                    <div className={reviewing ? 'hidden' : ''}>
                     <div className="flex gap-1 mb-4 border-b border-slate-200">
                         {([['packages', 'Packages', Table2], ['update', 'Update from banker', Wand2], ['history', 'History', History]] as const).map(([k, label, Icon]) => (
                             <button key={k} type="button" onClick={() => setTab(k)} className={`px-4 py-2.5 text-sm font-semibold inline-flex items-center gap-1.5 border-b-2 -mb-px ${tab === k ? 'border-[#03a9e7] text-[#03a9e7]' : 'border-transparent text-slate-500'}`}><Icon size={15} /> {label}</button>
@@ -186,15 +197,24 @@ export default function RateDesk() {
                         </div>
                     )}
 
-                    {tab === 'update' && (dirty ? (
-                        <p className="bg-white rounded-2xl border border-slate-200 p-5 text-sm text-slate-600">Publish or discard your current changes first, so the message is compared with what is live.</p>
-                    ) : (
-                        <SmartUpdate key={data.stamp} bank={bank} packages={data.packages} aliases={data.aliases} recent={data.recent} bankers={bankers} today={today}
+                    {tab === 'update' && dirty && !reviewing && (
+                        <div className="bg-white rounded-2xl border border-slate-200 p-5 text-sm text-slate-600">
+                            <p>You have {changes.length} unpublished change{changes.length === 1 ? '' : 's'} in Packages. Publish or discard them first, so the message is compared with what agents see now.</p>
+                            <div className="flex gap-3 mt-3">
+                                <button type="button" onClick={discard} className="btn-ghost px-4 py-2.5 text-sm border border-slate-200">Discard them</button>
+                                <button type="button" onClick={() => setReviewing('packages')} className="btn-primary px-5 py-2.5 text-sm">Review and publish them</button>
+                            </div>
+                        </div>
+                    )}
+                    {/* Kept mounted, so going back from the review keeps every tick and answer. */}
+                    <div className={tab === 'update' && (!dirty || reviewing) ? '' : 'hidden'}>
+                        <SmartUpdate key={data.stamp} bank={bank} packages={data.packages} aliases={data.aliases} recent={data.recent} today={today}
                             onApply={(next, source, aliases, notes) => {
-                                setWork(next); setPending({ source, aliases }); setTab('packages'); setReviewing(true)
+                                setWork(next); setPending({ source, aliases }); setReviewing('update'); setAlert(null)
                                 if (notes.length && !note.trim()) setNote(notes.join('\n'))
+                                window.scrollTo({ top: 0 })
                             }} />
-                    ))}
+                    </div>
 
                     {tab === 'history' && (
                         <div className="space-y-3">
@@ -226,42 +246,18 @@ export default function RateDesk() {
                             )}
                         </div>
                     )}
+                    </div>
                 </>
             ))}
 
-            {dirty && tab === 'packages' && (
+            {dirty && tab === 'packages' && !reviewing && (
                 <div className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 px-4 py-3 flex items-center justify-end gap-3">
                     <span className="text-sm text-slate-500">{changes.length} change{changes.length === 1 ? '' : 's'} not published</span>
-                    <button type="button" onClick={() => { setWork(data!.packages); setPending(null); setNote(data!.note) }} className="btn-ghost px-4 py-2.5 text-sm">Discard</button>
-                    <button type="button" onClick={() => setReviewing(true)} className="btn-primary px-5 py-2.5 text-sm inline-flex items-center gap-2"><Save size={15} /> Review and publish</button>
+                    <button type="button" onClick={discard} className="btn-ghost px-4 py-2.5 text-sm">Discard</button>
+                    <button type="button" onClick={() => { setReviewing('packages'); window.scrollTo({ top: 0 }) }} className="btn-primary px-5 py-2.5 text-sm inline-flex items-center gap-2"><Save size={15} /> Review and publish</button>
                 </div>
             )}
 
-            {reviewing && data && (
-                <Modal title={`Publish ${bank}`} size="xl" onClose={() => !busy && setReviewing(false)}>
-                    <div className="space-y-4">
-                        {alert?.type === 'error' && <InlineAlert type="error" message={alert.message} onDismiss={() => setAlert(null)} />}
-                        {errors.length > 0 && <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800"><p className="font-semibold">Fix before publishing</p>{errors.map(e => <p key={e}>{e}</p>)}</div>}
-                        {note.trim() !== data.note && <p className="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800 whitespace-pre-line">Bank note agents will see: {note.trim() || 'removed'}</p>}
-                        {warnings.length > 0 && <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800"><p className="font-semibold">Please check. You can still publish.</p>{warnings.map(w => <p key={w}>{w}</p>)}</div>}
-                        <div><p className="text-sm font-semibold text-[#052d4a] mb-1">What changes</p><ChangeList changes={changes} /></div>
-                        <div>
-                            <p className="text-sm font-semibold text-[#052d4a] mb-1">The full {bank} list after publishing ({work.length})</p>
-                            <div className="max-h-72 overflow-y-auto border border-slate-100 rounded-lg p-3 space-y-2 text-xs text-slate-600">
-                                {buildLadders(work, today).map(l => (
-                                    <div key={l.key}><p className="font-semibold text-slate-700">{ladderTitle(l)} · {l.category}</p>
-                                        {l.steps.map(s => <p key={s.id} className={changes.some(c => c.package_id === s.id && c.type !== 'confirmed') ? 'bg-sky-50 font-medium' : ''}>{money(Number(s.min_loan_size))}: {s.rate_schedule.map(formatRateEntry).join(' · ')}{s.status === 'draft' ? ' (draft)' : ''}</p>)}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="flex justify-end gap-3">
-                            <button type="button" disabled={busy} onClick={() => setReviewing(false)} className="btn-ghost px-4 py-2.5 text-sm">Keep editing</button>
-                            <button type="button" disabled={busy || errors.length > 0 || !dirty} onClick={publish} className="btn-primary px-5 py-2.5 text-sm disabled:opacity-40">{busy ? <Spinner size="sm" color="white" label="Publishing…" /> : 'Publish to agents'}</button>
-                        </div>
-                    </div>
-                </Modal>
-            )}
             {restoring && (
                 <Modal title="Undo this update?" onClose={() => !busy && setRestoring(null)}>
                     {alert?.type === 'error' && <InlineAlert type="error" message={alert.message} onDismiss={() => setAlert(null)} />}
@@ -277,6 +273,87 @@ export default function RateDesk() {
     )
 }
 
+/** Step 3: everything that will change, and the bank as agents will see it. Full page, not a popup. */
+function ReviewPage({ bank, before, after, changes, today, errors, warnings, note, busy, backLabel, onBack, onPublish }: {
+    bank: string; before: MortgagePackage[]; after: MortgagePackage[]; changes: BankChange[]; today: string
+    errors: string[]; warnings: string[]; note: string | null; busy: boolean; backLabel: string; onBack: () => void; onPublish: () => void
+}) {
+    const count = (t: BankChange['type']) => changes.filter(c => c.type === t).length
+    const real = changes.filter(c => c.type !== 'confirmed')
+    return (
+        <div className="space-y-5 pb-28">
+            <div>
+                <h2 className="text-lg font-bold text-[#052d4a]">Review {bank} before publishing</h2>
+                <div className="flex flex-wrap gap-2 mt-2 text-sm">
+                    {([['changed', 'changed', 'bg-sky-50 text-[#0277a8]'], ['added', 'new', 'bg-emerald-50 text-emerald-700'], ['removed', 'removed', 'bg-red-50 text-red-700'], ['confirmed', 'unchanged, confirmed today', 'bg-slate-100 text-slate-600']] as const)
+                        .filter(([t]) => count(t)).map(([t, label, cls]) => <span key={t} className={`px-3 py-1 rounded-full font-semibold ${cls}`}>{count(t)} {label}</span>)}
+                </div>
+            </div>
+
+            {errors.length > 0 && <Box tone="red" title="Fix these before publishing">{errors.map(e => <p key={e}>{e}</p>)}</Box>}
+            {warnings.length > 0 && <Box tone="amber" title="Please check. You can still publish.">{warnings.map(w => <p key={w}>{w}</p>)}</Box>}
+            {note && <Box tone="sky" title={`New note on all ${bank} packages`}><p className="whitespace-pre-line">{note}</p></Box>}
+
+            {real.length > 0 && (
+                <section className="space-y-3">
+                    <h3 className="font-bold text-[#052d4a]">What changes</h3>
+                    {real.map(c => <ChangeCard key={c.type + c.package_id} c={c} />)}
+                </section>
+            )}
+
+            <section className="space-y-3">
+                <h3 className="font-bold text-[#052d4a]">{bank} after publishing <span className="font-normal text-slate-500">({after.length} packages, changes in green)</span></h3>
+                <LadderGrid packages={after} original={before} today={today} />
+            </section>
+
+            <div className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 px-4 py-3 flex items-center justify-between gap-3">
+                <button type="button" disabled={busy} onClick={onBack} className="btn-ghost px-4 py-2.5 text-sm border border-slate-200 inline-flex items-center gap-1.5"><ArrowLeft size={15} /> {backLabel}</button>
+                <button type="button" disabled={busy || errors.length > 0 || !changes.length} onClick={onPublish} className="btn-primary px-6 py-2.5 text-sm disabled:opacity-40">{busy ? <Spinner size="sm" color="white" label="Publishing…" /> : 'Publish to agents'}</button>
+            </div>
+        </div>
+    )
+}
+
+function Box({ tone, title, children }: { tone: 'red' | 'amber' | 'sky'; title: string; children: React.ReactNode }) {
+    const cls = { red: 'bg-red-50 border-red-200 text-red-800', amber: 'bg-amber-50 border-amber-200 text-amber-900', sky: 'bg-sky-50 border-sky-200 text-sky-900' }[tone]
+    return <div className={`rounded-xl border p-4 text-sm space-y-1 ${cls}`}><p className="font-semibold flex items-center gap-1.5"><AlertTriangle size={15} /> {title}</p>{children}</div>
+}
+
+/** One changed package: only the rows that change, before and after. */
+function ChangeCard({ c }: { c: BankChange }) {
+    const pill = { added: ['New', 'bg-emerald-50 text-emerald-700'], changed: ['Changed', 'bg-sky-50 text-[#0277a8]'], removed: ['Removed', 'bg-red-50 text-red-700'], confirmed: ['', ''] }[c.type]
+    const rows = c.type === 'added' ? c.diffs.filter(d => d.to && d.to !== 'none') : c.diffs
+    return (
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100">
+                <span className="font-semibold text-sm text-[#052d4a] flex-1">{c.label}</span>
+                <span className={`text-[11px] font-semibold px-2 py-1 rounded-full ${pill[1]}`}>{pill[0]}</span>
+            </div>
+            {c.type === 'removed' ? <p className="px-4 py-3 text-sm text-red-700">Agents will no longer see this package.</p> : (
+                <table className="w-full text-sm table-fixed">
+                    {c.type === 'changed' && <thead><tr className="text-left text-[11px] uppercase text-slate-400"><th className="w-32 px-4 py-2" /><th className="px-3 py-2 font-semibold">Before</th><th className="px-3 py-2 font-semibold bg-slate-50">After</th></tr></thead>}
+                    <tbody className="align-top">
+                        {rows.map(d => (
+                            <tr key={d.field} className="border-t border-slate-100">
+                                <td className="px-4 py-1.5 text-xs text-slate-400 capitalize">{d.field}</td>
+                                {c.type === 'changed' && <td className="px-3 py-1.5 text-red-600 line-through"><Lines text={d.from} /></td>}
+                                <td className={`px-3 py-1.5 bg-slate-50 ${c.type === 'changed' ? 'text-emerald-700 font-bold' : 'text-slate-700'}`}><Lines text={d.to} /></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    )
+}
+
+/** Features arrive one per line: show them as a list. */
+function Lines({ text }: { text: string }) {
+    const lines = text.split('\n')
+    if (lines.length === 1) return <>{text}</>
+    return <ul className="space-y-1">{lines.map(l => <li key={l} className="flex gap-1.5"><span className="opacity-40">•</span>{l}</li>)}</ul>
+}
+
 function ChangeList({ changes }: { changes: BankChange[] }) {
     const confirmed = changes.filter(c => c.type === 'confirmed').length
     const colour = { added: 'text-emerald-700', changed: 'text-[#0277a8]', removed: 'text-red-700', confirmed: '' }
@@ -285,7 +362,7 @@ function ChangeList({ changes }: { changes: BankChange[] }) {
             {changes.filter(c => c.type !== 'confirmed').map(c => (
                 <div key={c.type + c.package_id}>
                     <p className={`font-semibold ${colour[c.type]}`}>{c.type === 'added' ? 'Add' : c.type === 'removed' ? 'Remove' : 'Change'}: {c.label}</p>
-                    {c.type === 'changed' && c.diffs.map(d => <p key={d.field} className="pl-3 text-slate-600">{d.field}: <span className="line-through text-slate-400">{d.from}</span> → {d.to}</p>)}
+                    {c.type === 'changed' && c.diffs.map(d => <p key={d.field} className="pl-3 text-slate-600">{d.field}: <span className="line-through text-slate-400">{d.from.replace(/\n/g, '; ')}</span> → {d.to.replace(/\n/g, '; ')}</p>)}
                 </div>
             ))}
             {confirmed > 0 && <p className="text-slate-500">{confirmed} unchanged, marked as confirmed</p>}

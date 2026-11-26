@@ -10,14 +10,16 @@ interface Props {
     packages: MortgagePackage[]
     original: MortgagePackage[]
     today: string
-    onChange: (p: MortgagePackage) => void
-    onEdit: (p: MortgagePackage) => void
-    onAddStep: (from: MortgagePackage) => void
-    onRemove: (p: MortgagePackage) => void
+    /** Without these the grid is read-only (the review page). */
+    onChange?: (p: MortgagePackage) => void
+    onEdit?: (p: MortgagePackage) => void
+    onAddStep?: (from: MortgagePackage) => void
+    onRemove?: (p: MortgagePackage) => void
 }
 
 /** The bank's rates as a sheet: products down, loan sizes across. Click a figure and type. */
 export default function LadderGrid({ packages, original, today, onChange, onEdit, onAddStep, onRemove }: Props) {
+    const editable = !!onChange
     const ladders = buildLadders(packages, today)
     const old = new Map(original.map(p => [p.id, p]))
 
@@ -34,9 +36,9 @@ export default function LadderGrid({ packages, original, today, onChange, onEdit
                     <section key={l.key} className="bg-white rounded-2xl border border-slate-200 p-4">
                         <div className="flex items-center justify-between gap-2 mb-2">
                             <h3 className="font-bold text-[#052d4a] text-sm">{ladderTitle(l)} <span className="font-normal text-slate-400">· {l.category}</span></h3>
-                            <button type="button" onClick={() => onAddStep(l.steps[l.steps.length - 1])} className="text-xs font-medium px-3 py-2 rounded-lg border border-slate-200 text-slate-600 hover:border-[#03a9e7] inline-flex items-center gap-1">
+                            {onAddStep && <button type="button" onClick={() => onAddStep(l.steps[l.steps.length - 1])} className="text-xs font-medium px-3 py-2 rounded-lg border border-slate-200 text-slate-600 hover:border-[#03a9e7] inline-flex items-center gap-1">
                                 <Plus size={13} /> Add loan size
-                            </button>
+                            </button>}
                         </div>
                         {checks.map(i => (
                             <p key={i.text + i.packageIds.join()} className="text-xs text-amber-800 bg-amber-50 rounded-lg px-2.5 py-1.5 mb-1.5 flex gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" /> {i.text}</p>
@@ -47,13 +49,13 @@ export default function LadderGrid({ packages, original, today, onChange, onEdit
                                     <tr>
                                         <th className="text-left text-[11px] font-semibold text-slate-400 p-2 w-24">Min loan</th>
                                         {l.steps.map(p => (
-                                            <th key={p.id} className={`p-2 text-left align-top border-l border-slate-100 min-w-[150px] ${flagged.has(p.id) ? 'bg-amber-50' : ''}`}>
+                                            <th key={p.id} className={`p-2 text-left align-top border-l border-slate-100 min-w-[190px] ${flagged.has(p.id) ? 'bg-amber-50' : ''}`}>
                                                 <div className="flex items-center justify-between gap-1">
                                                     <span className="font-bold text-[#052d4a]">{money(Number(p.min_loan_size))}</span>
-                                                    <span className="flex">
-                                                        <button type="button" aria-label="Edit everything" onClick={() => onEdit(p)} className="p-2 text-slate-400 hover:text-[#03a9e7]"><Pencil size={14} /></button>
-                                                        <button type="button" aria-label="Remove" onClick={() => onRemove(p)} className="p-2 text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
-                                                    </span>
+                                                    {editable && <span className="flex">
+                                                        <button type="button" aria-label="Edit everything" onClick={() => onEdit?.(p)} className="p-2 text-slate-400 hover:text-[#03a9e7]"><Pencil size={14} /></button>
+                                                        <button type="button" aria-label="Remove" onClick={() => onRemove?.(p)} className="p-2 text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
+                                                    </span>}
                                                 </div>
                                                 <p className="text-[11px] font-normal text-slate-500">
                                                     {p.property_type}
@@ -75,21 +77,35 @@ export default function LadderGrid({ packages, original, today, onChange, onEdit
                                                 const o = old.get(p.id)?.rate_schedule.find(x => r === 'TA' ? x.thereafter : !x.thereafter && x.year === r)
                                                 return (
                                                     <td key={p.id} className="p-1.5 border-l border-slate-100">
-                                                        {e ? (
+                                                        {e && !editable ? (
+                                                            <span className={`px-2 whitespace-nowrap ${o && value(o) !== value(e) ? 'font-bold text-emerald-700' : 'text-slate-700'}`}>{e.type === 'floating' ? `${e.reference} ` : ''}{value(e)?.toFixed(2)}%</span>
+                                                        ) : e ? (
                                                             <RateCell key={`${p.id}-${r}-${value(e)}`} entry={e} changed={!!o && value(o) !== value(e)}
-                                                                onSave={v => onChange({ ...p, rate_schedule: p.rate_schedule.map((x, i) => i === idx ? withValue(x, v) : x) })} />
+                                                                onSave={v => onChange?.({ ...p, rate_schedule: p.rate_schedule.map((x, i) => i === idx ? withValue(x, v) : x) })} />
                                                         ) : <span className="px-2 text-slate-300">–</span>}
                                                     </td>
                                                 )
                                             })}
                                         </tr>
                                     ))}
+                                    <tr className="border-t border-slate-100 align-top">
+                                        <td className="p-2 text-[11px] font-semibold text-slate-400">Features</td>
+                                        {l.steps.map(p => {
+                                            const was = old.get(p.id)?.features
+                                            return (
+                                                <td key={p.id} className="p-2 border-l border-slate-100">
+                                                    <ul className="space-y-1 text-xs">
+                                                        {p.features.map(f => <li key={f} className={`flex gap-1.5 ${was && !was.includes(f) ? 'text-emerald-700 font-bold' : 'text-slate-600'}`}><span className="text-slate-300">•</span>{f}</li>)}
+                                                        {was?.filter(f => !p.features.includes(f)).map(f => <li key={f} className="flex gap-1.5 text-red-600 line-through"><span className="text-slate-300">•</span>{f}</li>)}
+                                                        {!p.features.length && !was?.length && <li className="text-slate-300">None</li>}
+                                                    </ul>
+                                                </td>
+                                            )
+                                        })}
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-2">
-                            <span className="font-semibold">Same on every step:</span> {l.sharedFeatures.join(' · ') || 'nothing'}
-                        </p>
                         {l.issues.filter(i => i.level === 'info' && !i.packageIds.length).map(i => <p key={i.text} className="text-[11px] text-slate-400 mt-1">{i.text}</p>)}
                     </section>
                 )

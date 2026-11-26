@@ -90,8 +90,12 @@ export function buildLadders(packages: MortgagePackage[], today: string): RateLa
         for (const [suffix, steps] of split) out.push(toLadder(suffix ? `${key}|${suffix}` : key, suffix, steps, today))
     }
     return out.sort((a, b) =>
-        a.bank.localeCompare(b.bank) || a.category.localeCompare(b.category) || a.label.localeCompare(b.label))
+        a.bank.localeCompare(b.bank) || categoryOrder(a.category) - categoryOrder(b.category) || a.label.localeCompare(b.label))
 }
+
+/** Fixed, then Floating, then BUC: the order brokers read a bank's rates in. */
+const CATEGORY_ORDER = ['Fixed', 'Floating (Completed)', 'BUC']
+const categoryOrder = (c: string) => (CATEGORY_ORDER.indexOf(c) + 1) || CATEGORY_ORDER.length + 1
 
 function conversionLabel(suffix: string): string {
     if (suffix === '') return ''
