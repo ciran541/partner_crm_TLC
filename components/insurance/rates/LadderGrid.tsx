@@ -25,8 +25,22 @@ interface Props {
 export default function LadderGrid(props: Props) {
     const ladders = buildLadders(props.packages, props.today)
     if (!ladders.length) return <p className="py-12 text-center text-sm text-slate-400">No packages for this bank yet.</p>
-    return <div className="space-y-4">{ladders.map(l => <LadderCard key={l.key} l={l} {...props} />)}</div>
+    return (
+        <div className="space-y-4">
+            {ladders.map((l, i) => (
+                <div key={l.key} className="space-y-4">
+                    {/* A heading where each category starts: Fixed, Floating, BUC / BTO. */}
+                    {l.category !== ladders[i - 1]?.category && (
+                        <h2 className={`text-xl font-bold text-[#052d4a] border-b-2 border-[#03a9e7] pb-1.5 ${i ? 'pt-4' : ''}`}>{CATEGORY_LABEL[l.category] ?? l.category}</h2>
+                    )}
+                    <LadderCard l={l} {...props} />
+                </div>
+            ))}
+        </div>
+    )
 }
+
+const CATEGORY_LABEL: Record<string, string> = { Fixed: 'Fixed', 'Floating (Completed)': 'Floating', BUC: 'BUC / BTO' }
 
 const day = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
 

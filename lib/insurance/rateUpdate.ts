@@ -22,6 +22,10 @@ export interface ReadItem {
     priority_min_loan: number | null
     restricted_to: string | null
     rates: RateScheduleEntry[]
+    /** Per rate, the line it is written on (text messages only); null = not given. */
+    rateLines?: (number | null)[]
+    /** Index of the package in the reply: rows split from one package (HDB / Private) share it. */
+    group?: number
     features: string[]
     lines: number[]                   // source lines (text messages only)
 }
@@ -49,18 +53,20 @@ const str = (v: unknown): string | null => typeof v === 'string' && v.trim() ? v
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : []
 const ints = (v: unknown) => arr(v).map(Number).filter(Number.isInteger)
 
-function toRates(v: unknown): RateScheduleEntry[] {
+function toRates(v: unknown): { rates: RateScheduleEntry[]; lines: (number | null)[] } {
     const out: RateScheduleEntry[] = []
+    const lines: (number | null)[] = []
+    const keep = (e: RateScheduleEntry, x: Record<string, unknown>) => { out.push(e); const l = num(x?.line); lines.push(l != null && Number.isInteger(l) ? l : null) }
     for (const x of arr(v) as Record<string, unknown>[]) {
         const rate = num(x?.rate), spread = num(x?.spread), ref = str(x?.reference)
         const entry: RateScheduleEntry = ref || spread != null
             ? { type: 'floating', ...(ref ? { reference: cleanReference(ref) } : {}), ...(spread != null ? { spread: Math.abs(spread), ...(spread < 0 ? { spreadSign: '-' as const } : {}) } : {}) }
             : { type: 'fixed', ...(rate != null ? { rate } : {}) }
-        if (x?.thereafter === true) { out.push({ ...entry, thereafter: true }); continue }
+        if (x?.thereafter === true) { keep({ ...entry, thereafter: true }, x); continue }
         const year = num(x?.year)
-        if (year != null && year >= 1 && year <= 10) out.push({ ...entry, year })
+        if (year != null && year >= 1 && year <= 10) keep({ ...entry, year }, x)
     }
-    return out
+    return { rates: out, lines }
 }
 
 /** The model's reply → a clean RateRead. Never fills in anything that wasn't stated. */
@@ -68,9 +74,10 @@ export function normalizeRead(raw: unknown): RateRead | null {
     if (!raw || typeof raw !== 'object') return null
     const o = raw as Record<string, unknown>
     if (!Array.isArray(o.items)) return null
-    const items: ReadItem[] = (o.items as Record<string, unknown>[]).flatMap(x => {
+    const items: ReadItem[] = (o.items as Record<string, unknown>[]).flatMap((x, group) => {
         const category = CATEGORIES.find(c => c === x?.category)
         if (!category) return []
+        const read = toRates(x.rates)
         const base: Omit<ReadItem, 'property_type' | 'min_loan'> = {
             action: x.action === 'remove' ? 'remove' : 'offer',
             name: str(x.name) ?? '',
@@ -80,7 +87,9 @@ export function normalizeRead(raw: unknown): RateRead | null {
             reference: str(x.reference) ? cleanReference(String(x.reference)) : null,
             priority_min_loan: parseMinSize(x.priority_min),
             restricted_to: str(x.restricted_to),
-            rates: toRates(x.rates),
+            rates: read.rates,
+            rateLines: read.lines,
+            group,
             features: arr(x.features).map(f => String(f).trim()).filter(Boolean),
             lines: ints(x.lines),
         }
@@ -89,6 +98,7 @@ export function normalizeRead(raw: unknown): RateRead | null {
         return (mins.length ? mins : [{}]).map(m => ({
             ...base,
             rates: base.rates.map(r => ({ ...r })),
+            rateLines: [...read.lines],
             property_type: PROPERTY_TYPES.find(p => p === m?.property_type) ?? null,
             min_loan: parseMinSize(m?.min),
         }))
@@ -471,7 +481,11 @@ function build(item: ReadItem, current: MortgagePackage | null, base: MortgagePa
     }
     if (keptYears.some(y => item.rates.some(r => (r.year ?? 0) > y))) amber(`Year ${keptYears.join(', ')} not stated: kept from the master`)
     if (ctx.text != null) {
-        const invented = inventedRates(ctx.text, item)
+        const wrong = rateLineErrors(ctx.text, item)
+        for (const w of wrong) red(w)
+        // Rates with no line of their own fall back to "somewhere in this package's lines".
+        const uncited = { ...item, rates: item.rates.filter((_, i) => item.rateLines?.[i] == null) }
+        const invented = inventedRates(ctx.text, uncited)
         if (invented.length) red(`Not found in the message: ${invented.map(n => `${n}%`).join(', ')}`)
     }
     if (current && current.lockin_years !== proposed.lockin_years) amber(`Lock-in changes: ${current.lockin_years}Y to ${proposed.lockin_years}Y`)
@@ -530,8 +544,8 @@ export function matchRead(ctx: MatchContext): Proposal[] {
     })
     flagDuplicates(out)
     flagCopiedColumns(out)
-    if (ctx.fullList) out.push(...unmentioned(ctx, out))
-    return out
+    if (ctx.text != null) flagSharedLines(out, ctx.text)
+    return withRemovals(ctx, out)
 }
 
 /**
@@ -556,6 +570,47 @@ export function flagCopiedColumns(ps: Proposal[]) {
     }
 }
 
+const yearLabel = (e: RateScheduleEntry) => e.thereafter ? 'Thereafter' : `Year ${e.year}`
+
+/** Each rate must be written on the line the reader says it came from. Checked by code, not AI. */
+export function rateLineErrors(text: string, item: ReadItem): string[] {
+    const lines = text.split(/\r?\n/)
+    const out: string[] = []
+    item.rates.forEach((e, i) => {
+        const n = item.rateLines?.[i], v = rateOf(e)
+        if (n == null || v == null) return
+        const line = lines[n - 1]
+        if (line == null || !numbersIn(line).has(v)) out.push(`${yearLabel(e)}: ${v}% is not on line ${n}${line ? ` ("${line.trim().slice(0, 60)}")` : ''}`)
+    })
+    return out
+}
+
+/**
+ * One line can't hold the yearly rate of two different loan sizes (the 2026-11-27 Maybank
+ * misread put 200k's "1.95%" on 800k too). Rows split from one package (HDB 200k / Private
+ * 300k) share lines legitimately; a shared thereafter line is common and allowed.
+ */
+export function flagSharedLines(ps: Proposal[], text: string) {
+    const owners = new Map<number, Set<string>>()
+    const key = (i: ReadItem) => `${i.group ?? ''}`
+    for (const p of ps) {
+        const i = p.item
+        if (!i || i.action !== 'offer') continue
+        i.rates.forEach((e, n) => { const l = i.rateLines?.[n]; if (l != null && !e.thereafter) owners.set(l, (owners.get(l) ?? new Set()).add(key(i))) })
+    }
+    const lines = text.split(/\r?\n/)
+    for (const p of ps) {
+        const i = p.item
+        if (!i) continue
+        const shared = [...new Set(i.rates.flatMap((e, n) => { const l = i.rateLines?.[n]; return l != null && !e.thereafter && (owners.get(l)?.size ?? 0) > 1 ? [l] : [] }))]
+        if (!shared.length) continue
+        p.accepted = false
+        p.level = 'red'
+        const w = `Line ${shared[0]} ("${(lines[shared[0] - 1] ?? '').trim().slice(0, 50)}") was read for more than one loan size. Correct the rates with the pencil, or read again`
+        if (!p.warnings.includes(w)) p.warnings.push(w)
+    }
+}
+
 /** Two lines of one message landing on the same package: neither can be trusted alone. */
 export function flagDuplicates(ps: Proposal[]) {
     const seen = new Map<string, Proposal[]>()
@@ -566,6 +621,58 @@ export function flagDuplicates(ps: Proposal[]) {
         const w = 'Two parts of the message match this package: choose one'
         if (!p.warnings.includes(w)) p.warnings.push(w)
     }
+}
+
+/** Adds the removal suggestions: replaced packages always, unmentioned ones for a full list. */
+export function withRemovals(ctx: MatchContext, ps: Proposal[]): Proposal[] {
+    const kept = ps.filter(p => !p.id.startsWith('gone-'))
+    const out = [...kept, ...replacedBySmaller(ctx, kept)]
+    return ctx.fullList ? [...out, ...unmentioned(ctx, out)] : out
+}
+
+/** Same terms, however worded: every topic on one side is on the other, with the same figures. */
+export function sameFeatures(a: string[], b: string[], lockinYears: number): boolean {
+    const topics = (fs: string[]) => new Set(fs.filter(f => !isCash(f)).flatMap(topicsOf))
+    const ta = topics(a), tb = topics(b)
+    if (ta.size !== tb.size || [...ta].some(t => !tb.has(t))) return false
+    return !compareFeatures(a, b, lockinYears).differ.length && !compareFeatures(b, a, lockinYears).differ.length
+}
+
+const firstRate = (p: MortgagePackage) => p.rate_schedule.find(e => !e.thereafter)
+const shortRate = (e: RateScheduleEntry) => formatRateEntry(e).split(': ').slice(1).join(': ').replace(' Fixed', '')
+
+/**
+ * A package in the message with a smaller minimum loan and an equal or better rate, for the
+ * same product, features and client type, makes an old bigger-loan package pointless: no
+ * client would take the bigger one. Suggested for removal, pre-ticked (agreed 2026-11-27).
+ * Only a package the message gives can replace one; two old equal steps are left alone.
+ */
+export function replacedBySmaller(ctx: MatchContext, ps: Proposal[]): Proposal[] {
+    const touched = new Set(ps.flatMap(p => p.current ? [p.current.id] : []))
+    const fresh = ps.filter(p => p.proposed && p.item && p.ladderKey && p.kind !== 'remove' && p.level !== 'red')
+    const out: Proposal[] = []
+    for (const l of buildLadders(ctx.packages, ctx.today)) {
+        for (const old of l.steps) {
+            if (touched.has(old.id)) continue
+            const by = fresh.filter(p => p.ladderKey === l.key).map(p => p.proposed!).filter(n => {
+                const a = firstRate(n), b = firstRate(old)
+                if (!a || !b || a.type !== b.type || (a.type === 'floating' && a.reference !== b.reference)) return false
+                const va = a.type === 'fixed' ? a.rate : a.spread, vb = b.type === 'fixed' ? b.rate : b.spread
+                return Number(n.min_loan_size) < Number(old.min_loan_size)
+                    && restrictedTo(n) === restrictedTo(old) && overlap(n.property_type, old.property_type)
+                    && va != null && vb != null && va <= vb
+                    && sameFeatures(n.features, old.features, old.lockin_years)
+            }).sort((x, y) => Number(x.min_loan_size) - Number(y.min_loan_size))[0]
+            if (!by) continue
+            const e = firstRate(by)!
+            out.push({
+                id: `gone-${old.id}`, kind: 'remove', level: 'amber', item: null, current: old, proposed: null, ladderKey: l.key,
+                candidates: [], diffs: [], featureDiffs: [], mentions: [], accepted: true,
+                warnings: [`Replaced by ${money(Number(by.min_loan_size))} at ${shortRate(e)}: same product and features, smaller loan size`],
+            })
+        }
+    }
+    return out
 }
 
 /** Full list only: packages in the covered categories that weren't mentioned. Never pre-ticked. */

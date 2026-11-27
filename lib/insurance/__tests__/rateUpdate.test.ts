@@ -23,7 +23,7 @@ const read = (items: object[], o: object = {}) => normalizeRead({ scope: 'partia
 const match = (packages: MortgagePackage[], items: object[], o: Partial<MatchContext> = {}, r: object = {}) =>
     matchRead({ bank: 'B', packages, read: read(items, r), text: null, banker: 'A', today: '2026-11-25', fullList: false, newId: () => `new${++n}`, ...o })
 
-const flexi = () => [pkg({ id: 'f500', rate_schedule: [...f(1.95, 1, 2, 3), ta('3M SORA', 1)] }), pkg({ id: 'f1m', min_loan_size: 1e6, rate_schedule: [...f(1.93, 1, 2, 3), ta('3M SORA', 1)] })]
+const flexi = () => [pkg({ id: 'f500', rate_schedule: [...f(1.95, 1, 2, 3), ta('3M SORA', 1)] }), pkg({ id: 'f1m', min_loan_size: 1e6, rate_schedule: [...f(1.93, 1, 2, 3), ta('3M SORA', 1)], features: ['One free conversion after 12 months', 'Partial repayment allowed'] })]
 const standard = () => flexi().map(p => ({ ...p, id: `s${p.id}`, features: ['One free conversion after 36 months'] }))
 
 describe('one-line update', () => {
@@ -54,7 +54,7 @@ describe('one-line update', () => {
         ps[1].features = [...ps[1].features, 'Only on the 1m step']
         const [p] = match(ps, [raw({ mins: [{ property_type: null, min: '800k' }], rates: yr(1.94, 1, 2, 3) })])
         expect(p).toMatchObject({ kind: 'new', level: 'amber', accepted: false })
-        expect(p.proposed).toMatchObject({ min_loan_size: 800000, lockin_years: 3, features: ['One free conversion after 12 months', 'Only on the 1m step'] })
+        expect(p.proposed).toMatchObject({ min_loan_size: 800000, lockin_years: 3, features: ['One free conversion after 12 months', 'Partial repayment allowed', 'Only on the 1m step'] })
         expect(applyProposals(ps, [{ ...p, accepted: true }])).toHaveLength(3)
     })
     it('warns, but does not block, when a smaller loan becomes cheaper', () => {
@@ -148,6 +148,74 @@ describe('correcting a misread rate', () => {
         const [p] = match(flexi(), [raw({ rates: [{ year: 1, rate: null, reference: null, spread: null, thereafter: false }, ...yr(1.9, 2, 3)] })])
         expect(p.level).toBe('red')
         expect(setRate(p, 1, { type: 'fixed', rate: 1.9 }).level).toBe('amber')
+    })
+})
+
+describe('replaced by a smaller loan size (boss, 2026-11-27)', () => {
+    const two = (id: string, min: number, r: number, features = ['Free conversion after 12 months', 'Waiver of penalty due to sale']) =>
+        pkg({ id, min_loan_size: min, lockin_years: 2, package_name: 'DBS - Fixed Rates 2 Years Lock-In', rate_schedule: [...f(r, 1, 2), ta('3M SORA', 1)], features })
+    const said = (min: string, r: number, o: object = {}) => raw({ fixed_years: 2, lockin_years: 2, mins: [{ property_type: null, min }], rates: yr(r, 1, 2), ...o })
+    const removed = (out: ReturnType<typeof match>) => out.filter(p => p.kind === 'remove').map(p => [p.current!.id, p.accepted, p.warnings[0]])
+    it('removes 800k when the new 500k is as good, pre-ticked with the reason', () => {
+        const out = match([two('a', 200000, 1.8), two('b', 500000, 1.78), two('c', 800000, 1.95)], [said('200k', 2), said('500k', 1.95)])
+        expect(removed(out)).toEqual([['c', true, 'Replaced by 500k at 1.95%: same product and features, smaller loan size']])
+    })
+    it('also when the bigger loan is dearer, but not when it is cheaper', () => {
+        expect(removed(match([two('b', 500000, 1.78), two('c', 800000, 2.1)], [said('500k', 1.95)]))).toHaveLength(1)
+        expect(removed(match([two('b', 500000, 1.78), two('c', 800000, 1.9)], [said('500k', 1.95)]))).toEqual([])
+    })
+    it('not when features differ (rewording is fine)', () => {
+        expect(removed(match([two('b', 500000, 1.78), two('c', 800000, 1.95, ['Free conversion after 12 months'])], [said('500k', 1.95)]))).toEqual([])
+        expect(removed(match([two('b', 500000, 1.78), two('c', 800000, 1.95, ['1 free conversion after 12 months', 'Waiver due to sale'])], [said('500k', 1.95)]))).toHaveLength(1)
+    })
+    it('not across client types, products, or when only old packages are equal', () => {
+        expect(removed(match([two('b', 500000, 1.78), { ...two('c', 800000, 1.95), restricted_to: 'Premier' }], [said('500k', 1.95)]))).toEqual([])
+        expect(removed(match([two('b', 500000, 1.78), pkg({ id: 'c', min_loan_size: 800000 })], [said('500k', 1.7)]))).toEqual([])
+        expect(removed(match([two('b', 500000, 1.95), two('c', 800000, 1.95)], [said('200k', 2)]))).toEqual([])
+    })
+    it('takes precedence over "not mentioned" in a full list, and can be unticked', () => {
+        const out = match([two('b', 500000, 1.78), two('c', 800000, 1.95)], [said('500k', 1.95)], { fullList: true })
+        expect(removed(out)).toEqual([['c', true, 'Replaced by 500k at 1.95%: same product and features, smaller loan size']])
+        expect(applyProposals([two('b', 500000, 1.78), two('c', 800000, 1.95)], out.map(p => p.kind === 'remove' ? { ...p, accepted: false } : p)).map(p => p.id)).toEqual(['b', 'c'])
+    })
+})
+
+describe('every rate cites its own line (Maybank text, 2026-11-27)', () => {
+    const text = [
+        '🎯 <200k to 799k>',                       // 1
+        'First *2* Years - *1.95%* [Fixed]',       // 2
+        'Thereafter - 1M SORA + 1.50%',            // 3
+        '🎯 <800k & Above>',                        // 4
+        'First *2* Years - *1.85%* [Fixed]',       // 5
+        'Thereafter - 1M SORA + 1.50%',            // 6
+    ].join('\n')
+    const hub = [pkg({ id: 'a', min_loan_size: 200000, lockin_years: 2, rate_schedule: [...f(2.3, 1, 2), ta('1M SORA', 1.5)] }),
+        pkg({ id: 'b', min_loan_size: 800000, lockin_years: 2, rate_schedule: [...f(2.15, 1, 2), ta('1M SORA', 1.5)] })]
+    const said = (min: string, r: number, line: number, ta = line + 1) => raw({ fixed_years: 2, lockin_years: 2, mins: [{ property_type: null, min }], lines: [1, 2, 3, 4, 5, 6],
+        rates: [{ year: 1, rate: r, line }, { year: 2, rate: r, line }, { thereafter: true, reference: '1M SORA', spread: 1.5, line: ta }] })
+    const run = (items: object[]) => match(hub, items, { text })
+    it('a correct read passes', () => {
+        expect(run([said('200k', 1.95, 2), said('800k', 1.85, 5)]).map(p => [p.level, p.accepted])).toEqual([['green', true], ['green', true]])
+    })
+    it('red when a rate is not on the line it cites', () => {
+        const [, p] = run([said('200k', 1.95, 2), said('800k', 1.95, 5)])
+        expect(p.level).toBe('red')
+        expect(p.warnings.join()).toContain('Year 1: 1.95% is not on line 5')
+    })
+    it('red for both when two loan sizes take their rate from one line', () => {
+        const out = run([said('200k', 1.95, 2), said('800k', 1.95, 2, 6)])
+        expect(out.map(p => p.level)).toEqual(['red', 'red'])
+        expect(out[1].warnings.join()).toContain('Line 2 (')
+    })
+    it('allowed: HDB / Private rows of one package, and a shared thereafter line', () => {
+        const both = raw({ fixed_years: 2, lockin_years: 2, mins: [{ property_type: 'HDB', min: '200K' }, { property_type: 'Private', min: '800K' }], rates: [{ year: 1, rate: 1.95, line: 2 }, { year: 2, rate: 1.95, line: 2 }] })
+        expect(run([both]).every(p => p.level !== 'red')).toBe(true)
+        expect(run([said('200k', 1.95, 2, 3), said('800k', 1.85, 5, 3)]).map(p => p.level)).toEqual(['green', 'green'])
+    })
+    it('a corrected rate makes the card usable again', () => {
+        const [, p] = run([said('200k', 1.95, 2), said('800k', 1.95, 5)])
+        const fixed = setRate(setRate(p, 1, { type: 'fixed', rate: 1.85 }), 2, { type: 'fixed', rate: 1.85 })
+        expect(fixed.level).toBe('amber')
     })
 })
 

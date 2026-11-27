@@ -3,11 +3,12 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, ArrowRight, FileUp, Pencil, Plus, Sparkles, X } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
+import LadderGrid from './LadderGrid'
 import { buildLadders, byCategoryAndLoan, money } from '@/lib/insurance/rateLadders'
 import { restrictedTo } from '@/lib/insurance/rateFilters'
 import { formatRateEntry } from '@/lib/insurance/rateSchedule'
 import {
-    applyFeatureChoice, applyProposals, setFeatures, setRate, flagDuplicates, isCash, ladderTitle, matchRead, phraseOf, resolveItem, unmentioned, unreadRateLines,
+    applyFeatureChoice, applyProposals, setFeatures, setRate, flagDuplicates, isCash, ladderTitle, matchRead, phraseOf, resolveItem, withRemovals, unreadRateLines,
     type FeatureDiff, type MatchContext, type Proposal, type RateAlias, type RateRead, type RecentSource,
 } from '@/lib/insurance/rateUpdate'
 import type { RateSource } from '@/lib/insurance/rateMaster'
@@ -36,6 +37,7 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
     const [state, setState] = useState<ReadState | null>(null)
     const [proposals, setProposals] = useState<Proposal[]>([])
     const [learned, setLearned] = useState<RateAlias[]>([])
+    const [openCats, setOpenCats] = useState<Set<string>>(new Set())
     const [remember, setRemember] = useState(true)
     const [seenUnread, setSeenUnread] = useState(false)
 
@@ -44,11 +46,12 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
         fullList: listType === 'full', newId: () => crypto.randomUUID(),
     })
 
-    const readMessage = async () => {
+    const readMessage = async (fresh = false) => {
         setBusy(true); setError(null)
         try {
             const form = new FormData()
             form.set('bank', bank)
+            if (fresh) form.set('fresh', '1')
             if (text.trim()) form.set('text', text.trim())
             files.forEach(f => form.append('file', f))
             const res = await fetch('/api/admin/rates/read', { method: 'POST', body: form })
@@ -74,7 +77,7 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
         const rest = proposals.filter(x => !x.id.startsWith('gone-'))
             .flatMap(x => same.includes(x) ? resolveItem(x.item!, ladder, ctx, x.id) : [x])
         flagDuplicates(rest)
-        setProposals(ctx.fullList ? [...rest, ...unmentioned(ctx, rest)] : rest)
+        setProposals(withRemovals(ctx, rest))
         if (key) setLearned(l => [...l.filter(a => a.phrase !== phrase), { banker: '', phrase, ladder_key: key }])
     }
     const skip = (p: Proposal) => setProposals(ps => ps.filter(x => x.id !== p.id))
@@ -90,6 +93,21 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
     const decide = proposals.filter(p => p.kind !== 'ask')
     const askGroups = [...proposals.filter(p => p.kind === 'ask' && p.item).reduce((m, p) => m.set(phraseOf(p.item!), [...(m.get(phraseOf(p.item!)) ?? []), p]), new Map<string, Proposal[]>()).values()]
         .map(g => [...g].sort((x, y) => (x.item!.min_loan ?? 0) - (y.item!.min_loan ?? 0)))
+    const catOf = (p: Proposal) => (p.proposed ?? p.current)?.category ?? p.item?.category
+    const cats = useMemo(() => {
+        const after = applyProposals(packages, proposals)
+        return CATEGORIES.map(([cat, label]) => {
+            const mine = proposals.filter(p => catOf(p) === cat)
+            const on = (k: Proposal['kind']) => mine.filter(p => p.kind === k && p.accepted && p.level !== 'red').length
+            return {
+                cat, label, touched: mine.length > 0,
+                now: packages.filter(p => p.category === cat).length,
+                after: after.filter(p => p.category === cat).length,
+                changed: on('change'), added: on('new'), removed: on('remove'),
+                open: mine.filter(p => p.kind === 'ask' || (!p.accepted && p.kind !== 'same')).length,
+            }
+        })
+    }, [packages, proposals])
     const asks = proposals.filter(p => p.kind === 'ask')
     const ticked = proposals.filter(p => p.accepted && p.kind !== 'ask' && p.level !== 'red')
     const waiting = proposals.filter(p => !p.accepted && p.kind !== 'ask')
@@ -126,7 +144,7 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
                     <input type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp" disabled={!!text.trim()} className="hidden" onChange={e => setFiles([...(e.target.files ?? [])])} />
                 </label>
                 {files.length > 0 && <span className="text-sm text-slate-600">{files.map(f => f.name).join(', ')} <button type="button" onClick={() => setFiles([])} className="ml-1 underline text-slate-400">remove</button></span>}
-                <button type="button" onClick={readMessage} disabled={busy || (!text.trim() && !files.length)} className="btn-primary ml-auto px-5 py-2.5 text-sm inline-flex items-center gap-2">
+                <button type="button" onClick={() => readMessage()} disabled={busy || (!text.trim() && !files.length)} className="btn-primary ml-auto px-5 py-2.5 text-sm inline-flex items-center gap-2">
                     {busy ? <Spinner size="sm" color="white" label="Reading…" /> : <><Sparkles size={15} /> Read and compare</>}
                 </button>
             </div>
@@ -141,6 +159,8 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
                 <button type="button" onClick={() => setState(null)} className="btn-ghost px-3 py-2 text-sm border border-slate-200">Back to message</button>
                 <span>{proposals.filter(p => p.kind === 'change').length} changed · {proposals.filter(p => p.kind === 'new').length} new · {proposals.filter(p => p.kind === 'same').length} unchanged · {asks.length} to answer</span>
                 {state.reused && <span className="text-slate-400">Already read before, so no AI cost</span>}
+                {error && <span className="w-full rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-700">{error}</span>}
+                <button type="button" disabled={busy} onClick={() => readMessage(true)} title="If the rates were read wrongly, read the message again with AI (a few cents)" className="ml-auto btn-ghost px-3 py-2 text-sm border border-slate-200 disabled:opacity-40">{busy ? 'Reading…' : 'Read again'}</button>
             </div>
             {state.read.scope === 'full' && listType === 'partial' && <Note>This looks like a full list. Go back and choose &ldquo;Full list&rdquo; to see packages it no longer mentions.</Note>}
             {listType === 'full' && state.read.scope !== 'full' && proposals.some(p => p.kind === 'remove' && !p.item) && <Note>This may not be a full list. Check before removing anything.</Note>}
@@ -156,15 +176,40 @@ export default function SmartUpdate({ bank, packages, aliases, recent, today, on
 
             {askGroups.map(group => <AskCard key={group[0].id} group={group} onAnswer={key => answer(group[0], key)} onSkip={() => group.forEach(skip)} />)}
 
-            {[...ladders.map(l => ({ key: l.key, title: ladderTitle(l) })), { key: null, title: 'New products' }].map(g => {
-                const group = sorted(decide.filter(p => p.ladderKey === g.key))
-                return group.length > 0 && (
-                    <section key={g.key ?? 'new'} className="space-y-3">
-                        <h3 className="font-bold text-[#052d4a] pt-2">{g.title}</h3>
-                        {group.map(p => <CompareCard key={p.id} p={p} text={state.text} onToggle={() => toggle(p)} onChoose={choose} onFeatures={f => editFeatures(p, f)} onRate={(y, e) => editRate(p, y, e)} />)}
-                    </section>
-                )
-            })}
+            <CategorySummary cats={cats} onJump={cat => {
+                // A collapsed category opens when you jump to it.
+                setOpenCats(o => new Set(o).add(cat))
+                // After it has opened, or the page grows mid-scroll and stops short.
+                setTimeout(() => document.getElementById(`cat-${cat}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+            }} />
+
+            {cats.map(c => (
+            <section key={c.cat} id={`cat-${c.cat}`} className="scroll-mt-4 space-y-4 pt-4">
+                <h2 className="text-xl font-bold text-[#052d4a] border-b-2 border-[#03a9e7] pb-1.5">{c.label}</h2>
+                {c.touched ? (
+                <div className="space-y-4">
+                    {[...ladders.filter(l => l.category === c.cat).map(l => ({ key: l.key as string | null, title: ladderTitle(l) })), { key: null, title: `New ${c.label} products` }].map(g => {
+                        const group = sorted(decide.filter(p => p.ladderKey === g.key && catOf(p) === c.cat))
+                        return group.length > 0 && (
+                            <section key={g.key ?? `new-${c.cat}`} className="space-y-3">
+                                <h3 className="font-bold text-[#052d4a] pt-2">{g.title}</h3>
+                                {group.map(p => <CompareCard key={p.id} p={p} text={state.text} onToggle={() => toggle(p)} onChoose={choose} onFeatures={f => editFeatures(p, f)} onRate={(y, e) => editRate(p, y, e)} />)}
+                            </section>
+                        )
+                    })}
+                </div>
+                ) : c.now > 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200">
+                    <button type="button" onClick={() => setOpenCats(o => { const n = new Set(o); if (n.has(c.cat)) n.delete(c.cat); else n.add(c.cat); return n })}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left">
+                        <span className="text-sm text-slate-500 flex-1">{c.now} package{c.now === 1 ? '' : 's'}, not in this message: kept as they are</span>
+                        <span className="text-sm font-medium text-[#0277a8]">{openCats.has(c.cat) ? 'Hide' : 'Show'}</span>
+                    </button>
+                    {openCats.has(c.cat) && <div className="p-3 pt-0"><LadderGrid packages={packages.filter(p => p.category === c.cat)} original={packages} today={today} /></div>}
+                </div>
+                ) : <p className="text-sm text-slate-400">No {c.label} packages for this bank.</p>}
+            </section>
+            ))}
             {cash.length > 0 && <Leftover title="Cash rewards in the message, not added to packages" items={cash} />}
             {state.read.ignored.length > 0 && <Leftover title="Not used: not a home loan package (e.g. commercial)" items={state.read.ignored.map(i => i.text)} />}
 
@@ -279,7 +324,7 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures, onRate }: { p: P
                     </tr>
                 </thead>
                 <tbody className="align-top">
-                    {rows.map(([label, a, b, y]) => {
+                    {rows.map(([label, a, b, y], row) => {
                         const diff = !!old && !!now && a !== b
                         const e = y !== undefined ? entry(y) : undefined
                         const editable = !!e && !!now && p.kind !== 'remove'
@@ -287,9 +332,14 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures, onRate }: { p: P
                             <tr key={label} className="border-t border-slate-100">
                                 <td className="px-4 py-1.5 text-slate-400 text-xs">{label}</td>
                                 <td className={`px-3 py-1.5 ${diff ? 'text-red-600 line-through' : 'text-slate-700'}`}>{a || (old ? '' : 'Not in HUB')}</td>
-                                <td className={`px-3 py-1.5 bg-slate-50 ${diff ? 'text-emerald-700 font-bold' : 'text-slate-700'}`}>
-                                    {editable ? <RateEdit entry={e!} text={b} onSave={v => onRate(y!, v)} /> : now ? b || 'None' : 'Removed'}
-                                </td>
+                                {now ? (
+                                    <td className={`px-3 py-1.5 bg-slate-50 ${diff ? 'text-emerald-700 font-bold' : 'text-slate-700'}`}>
+                                        {editable ? <RateEdit entry={e!} text={b} onSave={v => onRate(y!, v)} /> : b || 'None'}
+                                    </td>
+                                ) : row === 0 && (
+                                    // A removed package: one cell for the whole column, not "Removed" on every line.
+                                    <td rowSpan={rows.length + 1} className="px-3 py-1.5 bg-red-50/60 text-center align-middle font-semibold text-red-700">Removed: agents will no longer see it</td>
+                                )}
                             </tr>
                         )
                     })}
@@ -298,7 +348,7 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures, onRate }: { p: P
                         <td className="px-3 py-2">
                             <ul className="space-y-1">{oldFeatures.map(x => <li key={x} className={`flex gap-1.5 ${now && !newFeatures.includes(x) ? 'text-red-600 line-through' : 'text-slate-700'}`}><span className="text-slate-300">•</span>{x}</li>)}</ul>
                         </td>
-                        <td className="px-3 py-2 bg-slate-50">
+                        {now && <td className="px-3 py-2 bg-slate-50">
                             <ul className="space-y-1">{shown.map(x => {
                                 // A feature with a question shows the question in its place.
                                 const d = p.featureDiffs.find(q => q.from === x || q.to === x)
@@ -310,8 +360,7 @@ function CompareCard({ p, text, onToggle, onChoose, onFeatures, onRate }: { p: P
                                 <li key={x} className={`flex gap-1.5 ${old && !oldFeatures.includes(x) ? 'text-emerald-700 font-bold' : 'text-slate-700'}`}><span className="text-slate-300">•</span>{x}</li>)
                             })}</ul>
                             {now && p.kind !== 'remove' && <AddFeature onAdd={v => onFeatures([...newFeatures, v])} />}
-                            
-                        </td>
+                        </td>}
                     </tr>
                 </tbody>
             </table>
@@ -421,6 +470,36 @@ function Steps({ at }: { at: number }) {
 }
 
 /** Parts of the message that didn't become packages, so nothing disappears silently. */
+const CATEGORIES = [['Fixed', 'Fixed'], ['Floating (Completed)', 'Floating'], ['BUC', 'BUC / BTO']] as const
+
+/** What this message does to each category, from what is ticked right now. */
+function CategorySummary({ cats, onJump }: { cats: { cat: string; label: string; touched: boolean; now: number; after: number; changed: number; added: number; removed: number; open: number }[]; onJump: (cat: string) => void }) {
+    return (
+        <div className="grid gap-3 sm:grid-cols-3">
+            {cats.map(c => (
+                <button type="button" key={c.cat} onClick={() => onJump(c.cat)} title={`Go to ${c.label}`}
+                    className={`text-left rounded-2xl border p-4 transition-colors hover:border-[#03a9e7] ${c.touched ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-100'}`}>
+                    <p className="text-xs font-semibold uppercase text-slate-400">{c.label}</p>
+                    {c.touched ? (
+                        <>
+                            <p className="text-lg font-bold text-[#052d4a] mt-0.5">{c.now} now → {c.after} after</p>
+                            <p className="text-sm text-slate-600">
+                                {[c.changed && `${c.changed} changed`, c.added && `${c.added} new`, c.removed && `${c.removed} removed`].filter(Boolean).join(' · ') || 'Nothing ticked yet'}
+                            </p>
+                            {c.open > 0 && <p className="text-xs text-amber-700 mt-1">{c.open} still to check</p>}
+                        </>
+                    ) : (
+                        <>
+                            <p className="text-lg font-bold text-slate-500 mt-0.5">{c.now ? `${c.now} package${c.now === 1 ? '' : 's'}` : 'No packages'}</p>
+                            {c.now > 0 && <p className="text-sm text-slate-500">Not in this message: kept as they are</p>}
+                        </>
+                    )}
+                </button>
+            ))}
+        </div>
+    )
+}
+
 function Leftover({ title, items }: { title: string; items: string[] }) {
     return (
         <div className="bg-white rounded-2xl border border-slate-200 p-4 text-sm">

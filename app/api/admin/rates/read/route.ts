@@ -12,7 +12,7 @@ export const maxDuration = 60
 const MAX_BYTES = 4_000_000
 const EXT: Record<string, string> = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
 // Change when the prompt changes, so an old read isn't reused.
-const READ_VERSION = '2'   // 2: PDF text layer + column rules
+const READ_VERSION = '3'   // 3: a line per rate; 2: PDF text layer + column rules
 
 // POST multipart { bank, text? , file* }  Reads the message; changes no rates.
 export async function POST(request: Request) {
@@ -35,7 +35,9 @@ export async function POST(request: Request) {
     const hash = h.digest('hex')
 
     const db = createAdminClient()
-    const saved = await db.from('rate_message_reads').select('result').eq('hash', hash).maybeSingle()
+    // fresh=1: the admin saw a wrong read and asked for a new one (paid).
+    const fresh = form.get('fresh') === '1'
+    const saved = fresh ? { data: null } : await db.from('rate_message_reads').select('result').eq('hash', hash).maybeSingle()
     let read = (saved.data?.result ?? null) as RateRead | null
     const reused = !!read
     if (!read) {
@@ -45,7 +47,7 @@ export async function POST(request: Request) {
         if (!result.read) return NextResponse.json({ error: "Couldn't read that message. Try again, or split it into smaller parts." }, { status: 502 })
         if (!result.complete) return NextResponse.json({ error: 'The message was too long to read completely. Split it into smaller parts.' }, { status: 502 })
         read = result.read
-        const { error } = await db.from('rate_message_reads').insert({ hash, result: read })
+        const { error } = await db.from('rate_message_reads').upsert({ hash, result: read, created_at: new Date().toISOString() })
         if (error) console.error('[rates] saving the read failed:', error.message)
     }
 

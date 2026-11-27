@@ -30,7 +30,7 @@ const SCHEMA = obj({
         mins: list(obj({ property_type: { anyOf: [{ type: 'string', enum: ['HDB', 'Private', 'HDB / Private', 'Executive Condominium'] }, { type: 'null' }] }, min: S })),
         priority_min: S,
         restricted_to: S,
-        rates: list(obj({ year: N, thereafter: { type: 'boolean' }, rate: N, reference: S, spread: N })),
+        rates: list(obj({ year: N, thereafter: { type: 'boolean' }, rate: N, reference: S, spread: N, line: { type: ['integer', 'null'] } })),
         features: list({ type: 'string' }),
         lines: LINES,
     })),
@@ -54,7 +54,8 @@ RULES
 12. scope: "full" if it lists the bank's complete current packages for the categories it covers; "partial" if it only changes some; otherwise "unclear". categories: those it covers completely.
 13. valid_until as YYYY-MM-DD only if an end date is stated. notes: optional bank-wide offers such as rate discounts for a deposit, not packages.
 14. Commercial property packages, SORA index values and anything else that is not a residential package: put in ignored.
-15. If lines are numbered ("12| ..."), lines must list every source line used, headings and shared terms included. Every line with a percentage must appear in an item or in ignored. Otherwise use an empty list.`
+15. If lines are numbered ("12| ..."), lines must list every source line used, headings and shared terms included. Every line with a percentage must appear in an item or in ignored. Otherwise use an empty list.
+16. If lines are numbered, every rate gives the ONE line its figure is written on, in "line". That line must contain that exact figure, and belong to that loan size's own block: never point a loan size at another loan size's line. If not numbered, line is null.`
 
 export const numberLines = (text: string) => text.split(/\r?\n/).map((l, i) => `${i + 1}| ${l}`).join('\n')
 
