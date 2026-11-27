@@ -6,6 +6,8 @@ import type { QuestionGroup } from '@/lib/insurance/knowledgeQuestions'
 import { CheckAnswers, NotCovered } from '@/components/insurance/knowledge/KnowledgeQuestions'
 import KnowledgeEditorModal from '@/components/insurance/knowledge/KnowledgeEditorModal'
 import OfficialSources from '@/components/insurance/knowledge/OfficialSources'
+import CalculatorGuide from '@/components/insurance/knowledge/CalculatorGuide'
+import type { CalcKind } from '@/lib/insurance/knowledgeCalc'
 import DraftReview from '@/components/insurance/knowledge/DraftReview'
 import KnowledgeWorkList, { ArticleMeta } from '@/components/insurance/knowledge/KnowledgeWorkList'
 import { officialName } from '@/lib/insurance/officialName'
@@ -16,7 +18,7 @@ import { BookOpen, CircleAlert, Plus, Search, Trash2 } from 'lucide-react'
 import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 interface EditorGap { question: string; ids: string[]; answer?: string | null; source?: string; addWording: boolean }
-type Tab = 'gaps' | 'check' | 'review' | 'articles' | 'official'
+type Tab = 'gaps' | 'check' | 'review' | 'articles' | 'official' | 'calculators'
 type Queue = 'publish' | 'check'
 
 const PAGE = 25
@@ -34,6 +36,8 @@ export default function KnowledgeRepository() {
     // Where an article comes from: 'all', an agency ("IRAS"), 'other' (TLC's own, with a source) or 'none'.
     const [origin, setOrigin] = useState('all')
     const [queue, setQueue] = useState<Queue>('publish')
+    // Opened from a changed official page: which calculator to show.
+    const [calcFocus, setCalcFocus] = useState<CalcKind | null>(null)
     const [shown, setShown] = useState(PAGE)
     const [editor, setEditor] = useState<{ article: KnowledgeArticle | null; gap: EditorGap | null } | null>(null)
     const [saving, setSaving] = useState(false)
@@ -128,6 +132,7 @@ export default function KnowledgeRepository() {
         { key: 'review', label: 'Review', count: drafts.length + unchecked.length, work: true },
         { key: 'articles', label: 'Articles', count: articles.length },
         { key: 'official', label: 'Official pages' },
+        { key: 'calculators', label: 'Calculators' },
     ]
 
     return (
@@ -179,7 +184,8 @@ export default function KnowledgeRepository() {
                                 onOpen={(_, list) => setReviewing(list)} onDone={load} />
                         </div>
                     )}
-                    {tab === 'official' && <OfficialSources articles={articles} onChanged={load} />}
+                    {tab === 'official' && <OfficialSources articles={articles} onChanged={load} onOpenCalculator={k => { setCalcFocus(k); setPicked('calculators') }} />}
+                    {tab === 'calculators' && <CalculatorGuide key={calcFocus ?? 'all'} focus={calcFocus} />}
                     {tab === 'articles' && (
                         <div className="space-y-4">
                             <div className="flex items-center gap-3">

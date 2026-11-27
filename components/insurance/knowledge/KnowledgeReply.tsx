@@ -141,7 +141,8 @@ function Row({ row, first }: { row: LiveRow; first: boolean }) {
 
 // ── Calculator ───────────────────────────────────────────────────────────────
 
-function CalcCard({ calc, busy, onCalc }: { calc: CalcReply; busy: boolean; onCalc: Props['onCalc'] }) {
+/** Also used by admin Knowledge → Calculators ("Try it"), so admins see exactly what agents see. */
+export function CalcCard({ calc, busy, onCalc }: { calc: CalcReply; busy: boolean; onCalc: Props['onCalc'] }) {
     const [values, setValues] = useState<CalcValues>(calc.values)
     const ready = calc.fields.every(f => values[f.key] !== undefined && values[f.key] !== '')
     const changed = calc.fields.some(f => String(values[f.key] ?? '') !== String(calc.values[f.key] ?? ''))

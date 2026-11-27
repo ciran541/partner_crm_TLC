@@ -9,6 +9,8 @@ import type { KnowledgeArticle } from '@/lib/types/knowledge'
 import Spinner from '@/components/shared/Spinner'
 import DraftReview from '@/components/insurance/knowledge/DraftReview'
 import { suggestDays } from '@/lib/insurance/officialEvidence'
+import { calculatorsForPage } from '@/lib/insurance/calculatorGuide'
+import { runCalc, type CalcKind } from '@/lib/insurance/knowledgeCalc'
 import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 type Page = OfficialPage & { articles: { live: number; drafts: number; recheck: number } }
@@ -40,7 +42,7 @@ function outcome(r: { outcome: string; drafts?: number; dropped?: number; error?
 }
 
 /** Admin: the government websites and pages HUB reads to draft Knowledge answers. */
-export default function OfficialSources({ articles, onChanged }: { articles: KnowledgeArticle[]; onChanged: () => void }) {
+export default function OfficialSources({ articles, onChanged, onOpenCalculator }: { articles: KnowledgeArticle[]; onChanged: () => void; onOpenCalculator: (k: CalcKind) => void }) {
     const [data, setData] = useState<Data | null>(null)
     const [failed, setFailed] = useState(false)
     const [busy, setBusy] = useState<string | null>(null)
@@ -196,7 +198,7 @@ export default function OfficialSources({ articles, onChanged }: { articles: Kno
                             <p className="px-4 py-4 text-sm text-slate-500">{site.bots_allowed ? 'No pages yet. Tap Add pages to find some.' : `HUB doesn't read ${site.name}. Write its articles from the site by hand, with the page as the source.`}</p>
                         ) : (
                             <ul className="divide-y divide-slate-100">
-                                {own.map(p => <PageRow key={p.id} p={p} readable={site.bots_allowed} busy={busy} run={run}
+                                {own.map(p => <PageRow key={p.id} p={p} readable={site.bots_allowed} busy={busy} run={run} onOpenCalculator={onOpenCalculator}
                                     onReview={() => setReview(toReview.filter(a => a.official_page_id === p.id))} />)}
                             </ul>
                         )}
@@ -218,8 +220,8 @@ function Status({ p }: { p: Page }) {
     return <span className={`${chip} bg-emerald-50 text-emerald-700`}>Checked {date(p.checked_at)}</span>
 }
 
-function PageRow({ p, readable, busy, run, onReview }: {
-    p: Page; readable: boolean; busy: string | null; onReview: () => void
+function PageRow({ p, readable, busy, run, onReview, onOpenCalculator }: {
+    p: Page; readable: boolean; busy: string | null; onReview: () => void; onOpenCalculator: (k: CalcKind) => void
     run: (key: string, body: Record<string, unknown>, done?: (json: { result?: Parameters<typeof outcome>[0] }) => Alert | null) => Promise<boolean>
 }) {
     const a = p.articles
@@ -240,6 +242,15 @@ function PageRow({ p, readable, busy, run, onReview }: {
             {p.error && p.status !== 'ok' && <p className="text-sm text-red-600">{p.error}</p>}
             {p.status === 'changed' && (
                 <p className="text-sm text-amber-800">Agents don&apos;t see this page&apos;s answers until they&apos;re checked again. Tap <b>Review</b>.</p>
+            )}
+            {p.status === 'changed' && calculatorsForPage(p.url, p.section).length > 0 && (
+                <p className="text-sm text-amber-800">
+                    HUB&apos;s calculators also use this page&apos;s rules. Check{' '}
+                    {calculatorsForPage(p.url, p.section).map((k, i, all) => (
+                        <span key={k}><button onClick={() => onOpenCalculator(k)} className="font-semibold underline min-h-11">{runCalc(k, '').title}</button>{i < all.length - 1 ? ', ' : ''}</span>
+                    ))}
+                    {' '}and tell the developer if a rate changed.
+                </p>
             )}
             <div className="flex flex-wrap items-center gap-2">
                 {a.drafts + a.recheck > 0 && <button disabled={!!busy} onClick={onReview} className={`${PRIMARY} inline-flex items-center gap-1.5`}><ClipboardCheck size={15} /> Review {a.drafts + a.recheck}</button>}
