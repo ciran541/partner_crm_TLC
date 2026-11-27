@@ -23,7 +23,7 @@ const changes = z.strictObject({
     referred_bankers: z.array(z.object({ bank: z.string().max(100), name: z.string().max(100) })).max(20),
     follow_up_date: DATE, follow_up_remark: text(500), remarks: text(5000),
     case_type: z.enum(['Refinancing', 'Purchase', 'Decouple', 'Equity Loan', 'Divorce']),
-    stage: z.enum(['Inactive', 'Touched Base', 'Pending Docs', 'Pending Approval', 'Pending Signature']),
+    stage: z.enum(['Inactive', 'Touched Base', 'Pending Docs', 'IPA', 'Pending Approval', 'Pending Signature']),
     loan_size: money, existing_loan_amount: money, property_price: money,
     property_type: text(100), property_address: text(500), current_bank: text(100),
     lock_in_end_date: DATE.nullable(), subsidy_provided: text(500), clawback_end_date: DATE.nullable(),

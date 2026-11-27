@@ -18,6 +18,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
     'Inactive',
     'Touched Base',
     'Pending Docs',
+    'IPA',
     'Pending Approval',
     'Pending Signature',
     'Closed Won',
@@ -25,7 +26,7 @@ export const PIPELINE_STAGES: PipelineStage[] = [
 ]
 
 /** Live pipeline stages — the "Active" filter, and what a case can be moved into from Inactive. */
-export const OPEN_STAGES: PipelineStage[] = ['Touched Base', 'Pending Docs', 'Pending Approval', 'Pending Signature']
+export const OPEN_STAGES: PipelineStage[] = ['Touched Base', 'Pending Docs', 'IPA', 'Pending Approval', 'Pending Signature']
 
 /**
  * Stages a case can be CREATED in (New Case form, mass upload). Never Closed Won
@@ -39,6 +40,7 @@ export const STAGE_BADGE: Record<PipelineStage, { bg: string; text: string }> = 
     'Inactive':          { bg: '#f1f5f9', text: '#64748b' },
     'Touched Base':      { bg: '#e0f2fe', text: '#0369a1' },
     'Pending Docs':      { bg: '#e0f2fe', text: '#0369a1' },
+    'IPA':               { bg: '#ccfbf1', text: '#0f766e' },
     'Pending Approval':  { bg: '#fff7ed', text: '#9a3412' },
     'Pending Signature': { bg: '#fef3c7', text: '#92400e' },
     'Closed Won':        { bg: '#d1fae5', text: '#065f46' },
@@ -55,6 +57,7 @@ export const STAGE_LABELS: Record<PipelineStage, string> = {
     'Inactive': 'Inactive',
     'Touched Base': 'Active',
     'Pending Docs': 'Pending Docs',
+    'IPA': 'IPA',
     'Pending Approval': 'Pending Approval',
     'Pending Signature': 'Pending Signature',
     'Closed Won': 'Closed Won',

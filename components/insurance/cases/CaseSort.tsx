@@ -10,6 +10,7 @@ const LABELS: Record<SortColumn, Record<SortDir, string>> = {
     input: { asc: 'Input date: earliest first', desc: 'Input date: latest first' },
     closed: { asc: 'Closed date: earliest first', desc: 'Closed date: latest first' },
     due: { asc: 'Follow-up: earliest first', desc: 'Follow-up: latest first' },
+    remark: { asc: 'IPA done first', desc: 'IPA done last' },
 }
 
 /** A tappable column heading. The arrow shows the order in use. */

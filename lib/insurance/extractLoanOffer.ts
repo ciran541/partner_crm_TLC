@@ -167,6 +167,13 @@ const MIN_CALL_MS = 6_000
  */
 const MIN_PDF_TEXT_CHARS = 400
 
+/**
+ * Most a set of pages can weigh and still be read as pages: Claude refuses a
+ * request over 32MB and base64 makes the pages a third bigger. Above this only
+ * a PDF's text layer is read (uploads themselves may be up to 25MB a file).
+ */
+export const VISION_MAX_BYTES = 22 * 1024 * 1024
+
 /** Below this, a "loan amount" is a misread separator, not a mortgage. */
 const MIN_PLAUSIBLE_LOAN = 10_000
 
@@ -227,8 +234,10 @@ export interface LoFile {
  * Set by the model call and read by the route, so "busy" or "no credit" is not
  * shown to the agent as an unreadable document.
  */
-let lastFailure: 'rate_limited' | 'account' | null = null
-export function takeLastFailure(): 'rate_limited' | 'account' | null {
+let lastFailure: LoFailure | null = null
+/** too_large: a scan too big to send as pages, and it had no readable text. */
+export type LoFailure = 'rate_limited' | 'account' | 'too_large'
+export function takeLastFailure(): LoFailure | null {
     const f = lastFailure
     lastFailure = null
     return f
@@ -300,7 +309,14 @@ export async function extractLoanOffer(
     }
 
     // Lane 2 — images, multi-page uploads, scanned PDFs, and any PDF the text
-    // lane read poorly.
+    // lane read poorly. Pages go to Claude base64-encoded (x1.33) and a request
+    // over 32MB is refused, so a bigger upload is read from its text only.
+    const pageBytes = pages.reduce((sum, p) => sum + p.buffer.length, 0)
+    if (pageBytes > VISION_MAX_BYTES) {
+        console.warn(`[extractLoanOffer] ${pageBytes} bytes is too large for the vision lane`)
+        if (!textLane) lastFailure = 'too_large'
+        return textLane
+    }
     const raw = await readLo({ files: pages }, system, deadline, 40_000)
     if (raw) logRaw('vision', raw)
     const parsed = raw && safeParse(raw)

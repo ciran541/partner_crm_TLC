@@ -263,6 +263,16 @@ function CaseDetailContent() {
         else invalidateCaseData()
     }, [persistCaseUpdate])
 
+    // IPA done — optional tick, auto-saves like lead source (any stage, open or closed).
+    const saveIpaDone = useCallback(async (done: boolean) => {
+        setCaseData(prev => prev ? { ...prev, ipa_done: done } : prev)
+        const err = await persistCaseUpdate({ ipa_done: done })
+        if (err) {
+            setCaseData(prev => prev ? { ...prev, ipa_done: !done } : prev)
+            setAlert({ type: 'error', message: `IPA save failed: ${err}` })
+        } else invalidateCaseData()
+    }, [persistCaseUpdate])
+
     // Assign/remove referred bankers — auto-saves immediately (no edit mode), like follow-up.
     const handleSetBankers = useCallback(async (bankers: ReferredBanker[]) => {
         setCaseData(prev => prev ? { ...prev, referred_bankers: bankers } : prev)
@@ -644,6 +654,16 @@ function CaseDetailContent() {
                                 <textarea rows={2} value={caseData.remarks || ''} onChange={e => handleFieldChange('remarks', e.target.value)} placeholder="optional" className="input-std" style={{ fontFamily: 'inherit', resize: 'vertical' }} />
                                 {caseData.remarks ? <span className="whitespace-pre-wrap">{caseData.remarks}</span> : <span className="text-slate-400">—</span>}
                             </GridField>
+                            {/* Optional, any stage. Saves on tap like Lead Source; shows under
+                                the remark on the Cases list (and sorts first by the Remark heading). */}
+                            <GridField label="IPA" isEditing>
+                                <label className="inline-flex items-center gap-2.5 min-h-[44px] cursor-pointer select-none">
+                                    <input type="checkbox" checked={!!caseData.ipa_done} onChange={e => saveIpaDone(e.target.checked)}
+                                        className="w-5 h-5 rounded border-slate-300 accent-[#0f766e]" />
+                                    <span className="text-sm font-semibold text-slate-700">IPA done</span>
+                                </label>
+                                <span />
+                            </GridField>
                         </SectionCard>
 
                         {/* Referred bankers — internal CRM, auto-saves on change (no edit mode needed) */}
@@ -885,12 +905,11 @@ const dmy = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-SG',
 
 interface LoanFormRow { enabled: boolean; amount: string; tenure: string }
 
-// Vercel rejects a Serverless Function request body over ~4.5MB at the edge,
-// before the route runs. A phone photo of an LO is routinely 3-8MB and a
-// multi-page upload multiplies that, so images are downscaled before being sent
-// for extraction. Only the copy sent to the model shrinks — the ORIGINAL file
-// is what gets uploaded to storage on confirm, so the record keeps full quality.
-const EXTRACT_MAX_BYTES = 4 * 1024 * 1024
+// LO pages go to storage first and the reader fetches them from there (a file
+// in the request body is capped at ~4.5MB by Vercel). 25MB a file, same as the
+// bucket and Basic & Starter. Images are still downscaled for READING (Claude
+// takes at most 5MB an image); the full-size original is uploaded on confirm.
+const LO_MAX_FILE_BYTES = 25 * 1024 * 1024
 const EXTRACT_MAX_DIM = 1800     // ample for reading an A4 page of text
 const EXTRACT_QUALITY = 0.82
 
@@ -1000,6 +1019,11 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
     const [extracted, setExtracted] = useState<ExtractedLo | null>(null)
     const [extractErr, setExtractErr] = useState<string | null>(null)
     const [lastLoFile, setLastLoFile] = useState<File[]>([])
+    const [uploadingLo, setUploadingLo] = useState(false)
+    const [tooBig, setTooBig] = useState<string | null>(null)
+    // PDFs already in storage (uploaded for reading): confirm reuses the path
+    // instead of uploading a 25MB scan a second time.
+    const storedLo = useRef(new Map<File, string>())
 
     useEffect(() => {
         fetch('/api/insurance/rates').then(r => r.json()).then(d => { if (d.sora) setSora(d.sora) }).catch(() => {})
@@ -1010,26 +1034,46 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
         setExtracting(true); setExtractErr(null); setExtracted(null)
         setLastLoFile(pages)
         try {
-            // Shrink images first — the full-size originals still go to storage
-            // on confirm; only this request is downscaled.
-            const sending = await Promise.all(pages.map(downscaleForExtraction))
-            const total = sending.reduce((sum, f) => sum + f.size, 0)
-            if (total > EXTRACT_MAX_BYTES) {
-                throw new Error(sending.length > 1
-                    ? 'Those pages are too large to read together. Try attaching fewer at a time.'
-                    : 'That file is too large to read. Try a smaller scan or a photo instead.')
-            }
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error('Please sign in again.')
+            const stamp = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-            const fd = new FormData()
-            // Order matters — these are consecutive pages of one document.
-            for (const p of sending) fd.append('file', p)
-            fd.append('kinds', specs.map(s => s.kind).join(','))
+            // Upload first, then read from storage. Order matters — these are
+            // consecutive pages of one document.
+            setUploadingLo(true)
+            const sent: { path: string; mime: string }[] = []
+            for (const page of pages) {
+                if (page.type === 'application/pdf') {
+                    // Kept: becomes the case's LO document on confirm.
+                    let path = storedLo.current.get(page)
+                    if (!path) {
+                        path = `${user.id}/${caseId}/${stamp()}.pdf`
+                        const { error } = await supabase.storage.from('insurance-documents').upload(path, page)
+                        if (error) throw new Error(`Upload failed: ${error.message}`)
+                        storedLo.current.set(page, path)
+                    }
+                    sent.push({ path, mime: page.type })
+                } else {
+                    // A smaller copy just for reading; the server deletes it.
+                    const copy = await downscaleForExtraction(page)
+                    const ext = copy.type.split('/')[1] || 'jpg'
+                    const path = `${user.id}/lo-read/${stamp()}.${ext}`
+                    const { error } = await supabase.storage.from('insurance-documents').upload(path, copy)
+                    if (error) throw new Error(`Upload failed: ${error.message}`)
+                    sent.push({ path, mime: copy.type })
+                }
+            }
+            setUploadingLo(false)
+
             // Hard client-side stop. The server budgets itself to ~45s, but a
             // cold serverless start (or a dev-server first compile of pdf-parse)
             // can outlast that, and a spinner that never resolves reads as
             // "the upload is broken" — the agent needs to be released to type.
             const res = await fetch('/api/insurance/cases/extract-lo', {
-                method: 'POST', body: fd, signal: AbortSignal.timeout(75000),
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pages: sent, kinds: specs.map(s => s.kind) }),
+                signal: AbortSignal.timeout(75000),
             })
             const json = await res.json().catch(() => null)
             if (!res.ok) throw new Error(json?.error || `Could not read that file (HTTP ${res.status}).`)
@@ -1070,12 +1114,19 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                 : e instanceof Error ? e.message : 'Could not read that file.')
         } finally {
             setExtracting(false)
+            setUploadingLo(false)
         }
     }
 
     const LO_READABLE = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
 
-    const addFiles = (picked: File[]) => {
+    const addFiles = (chosen: File[]) => {
+        const tooBig = chosen.filter(f => f.size > LO_MAX_FILE_BYTES)
+        const picked = chosen.filter(f => f.size <= LO_MAX_FILE_BYTES)
+        setTooBig(tooBig.length
+            ? `${tooBig.map(f => `"${f.name}"`).join(', ')} ${tooBig.length > 1 ? 'are' : 'is'} larger than 25 MB and wasn't attached.`
+            : null)
+        if (!picked.length) return
         const all = [...files, ...picked]
         setFiles(all)
         // Re-read EVERY attached page together, not just the new one. An LO
@@ -1129,10 +1180,14 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                 if (!user) throw new Error('Please sign in again before submitting.')
                 if (user) {
                     for (const f of files) {
-                        const ext = f.name.split('.').pop()
-                        const path = `${user.id}/${caseId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-                        const { error } = await supabase.storage.from('insurance-documents').upload(path, f)
-                        if (error) throw new Error(`Upload failed: ${error.message}`)
+                        // A PDF read earlier is already in storage.
+                        let path = storedLo.current.get(f)
+                        if (!path) {
+                            const ext = f.name.split('.').pop()
+                            path = `${user.id}/${caseId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+                            const { error } = await supabase.storage.from('insurance-documents').upload(path, f)
+                            if (error) throw new Error(`Upload failed: ${error.message}`)
+                        }
                         uploaded.push({ path, name: f.name, type: f.type, uploaded_at: new Date().toISOString() })
                     }
                 }
@@ -1510,18 +1565,26 @@ function ClosedWonModal({ initialData, caseId, onConfirm, onCancel }: {
                             </div>
                         ))}
                         <label className="flex items-center gap-2 text-sm font-medium text-[#03a9e7] cursor-pointer hover:text-[#0290c5] w-fit">
-                            <Upload size={15} /> Add PDF / images
+                            <Upload size={15} /> Add PDF / images <span className="text-xs font-normal text-slate-400">(up to 25 MB each)</span>
                             <input type="file" multiple accept="application/pdf,image/*" className="hidden"
                                 onChange={e => { addFiles(Array.from(e.target.files ?? [])); e.target.value = '' }} />
                         </label>
 
+                        {tooBig && (
+                            <div className="flex items-start gap-2 text-sm bg-amber-50 text-amber-800 rounded-lg px-3 py-2">
+                                <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                <span className="flex-1">{tooBig}</span>
+                            </div>
+                        )}
                         {/* Extraction status — the loan/package fields above are what got filled. */}
                         {extracting && (
                             <div className="flex items-center gap-2 text-sm text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
                                 <Loader2 size={14} className="animate-spin shrink-0" />
-                                {lastLoFile.length > 1
-                                    ? `Reading the Letter of Offer (${lastLoFile.length} pages)…`
-                                    : 'Reading the Letter of Offer…'}
+                                {uploadingLo
+                                    ? 'Uploading the Letter of Offer…'
+                                    : lastLoFile.length > 1
+                                        ? `Reading the Letter of Offer (${lastLoFile.length} pages)…`
+                                        : 'Reading the Letter of Offer…'}
                             </div>
                         )}
                         {!extracting && extractErr && (

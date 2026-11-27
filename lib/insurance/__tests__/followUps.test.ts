@@ -9,6 +9,7 @@ describe('auto remarks', () => {
         expect(AUTO_REMARKS).toEqual({
             'Touched Base': 'Engage Prospect',
             'Pending Docs': 'Obtain Documents',
+            'IPA': 'Obtain IPA',
             'Pending Approval': 'Check Approval',
             'Pending Signature': 'Facilitate Signing',
             'Closed Won': 'Closed Won Previously. To Revisit',

@@ -22,6 +22,7 @@ import type { ClosedWonData, PipelineStage } from '@/lib/types'
 export const AUTO_REMARKS: Partial<Record<PipelineStage, string>> = {
     'Touched Base': 'Engage Prospect',
     'Pending Docs': 'Obtain Documents',
+    'IPA': 'Obtain IPA',
     'Pending Approval': 'Check Approval',
     'Pending Signature': 'Facilitate Signing',
     'Closed Won': 'Closed Won Previously. To Revisit',

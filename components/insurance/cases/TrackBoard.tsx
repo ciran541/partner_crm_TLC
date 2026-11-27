@@ -6,7 +6,7 @@ import {
     DndContext, DragOverlay, MouseSensor, TouchSensor, useDraggable, useDroppable,
     useSensor, useSensors, type DragEndEvent, type DragStartEvent, type TouchSensorOptions,
 } from '@dnd-kit/core'
-import type { TouchEvent as ReactTouchEvent } from 'react'
+import type { ReactNode, TouchEvent as ReactTouchEvent } from 'react'
 import { AlertCircle, ArrowRightLeft, CalendarDays, Clock, GripVertical, Phone } from 'lucide-react'
 import LoadFailed from '@/components/shared/LoadFailed'
 import { useDebouncedValue, usePagedCases, type CaseListRow } from '@/lib/insurance/usePagedCases'
@@ -22,12 +22,13 @@ import { daysInStage, isStuck } from '@/lib/insurance/stageAge'
 import { formatCurrency } from '@/lib/utils/formatCurrency'
 import FollowUpUpdateForm, { type FollowUpSaved } from '@/components/insurance/followup/FollowUpUpdateForm'
 import BankerMultiSelect from '@/components/insurance/BankerMultiSelect'
+import IpaDoneBadge from '@/components/insurance/cases/IpaDoneBadge'
 import type { PipelineStage, ReferredBanker } from '@/lib/types'
 
 /**
  * Track — the open pipeline as a board (Cases → Track, the default tab).
  *
- * Four columns: Active (Touched Base) · Pending Docs · Pending Approval ·
+ * Five columns: Active (Touched Base) · Pending Docs · IPA · Pending Approval ·
  * Pending Signature, each with its count and potential revenue (0.15% of the
  * column's loan volume, same figure as the Cases list). A case leaves the board
  * when it becomes Inactive, Closed Won or Closed Lost — those happen on the case
@@ -56,6 +57,7 @@ interface Col { stage: PipelineStage; head: string; body: string; accent: string
 const COLUMNS: Col[] = [
     { stage: 'Touched Base',      head: '#fef3c7', body: '#fffbeb', accent: '#b45309' },   // yellow
     { stage: 'Pending Docs',      head: '#dcfce7', body: '#f0fdf4', accent: '#15803d' },   // light green
+    { stage: 'IPA',               head: '#ccfbf1', body: '#f0fdfa', accent: '#0f766e' },   // teal (In-Principle Approval)
     { stage: 'Pending Approval',  head: '#bbf7d0', body: '#ecfdf5', accent: '#166534' },   // mid green
     { stage: 'Pending Signature', head: '#86efac', body: '#e7f8ee', accent: '#14532d' },   // deep green
 ]
@@ -110,8 +112,10 @@ function useOpenBankers(enabled: boolean, agent?: string): (Banker & { cases: nu
     return list
 }
 
-export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/insurance/dashboard/cases/${id}` }: {
+export default function TrackBoard({ search, searchBar, agent, readOnly, hrefFor = id => `/insurance/dashboard/cases/${id}` }: {
     search: string
+    /** The page's search box, drawn on the same row as the board's filters. */
+    searchBar?: ReactNode
     agent?: string
     /** Admin: look, don't move. Cards also show the agent. */
     readOnly?: boolean
@@ -124,7 +128,7 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
         ...(overdueOnly ? { followUpTo: addDays(today, -1) } : {}),
         ...(banker ? { bankerName: banker.name, bankerBank: banker.bank } : {}),
     }
-    // Agent: one request brings all four columns and the bankers. Admin (readOnly)
+    // Agent: one request brings all five columns and the bankers. Admin (readOnly)
     // looks across agents, so its columns query the admin list themselves.
     const typed = search.trim().length >= MIN_SEARCH ? search.trim() : ''
     const settled = useDebouncedValue(typed)
@@ -166,6 +170,7 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
         <>
             {!readOnly && board.outOfDate && <div className="mb-3"><LoadFailed message="Couldn’t refresh. Showing what was loaded earlier." onRetry={board.retry} /></div>}
             <div className="flex flex-wrap items-center gap-2 mb-3">
+                {searchBar}
                 <button type="button" onClick={() => setOverdueOnly(v => !v)} aria-pressed={overdueOnly}
                     className={`h-10 px-3.5 rounded-full text-sm font-semibold border flex items-center gap-1.5 transition-colors ${
                         overdueOnly ? 'bg-red-500 border-red-500 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -194,7 +199,7 @@ export default function TrackBoard({ search, agent, readOnly, hrefFor = id => `/
                 )}
             </div>
             <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => { lastDragAt = Date.now(); setDragging(null) }}>
-                <div className="grid grid-flow-col auto-cols-[minmax(232px,1fr)] gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+                <div className="grid grid-flow-col auto-cols-[minmax(204px,1fr)] gap-3 overflow-x-auto pb-2 -mx-1 px-1">
                     {COLUMNS.map(col => {
                         const view = { col, readOnly, hrefFor, today, draggingId: dragging?.id, onMove: (c: CaseListRow) => setMove({ c }), filtered: !!search || Object.keys(filter).length > 0 }
                         return readOnly
@@ -326,6 +331,7 @@ function CardBody({ c, today, showBanker, lifted, onMove, readOnly }: { readOnly
                     {banker ? `${banker.name} (${banker.bank})${more > 0 ? ` +${more}` : ''}` : <span className="text-slate-300">No banker</span>}
                 </p>
             )}
+            {c.ipa_done && <div className="mt-1"><IpaDoneBadge /></div>}
             {days != null && (
                 <p className={`text-[11px] flex items-center gap-1 mt-0.5 ${stuck ? 'font-bold text-amber-700' : 'text-slate-400'}`}>
                     <Clock size={11} /> {days === 0 ? 'New in this stage today' : `${days} day${days === 1 ? '' : 's'} in this stage`}

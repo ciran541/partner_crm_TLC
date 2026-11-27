@@ -15,6 +15,7 @@ export type PipelineStage =
     | 'Inactive'          // past client parked for follow-up only — outside the live pipeline
     | 'Touched Base'
     | 'Pending Docs'
+    | 'IPA'               // In-Principle Approval
     | 'Pending Approval'
     | 'Pending Signature'
     | 'Closed Won'
@@ -111,6 +112,8 @@ export interface Case {
     // became a live opportunity (stamped once by DB trigger, never changes).
     lead_source?: string | null
     lead_source_other?: string | null
+    /** Optional tick: the client's IPA (In-Principle Approval) is done. Any stage. */
+    ipa_done?: boolean
     first_activated_at?: string | null
     // When the case entered its current stage (stamped by DB trigger).
     stage_changed_at?: string | null

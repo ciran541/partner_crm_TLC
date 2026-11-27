@@ -7,8 +7,8 @@
 import type { CaseListRow } from '@/lib/insurance/caseQuery'
 import type { ListPage } from '@/lib/shared/listStore'
 
-/** Columns the Cases list can be sorted by. 'due' = follow-up date ('follow_up' is Track's own order). */
-export const SORT_COLUMNS = ['type', 'loan', 'banker', 'input', 'closed', 'due'] as const
+/** Columns the Cases list can be sorted by. 'due' = follow-up date ('follow_up' is Track's own order); 'remark' = IPA done first. */
+export const SORT_COLUMNS = ['type', 'loan', 'banker', 'input', 'closed', 'due', 'remark'] as const
 export type SortColumn = (typeof SORT_COLUMNS)[number]
 export type SortDir = 'asc' | 'desc'
 export interface ColumnSort { column: SortColumn; dir: SortDir }

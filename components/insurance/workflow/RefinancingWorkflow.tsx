@@ -65,7 +65,7 @@ function interestOverPeriod(loan: number, ratePct: number, tenureYrs: number, pe
     return Math.max(p * nP - (loan - balance), 0)
 }
 
-const STAGE_ORDER = ['Touched Base', 'Pending Docs', 'Pending Approval', 'Pending Signature']
+const STAGE_ORDER = ['Touched Base', 'Pending Docs', 'IPA', 'Pending Approval', 'Pending Signature']
 const SUBSIDY_PRESETS = ['0', '2000', '2500']
 
 const money = (n: number) => `$${Math.floor(n).toLocaleString()}`

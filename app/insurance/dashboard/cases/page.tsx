@@ -18,6 +18,7 @@ import { nextSort, type ColumnSort, type SortColumn } from '@/lib/insurance/ownC
 import { SortButton, SortSelect } from '@/components/insurance/cases/CaseSort'
 import type { CaseListRow } from '@/lib/insurance/caseQuery'
 import TrackBoard from '@/components/insurance/cases/TrackBoard'
+import IpaDoneBadge from '@/components/insurance/cases/IpaDoneBadge'
 import BulkInactiveBar, { BULK_MAX } from '@/components/insurance/cases/BulkInactiveBar'
 import InlineAlert from '@/components/shared/InlineAlert'
 import ClosedWonMonthly from '@/components/insurance/cases/ClosedWonMonthly'
@@ -163,6 +164,20 @@ function CasesList() {
     const filterLabel = stageLabel(stageFilter)
     const hasFilters = stageFilter !== TRACK || !!search || dateActive
 
+    const searchBox = (
+        <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 360 }}>
+            <Search size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
+            <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Client Name / Mobile / Email"
+                // Track: match the 40px Overdue / Bankers pills beside it
+                style={{ ...inputStyle, width: '100%', padding: '8px 12px 8px 34px', ...(isTrack ? { height: 40, borderRadius: 999 } : {}) }}
+            />
+        </div>
+    )
+
     const resetFilters = () => {
         changeStageFilter(TRACK); setSearch(''); setSort(null)
         setDateMode('all'); setFromDate(''); setToDate(''); setMonth('')
@@ -211,18 +226,9 @@ function CasesList() {
                     accentColor="#03a9e7"
                     scrollable
                 />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    {/* Search */}
-                    <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 360 }}>
-                        <Search size={15} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
-                        <input
-                            type="text"
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            placeholder="Client Name / Mobile / Email"
-                            style={{ ...inputStyle, width: '100%', padding: '8px 12px 8px 34px' }}
-                        />
-                    </div>
+                {/* Track draws the search on its own filter row (Overdue / Bankers) */}
+                {!isTrack && <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    {searchBox}
 
                     {/* Date filter mode (list views only: the board is "what's open now") */}
                     {!isTrack && !isClosedWon && <div style={{ position: 'relative' }}>
@@ -266,11 +272,11 @@ function CasesList() {
                             Clear filters
                         </button>
                     )}
-                </div>
+                </div>}
             </div>
 
             {isTrack && (
-                <TrackBoard search={search} />
+                <TrackBoard search={search} searchBar={searchBox} />
             )}
 
             {/* Closed Won: every month of every year in one grid; tap a month or year to list it. */}
@@ -372,7 +378,7 @@ function CasesList() {
                                             {' / '}
                                             <SortButton column="due" label="Follow-Up" sort={activeSort} onSort={sortBy} />
                                         </th>
-                                        <th className="table-th">Remark</th>
+                                        <th className="table-th"><SortButton column="remark" label="Remark" sort={activeSort} onSort={sortBy} /></th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -426,7 +432,8 @@ function CasesList() {
                                             <td className="table-td" style={{ fontSize: 12, color: '#475569', maxWidth: 220 }}>
                                                 {c.follow_up_remark
                                                     ? <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{c.follow_up_remark}</span>
-                                                    : <span style={{ color: '#cbd5e1' }}>—</span>}
+                                                    : !c.ipa_done && <span style={{ color: '#cbd5e1' }}>—</span>}
+                                                {c.ipa_done && <div style={{ marginTop: c.follow_up_remark ? 4 : 0 }}><IpaDoneBadge /></div>}
                                             </td>
                                         </tr>
                                     ))}
@@ -470,6 +477,7 @@ function CasesList() {
                                         </p>
                                     )}
                                     {c.follow_up_remark && <p style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>{c.follow_up_remark}</p>}
+                                    {c.ipa_done && <div style={{ marginBottom: 4 }}><IpaDoneBadge /></div>}
                                     {c.referred_bankers && c.referred_bankers.length > 0 && (
                                         <p style={{ fontSize: 12, color: '#475569', marginBottom: 4 }}>
                                             Banker: {c.referred_bankers.map(b => `${b.name} (${b.bank})`).join(', ')}

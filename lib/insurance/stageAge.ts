@@ -4,6 +4,7 @@
 const STUCK_DAYS: Record<string, number> = {
     'Touched Base': 30,
     'Pending Docs': 14,
+    'IPA': 14,
     'Pending Approval': 14,
     'Pending Signature': 14,
 }
