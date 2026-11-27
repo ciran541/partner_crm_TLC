@@ -11,6 +11,7 @@ import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 // Admin QA console. FOMC dates + CPI values refresh automatically (daily
 // cron + "Refresh now"); CPI release dates come in via the ICS import
@@ -67,7 +68,7 @@ export default function CalendarAdminView() {
     }
 
     const handleDelete = async (ev: EconomicCalendarEvent) => {
-        if (!confirm(`Delete "${ev.event_name}" (${ev.event_date})? This cannot be undone.`)) return
+        if (!(await askConfirm({ title: `Delete "${ev.event_name}" (${ev.event_date})?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return
         const res = await fetch(`/api/admin/insurance/calendar?id=${ev.id}`, { method: 'DELETE' })
         if (res.ok) { setAlert({ type: 'success', message: 'Event deleted.' }); await load() }
         else setAlert({ type: 'error', message: 'Delete failed.' })

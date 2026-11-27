@@ -17,6 +17,7 @@ const FEATURES: Record<string, string> = {
     extractLetterOfOffer: 'Letter of Offer (Basic & Starter)',
     bankIntelligence: "Banks' Insights",
     'bankIntelligence-pdf': "Banks' Insights (PDF read)",
+    officialNotes: 'Knowledge: drafts from official pages',
 }
 export const featureLabel = (f: string) => FEATURES[f] ?? f
 

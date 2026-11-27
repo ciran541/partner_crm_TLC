@@ -12,6 +12,7 @@
  */
 
 import { callClaude, CLAUDE_MODEL } from '@/lib/ai/claude'
+import { figureValues } from '@/lib/insurance/figures'
 import { answerKey, getSavedAnswer, saveAnswer } from '@/lib/insurance/answerCache'
 
 interface SourceArticle {
@@ -75,13 +76,9 @@ export async function composeAnswer(question: string, articles: SourceArticle[])
     return text
 }
 
-const UNIT: Record<string, number> = { k: 1e3, m: 1e6, mil: 1e6, million: 1e6 }
-const figures = (s: string) => [...s.toLowerCase().replace(/(\d),(?=\d{3})/g, '$1').matchAll(/(\d+(?:\.\d+)?)\s*(k|mil|million|m)?\b/g)]
-    .map(m => parseFloat(m[1]) * (m[2] ? UNIT[m[2]] : 1))
-
 /** Every figure in the answer must appear in the question or the articles. */
 export function figuresMatch(answer: string, given: string[]): boolean {
-    const known = new Set(given.flatMap(figures))
+    const known = new Set(given.flatMap(figureValues))
     // List numbering isn't a figure.
-    return figures(answer.replace(/^\s*\d+[.)]\s/gm, '')).every(n => known.has(n))
+    return figureValues(answer.replace(/^\s*\d+[.)]\s/gm, '')).every(n => known.has(n))
 }

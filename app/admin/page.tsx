@@ -16,6 +16,7 @@ interface HomeData {
     health: HealthRow[] | null
     todo: {
         reports: number | null; packageDrafts: number | null; promoDrafts: number | null; gaps: number | null; invites: number | null
+        officialPages: number | null; officialDrafts: number | null
         promosEnding: { id: string; bank: string; title: string; ends_on: string }[] | null
         sora: { date: string | null; stale: boolean } | null
     }
@@ -79,6 +80,8 @@ function TodoPanel({ data }: { data: HomeData }) {
     else if (t.sora.stale) items.push({ label: t.sora.date ? `SORA is out of date (last ${day(t.sora.date)})` : 'No SORA on record', href: '/admin/insurance/rates', tone: 'red', value: '!' })
     add(t.reports, 'Banks’ Insights to review', '/admin/insurance/bank-intelligence')
     add(t.gaps, 'Knowledge questions without an answer', '/admin/insurance/knowledge')
+    add(t.officialPages, 'Official pages changed or unreadable', '/admin/insurance/knowledge')
+    add(t.officialDrafts, 'Knowledge drafts from official pages to approve', '/admin/insurance/knowledge', 'blue')
     add(t.packageDrafts, 'Draft rate packages', '/admin/insurance/rates', 'blue')
     add(t.promoDrafts, 'Draft promotions', '/admin/insurance/promotions', 'blue')
     if (!t.promosEnding) add(null, 'Promotions ending soon', '/admin/insurance/promotions')

@@ -17,6 +17,7 @@ import type { AgentCommissionRow } from '@/lib/insurance/commission'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { useRouter } from 'next/navigation'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 /**
  * Payouts — the money desk (Premium).
@@ -352,9 +353,9 @@ function History({ onDone }: { onDone: (m: string) => void }) {
         a.click()
         setTimeout(() => URL.revokeObjectURL(a.href), 1000)
     })
-    const undo = (r: HistoryRow, batch: boolean) => {
+    const undo = async (r: HistoryRow, batch: boolean) => {
         const what = batch ? 'every payment in this batch' : `this ${money(Math.abs(Number(r.amount)))} ${kind === 'payouts' ? 'payout' : 'bank record'}`
-        if (!window.confirm(`Reverse ${what}? The original stays on record.`)) return
+        if (!(await askConfirm({ title: `Reverse ${what}?`, message: 'The original stays on record.', confirmLabel: 'Reverse', tone: 'danger' }))) return
         run(async () => {
             if (kind === 'payouts') await postJson('/api/admin/insurance/payouts', batch ? { reverseBatch: r.batch_id } : { reverses: r.id })
             else await postJson('/api/admin/finance/receipts', { reverses: r.id })

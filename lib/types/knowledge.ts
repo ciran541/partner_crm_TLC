@@ -18,6 +18,10 @@ export interface KnowledgeArticle {
     source?: string | null
     checked_by?: string | null
     checked_on?: string | null
+    /** Drafted from this official page. */
+    official_page_id?: string | null
+    /** The official page changed since this was checked. */
+    source_changed_at?: string | null
     created_by?: string | null
     created_at?: string
     updated_at?: string

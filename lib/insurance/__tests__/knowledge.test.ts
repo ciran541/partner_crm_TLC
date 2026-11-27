@@ -9,7 +9,7 @@ import { groupQuestions, type QuestionRow } from '@/lib/insurance/knowledgeQuest
 import { figuresMatch } from '@/lib/insurance/composeAnswer'
 import { clashes, exactMatch, oneEditApart, rankArticles, terms } from '@/lib/insurance/knowledgeRank'
 import { detectCalc, money, runCalc } from '@/lib/insurance/knowledgeCalc'
-import { detectLive, isRestricted, lowestRates, ratesReply } from '@/lib/insurance/knowledgeLive'
+import { detectLive, isRestricted, lowestRates, ratesReply, soraReply } from '@/lib/insurance/knowledgeLive'
 import type { MortgagePackage } from '@/lib/types/rates'
 
 afterEach(() => { vi.unstubAllEnvs(); create.mockReset() })
@@ -216,5 +216,23 @@ describe('live data', () => {
         const p = (o: Partial<MortgagePackage>) => ({ status: 'published', category: 'Fixed', property_type: 'HDB', lockin_years: 2, rate_schedule: [{ year: 1, type: 'fixed', rate: 2 }], ...o }) as MortgagePackage
         const r = lowestRates([p({ id: 'a', bank: 'A' }), p({ id: 'a2', bank: 'A', rate_schedule: [{ year: 1, type: 'fixed', rate: 2.5 }] }), p({ id: 'b', status: 'draft' }), p({ id: 'c', rate_schedule: [{ year: 1, type: 'floating', spread: 0.2 }] }), p({ id: 'd', bank: 'D', rate_schedule: [{ year: 1, type: 'fixed', rate: 1.5 }] }), p({ id: 'e', property_type: 'Private' })], 'Fixed', 'lowest fixed hdb rate', null)
         expect(r.map(x => x.pkg.id)).toEqual(['d', 'a'])
+    })
+})
+
+describe('soraReply: answers the SORA asked for', () => {
+    const s = { value_date: '2026-11-26', sora: 1.4628, sora_index: null, comp_sora_1m: 1.5658, comp_sora_3m: 1.3891, comp_sora_6m: 1.5, published_date: null }
+    const labels = (q: string) => soraReply(s, q).stats!.map(x => x.label)
+    it('one tenor asked → only that one, named in the title', () => {
+        expect(labels('Current 3M SORA')).toEqual(['3-month compounded'])
+        expect(soraReply(s, 'Current 3M SORA').title).toBe('3M SORA')
+        expect(labels('what is 1 month sora now')).toEqual(['1-month compounded'])
+        expect(labels('3-month sora today')).toEqual(['3-month compounded'])
+        expect(labels('daily sora')).toEqual(['Daily'])
+        expect(labels('6m sora')).toEqual(['6-month compounded'])
+    })
+    it('two asked → both; none → the usual three', () => {
+        expect(labels('1M/3M SORA now')).toEqual(['1-month compounded', '3-month compounded'])
+        expect(labels('current sora')).toEqual(['1-month compounded', '3-month compounded', 'Daily'])
+        expect(soraReply(s, 'current sora').title).toBe('SORA')
     })
 })

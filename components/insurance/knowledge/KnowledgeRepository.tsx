@@ -5,22 +5,21 @@ import { KnowledgeArticle, KnowledgeArticleInput } from '@/lib/types/knowledge'
 import type { QuestionGroup } from '@/lib/insurance/knowledgeQuestions'
 import { CheckAnswers, NotCovered } from '@/components/insurance/knowledge/KnowledgeQuestions'
 import KnowledgeEditorModal from '@/components/insurance/knowledge/KnowledgeEditorModal'
+import OfficialSources from '@/components/insurance/knowledge/OfficialSources'
+import DraftReview from '@/components/insurance/knowledge/DraftReview'
+import KnowledgeWorkList, { ArticleMeta } from '@/components/insurance/knowledge/KnowledgeWorkList'
+import { officialName } from '@/lib/insurance/officialName'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
-import { BookOpen, CheckCircle2, CircleAlert, Plus, Search, Trash2 } from 'lucide-react'
+import { BookOpen, CircleAlert, Plus, Search, Trash2 } from 'lucide-react'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 interface EditorGap { question: string; ids: string[]; answer?: string | null; source?: string; addWording: boolean }
-type Tab = 'gaps' | 'check' | 'articles'
-type Filter = 'all' | 'unchecked' | 'nosource' | 'draft'
+type Tab = 'gaps' | 'check' | 'review' | 'articles' | 'official'
+type Queue = 'publish' | 'check'
 
 const PAGE = 25
-const FILTERS: { key: Filter; label: string; test: (a: KnowledgeArticle) => boolean }[] = [
-    { key: 'all', label: 'All', test: () => true },
-    { key: 'unchecked', label: 'Not checked', test: a => a.status === 'published' && !a.checked_on },
-    { key: 'nosource', label: 'No source', test: a => a.status === 'published' && !a.source },
-    { key: 'draft', label: 'Drafts', test: a => a.status === 'draft' },
-]
 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null)
 
@@ -32,13 +31,17 @@ export default function KnowledgeRepository() {
     const [loadFailed, setLoadFailed] = useState(false)
     const [picked, setPicked] = useState<Tab | null>(null)
     const [search, setSearch] = useState('')
-    const [filter, setFilter] = useState<Filter>('all')
+    // Where an article comes from: 'all', an agency ("IRAS"), 'other' (TLC's own, with a source) or 'none'.
+    const [origin, setOrigin] = useState('all')
+    const [queue, setQueue] = useState<Queue>('publish')
     const [shown, setShown] = useState(PAGE)
     const [editor, setEditor] = useState<{ article: KnowledgeArticle | null; gap: EditorGap | null } | null>(null)
     const [saving, setSaving] = useState(false)
     const [saveError, setSaveError] = useState<string | null>(null)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
     const [reindexing, setReindexing] = useState(false)
+    // Review tab → the review screen, one at a time. Articles tab → the full editor.
+    const [reviewing, setReviewing] = useState<KnowledgeArticle[] | null>(null)
 
     const load = async () => {
         try {
@@ -57,9 +60,16 @@ export default function KnowledgeRepository() {
     const tab: Tab = picked ?? (toCheck.some(g => g.down) ? 'check' : notCovered.length ? 'gaps' : toCheck.length ? 'check' : 'articles')
     const published = articles.filter(a => a.status === 'published')
     const checked = published.filter(a => a.checked_on).length
+    // The two work queues: drafts (changed pages first) and live articles nobody has confirmed.
+    const drafts = articles.filter(a => a.status === 'draft').sort((a, b) => Number(!!b.source_changed_at) - Number(!!a.source_changed_at))
+    const unchecked = published.filter(a => !a.checked_on)
 
     const needle = search.trim().toLowerCase()
-    const filtered = articles.filter(a => FILTERS.find(f => f.key === filter)!.test(a)
+    const originOf = (a: KnowledgeArticle) => officialName(a.source) ?? (a.source?.trim() ? 'other' : 'none')
+    const agencies = [...new Set(articles.map(originOf))].filter(o => o !== 'other' && o !== 'none').sort()
+    const origins = ['all', ...agencies, 'other', 'none'].filter(o => o === 'all' || articles.some(a => originOf(a) === o))
+    const originLabel = (o: string) => (o === 'all' ? 'All' : o === 'other' ? 'Other source' : o === 'none' ? 'No source' : o)
+    const filtered = articles.filter(a => (origin === 'all' || originOf(a) === origin)
         && (!needle || [a.title, a.content, ...a.tags].some(t => t.toLowerCase().includes(needle))))
 
     const open = (article: KnowledgeArticle | null, gap: EditorGap | null = null) => { setSaveError(null); setEditor({ article, gap }) }
@@ -96,7 +106,7 @@ export default function KnowledgeRepository() {
     }
 
     const remove = async (a: KnowledgeArticle) => {
-        if (!confirm(`Delete "${a.title}"? Agents will stop getting it.`)) return
+        if (!(await askConfirm({ title: `Delete "${a.title}"?`, message: a.status === 'published' ? 'Agents will stop getting it.' : undefined, confirmLabel: 'Delete', tone: 'danger' }))) return
         const res = await post('/api/admin/knowledge/delete', { id: a.id })
         if (res?.ok) { setAlert({ type: 'success', message: 'Article deleted.' }); await load() }
         else setAlert({ type: 'error', message: "Couldn't delete it. Please try again." })
@@ -111,10 +121,13 @@ export default function KnowledgeRepository() {
         setReindexing(false)
     }
 
-    const TABS: { key: Tab; label: string; count: number; alert?: boolean }[] = [
-        { key: 'gaps', label: 'Not covered', count: notCovered.length },
-        { key: 'check', label: 'Check answers', count: toCheck.length, alert: toCheck.some(g => g.down) },
+    // Amber counts are work waiting; grey ones are just sizes.
+    const TABS: { key: Tab; label: string; count?: number; work?: boolean; alert?: boolean }[] = [
+        { key: 'gaps', label: 'Not covered', count: notCovered.length, work: true },
+        { key: 'check', label: 'Check answers', count: toCheck.length, work: true, alert: toCheck.some(g => g.down) },
+        { key: 'review', label: 'Review', count: drafts.length + unchecked.length, work: true },
         { key: 'articles', label: 'Articles', count: articles.length },
+        { key: 'official', label: 'Official pages' },
     ]
 
     return (
@@ -135,12 +148,12 @@ export default function KnowledgeRepository() {
                 <EmptyState icon={CircleAlert} iconColor="#dc2626" title="Couldn't load Knowledge" description="Check the connection and try again." action={{ label: 'Try again', onClick: () => { setLoading(true); load() } }} />
             ) : (
                 <>
-                    <div role="tablist" className="flex gap-6 border-b border-slate-200 overflow-x-auto">
+                    <div role="tablist" className="flex gap-6 border-b border-slate-200 overflow-x-auto overflow-y-hidden">
                         {TABS.map(t => (
                             <button key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setPicked(t.key)}
                                 className={`min-h-11 pb-1 -mb-px border-b-2 text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === t.key ? 'border-[#03a9e7] text-[#052d4a]' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
                                 {t.label}
-                                <span className={`text-xs rounded-full px-2 py-0.5 tabular-nums ${t.alert ? 'bg-red-50 text-red-700' : t.key !== 'articles' && t.count ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{t.count}</span>
+                                {t.count !== undefined && <span className={`text-xs rounded-full px-2 py-0.5 tabular-nums ${t.alert ? 'bg-red-50 text-red-700' : t.work && t.count ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{t.count}</span>}
                             </button>
                         ))}
                     </div>
@@ -152,22 +165,38 @@ export default function KnowledgeRepository() {
                             onFixArticle={(g, a) => open(a, { question: g.question, ids: g.ids, addWording: false })}
                             onRewrite={g => open(null, { question: g.question, ids: g.ids, addWording: true })} />
                     )}
+                    {tab === 'review' && (
+                        <div className="space-y-4">
+                            <div className="inline-flex gap-1 p-1 rounded-xl bg-slate-100" role="tablist" aria-label="Which articles">
+                                {([['publish', 'Not live yet', drafts.length], ['check', 'Live, not checked', unchecked.length]] as const).map(([k, label, n]) => (
+                                    <button key={k} role="tab" aria-selected={queue === k} onClick={() => setQueue(k)}
+                                        className={`min-h-11 px-4 rounded-lg text-sm font-semibold inline-flex items-center gap-2 ${queue === k ? 'bg-white text-[#052d4a] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                                        {label} <span className="tabular-nums text-xs opacity-70">{n}</span>
+                                    </button>
+                                ))}
+                            </div>
+                            <KnowledgeWorkList key={queue} mode={queue} articles={queue === 'publish' ? drafts : unchecked}
+                                onOpen={(_, list) => setReviewing(list)} onDone={load} />
+                        </div>
+                    )}
+                    {tab === 'official' && <OfficialSources articles={articles} onChanged={load} />}
                     {tab === 'articles' && (
                         <div className="space-y-4">
                             <div className="flex items-center gap-3">
                                 <div className="flex-1 max-w-60 h-2 rounded-full bg-slate-200 overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${published.length ? (checked / published.length) * 100 : 0}%` }} /></div>
-                                <p className="text-sm text-slate-600">{checked} of {published.length} live articles checked</p>
+                                <p className="text-sm text-slate-600">{checked} of {published.length} live articles checked{unchecked.length > 0 && <> · <button onClick={() => { setQueue('check'); setPicked('review') }} className="underline min-h-11">check the rest</button></>}</p>
                             </div>
 
                             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 focus-within:border-[#03a9e7]">
                                 <Search size={16} className="text-slate-400 shrink-0" />
                                 <input value={search} onChange={e => { setSearch(e.target.value); setShown(PAGE) }} aria-label="Search articles" placeholder="Search articles" className="flex-1 min-w-0 min-h-11 text-base sm:text-sm bg-transparent outline-none" />
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                                {FILTERS.map(f => (
-                                    <button key={f.key} aria-pressed={filter === f.key} onClick={() => { setFilter(f.key); setShown(PAGE) }}
-                                        className={`min-h-11 px-3.5 rounded-full border text-sm font-medium ${filter === f.key ? 'bg-[#052d4a] border-[#052d4a] text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
-                                        {f.label} <span className="tabular-nums opacity-70">{articles.filter(f.test).length}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide mr-1">Source</span>
+                                {origins.map(o => (
+                                    <button key={o} aria-pressed={origin === o} onClick={() => { setOrigin(o); setShown(PAGE) }}
+                                        className={`min-h-11 px-3.5 rounded-full border text-sm font-medium ${origin === o ? 'bg-[#0369a1] border-[#0369a1] text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+                                        {originLabel(o)} <span className="tabular-nums opacity-70">{o === 'all' ? articles.length : articles.filter(a => originOf(a) === o).length}</span>
                                     </button>
                                 ))}
                             </div>
@@ -192,6 +221,8 @@ export default function KnowledgeRepository() {
                 </>
             )}
 
+            {reviewing && <DraftReview drafts={reviewing} sections={{}} onChanged={load} onClose={() => setReviewing(null)} />}
+
             {editor && (
                 <KnowledgeEditorModal
                     key={editor.article?.id ?? 'new'}
@@ -209,19 +240,12 @@ export default function KnowledgeRepository() {
 }
 
 function ArticleRow({ a, onOpen, onDelete }: { a: KnowledgeArticle; onOpen: () => void; onDelete: () => void }) {
-    const host = a.source ? (URL.canParse(a.source) ? new URL(a.source).hostname.replace(/^www\./, '') : a.source) : null
     return (
         <li className="flex items-start gap-2 hover:bg-slate-50">
             <button onClick={onOpen} className="flex-1 min-w-0 text-left px-4 py-3.5">
                 <span className="block text-[15px] font-semibold text-[#052d4a]">{a.title}</span>
                 <span className="text-sm text-slate-600 line-clamp-2 mt-0.5">{a.content}</span>
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-slate-500">
-                    {a.status === 'draft' && <span className="font-semibold rounded-full bg-slate-100 text-slate-600 px-2 py-0.5">Draft</span>}
-                    {a.checked_on
-                        ? <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 size={13} /> Checked {a.checked_on}</span>
-                        : <span className="inline-flex items-center gap-1 text-amber-700"><CircleAlert size={13} /> Not checked</span>}
-                    <span className="truncate max-w-56">{host ?? 'No source'}</span>
-                </span>
+                <ArticleMeta a={a} />
             </button>
             <button onClick={onDelete} aria-label={`Delete ${a.title}`} className="shrink-0 w-11 h-11 mt-2 mr-2 grid place-items-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={16} /></button>
         </li>

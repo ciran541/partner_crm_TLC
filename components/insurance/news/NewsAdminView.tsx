@@ -9,6 +9,7 @@ import Spinner from '@/components/shared/Spinner'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
 import { usePagedNews, LoadMoreButton } from '@/components/insurance/news/usePagedNews'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 // Admin QA console. Ingestion is fully automated via the daily cron
 // (/api/cron/news) + "Refresh now" here — this view is for hiding bad
@@ -88,7 +89,7 @@ export default function NewsAdminView() {
     }
 
     const handleDelete = async (a: NewsArticle) => {
-        if (!confirm(`Delete "${a.title}"? This cannot be undone.`)) return
+        if (!(await askConfirm({ title: `Delete "${a.title}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return
         const res = await fetch(`/api/admin/insurance/news?id=${a.id}`, { method: 'DELETE' })
         if (res.ok) {
             setAlert({ type: 'success', message: 'Article deleted.' })

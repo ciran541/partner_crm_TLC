@@ -1,12 +1,15 @@
 import { KnowledgeArticle } from '@/lib/types/knowledge'
+import { officialName } from '@/lib/insurance/officialName'
 
 /** Where an article's answer came from and who checked it. */
 export function ArticleSource({ article: a }: { article: Pick<KnowledgeArticle, 'source' | 'checked_by' | 'checked_on'> }) {
     if (!a.source && !a.checked_on) return null
     const link = a.source && URL.canParse(a.source) && /^https?:/.test(a.source) ? a.source : null
+    const agency = officialName(link)
     return (
         <p className="text-xs text-slate-500 mt-3 break-words">
-            {a.source && <>Source: {link
+            {agency && link && <>TLC guidance, based on <a href={link} target="_blank" rel="noopener noreferrer" className="text-[#0369a1] underline">{agency}</a></>}
+            {a.source && !agency && <>Source: {link
                 ? <a href={link} target="_blank" rel="noopener noreferrer" className="text-[#0369a1] underline">{new URL(link).hostname.replace(/^www\./, '')}</a>
                 : a.source}</>}
             {a.source && a.checked_on && ' · '}

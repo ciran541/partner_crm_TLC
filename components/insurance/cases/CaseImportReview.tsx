@@ -7,6 +7,7 @@ import { CREATABLE_STAGES, stageLabel } from '@/lib/insurance/stages'
 import { FIELD_LABELS } from '@/lib/insurance/columnMatch'
 import { LEAD_SOURCES } from '@/lib/insurance/leadSources'
 import { reviewRows, rowsWithSameValue, type ReviewInput, type ReviewStatus } from '@/lib/insurance/importReview'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 /**
  * Mass upload — review + fix in place.
@@ -85,8 +86,8 @@ export default function CaseImportReview({ initialRows, banks, existing, busy, e
         setOriginal(o => { const n = { ...o }; delete n[`${i}:${field}`]; return n })
     }
     const setRemoved = (i: number, removed: boolean) => setRows(rs => rs.map((r, j) => (j === i ? { ...r, removed } : r)))
-    const removeAllProblems = () => {
-        if (!window.confirm(`Remove all ${counts.error} rows that still have problems? They won't be imported.`)) return
+    const removeAllProblems = async () => {
+        if (!(await askConfirm({ title: `Remove all ${counts.error} rows that still have problems?`, message: "They won't be imported.", confirmLabel: 'Remove rows', tone: 'danger' }))) return
         const errorIdx = new Set(review.rows.flatMap((r, i) => (r.status === 'error' ? [i] : [])))
         setRows(rs => rs.map((r, i) => (errorIdx.has(i) ? { ...r, removed: true } : r)))
     }
@@ -251,9 +252,9 @@ export default function CaseImportReview({ initialRows, banks, existing, busy, e
 
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <button type="button" disabled={busy} className="text-sm font-semibold text-slate-500 hover:text-slate-700"
-                    onClick={() => {
+                    onClick={async () => {
                         // Changing a column match re-reads every row, so fixes made here can't carry over — say so.
-                        if (rows !== initialRows && !window.confirm('Going back will undo the fixes and removals you made on this screen. Continue?')) return
+                        if (rows !== initialRows && !(await askConfirm({ title: 'Go back to column matching?', message: 'This undoes the fixes and removals you made on this screen.', confirmLabel: 'Go back', tone: 'warn' }))) return
                         onBack()
                     }}>
                     ← Back to column matching

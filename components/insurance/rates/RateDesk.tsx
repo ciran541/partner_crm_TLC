@@ -19,6 +19,7 @@ import { isExpired } from '@/lib/insurance/rateFilters'
 import { bankChanges, newWarnings, packageErrors, packageLabel, type BankChange, type RateAlias, type RecentSource } from '@/lib/insurance/rateUpdate'
 import type { RateSource } from '@/lib/insurance/rateMaster'
 import type { MortgagePackage, MortgagePackageInput } from '@/lib/types/rates'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 interface Version { id: string; summary: string; source: RateSource | null; changes: BankChange[]; by: string; created_at: string }
 interface BankData { packages: MortgagePackage[]; stamp: string; aliases: (RateAlias & { id: string })[]; note: string; recent: RecentSource[]; versions: Version[]; checkedOk: string[] }
@@ -81,14 +82,14 @@ export default function RateDesk() {
         return () => window.removeEventListener('beforeunload', warn)
     }, [dirty])
 
-    const leaveOk = () => !dirty || window.confirm('You have changes that are not published. Leave without them?')
-    const pickBank = (b: string) => {
-        if (!b || b === bank || !leaveOk()) return
+    const leaveOk = async () => !dirty || await askConfirm({ title: 'Leave without publishing?', message: 'Your changes to this bank are not published yet.', confirmLabel: 'Leave without them', cancelLabel: 'Stay', tone: 'warn' })
+    const pickBank = async (b: string) => {
+        if (!b || b === bank || !(await leaveOk())) return
         setBank(b); setTab('packages'); setAlert(null); setReviewing(null); setNoteOpen(false); loadBank(b)
         window.scrollTo({ top: 0 })
     }
-    const allBanks = () => {
-        if (!leaveOk()) return
+    const allBanks = async () => {
+        if (!(await leaveOk())) return
         setBank(''); setData(null); setReviewing(null); setAlert(null)
     }
     const checkedOk = useMemo(() => new Set(data?.checkedOk ?? []), [data])

@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { Search } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { RotateCcw, Search, X } from 'lucide-react'
 import KnowledgeReply, { type AskResult } from './KnowledgeReply'
 import type { CalcValues } from '@/lib/insurance/knowledgeCalc'
 import Spinner from '@/components/shared/Spinner'
@@ -29,6 +29,14 @@ export default function KnowledgeAsk({ autoFocus }: Props) {
     const [asked, setAsked] = useState('')
     const [error, setError] = useState('')
     const [showDisclaimer, setShowDisclaimer] = useState(false)
+    const input = useRef<HTMLInputElement>(null)
+
+    // Back to an empty box and the example questions, ready to type.
+    const reset = () => {
+        if (loading) return
+        setQ(''); setAsked(''); setResult(null); setError('')
+        input.current?.focus()
+    }
 
     const send = async (question: string, calc?: { kind: string; values: CalcValues }) => {
         setLoading(true)
@@ -65,15 +73,23 @@ export default function KnowledgeAsk({ autoFocus }: Props) {
             <form role="search" onSubmit={e => { e.preventDefault(); ask(q) }} className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white shadow-sm pl-4 pr-2 py-2 focus-within:border-[#03a9e7] focus-within:ring-2 focus-within:ring-[#03a9e7]/15">
                 <Search size={18} className="shrink-0 text-slate-400" />
                 <input
+                    ref={input}
                     autoFocus={autoFocus}
                     type="text"
                     value={q}
                     maxLength={500}
                     onChange={e => setQ(e.target.value)}
+                    // After an answer, tapping the box selects the old question so typing replaces it.
+                    onFocus={e => { if (asked && q === asked) e.currentTarget.select() }}
+                    onKeyDown={e => { if (e.key === 'Escape' && q) { e.preventDefault(); reset() } }}
                     aria-label="Your question"
                     placeholder="Ask about rules, sums or today's rates"
                     className="flex-1 min-w-0 min-h-11 text-base bg-transparent outline-none"
                 />
+                {q && !loading && (
+                    <button type="button" onClick={reset} aria-label="Clear and ask another question"
+                        className="shrink-0 w-11 h-11 grid place-items-center rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"><X size={18} /></button>
+                )}
                 <button type="submit" disabled={loading || q.trim().length < 2} className="btn-primary shrink-0 min-h-11 px-5 text-sm disabled:opacity-40">Ask</button>
             </form>
 
@@ -99,7 +115,15 @@ export default function KnowledgeAsk({ autoFocus }: Props) {
             {result && (!loading || result.type === 'calc') && (
                 <div className={loading ? 'hidden' : ''}>
                     <KnowledgeReply key={asked} result={result} question={asked} busy={loading} onCalc={(kind, values) => send(asked, { kind, values })} onAsk={ask} />
+                    <div className="flex justify-center pt-4">
+                        <button type="button" onClick={reset} className="min-h-11 px-5 rounded-full border border-slate-200 bg-white text-sm font-semibold text-[#052d4a] hover:border-slate-300 inline-flex items-center gap-2">
+                            <RotateCcw size={15} /> Ask another question
+                        </button>
+                    </div>
                 </div>
+            )}
+            {error && !result && asked && !loading && (
+                <div className="flex justify-center"><button type="button" onClick={reset} className="min-h-11 px-4 text-sm font-semibold text-[#0369a1]">Start again</button></div>
             )}
 
             <p className="text-xs text-slate-500">

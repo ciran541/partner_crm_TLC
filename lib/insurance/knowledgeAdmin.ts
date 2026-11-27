@@ -6,6 +6,7 @@ import { clashes, exactMatch, rankArticles, type RankableArticle } from '@/lib/i
 import { detectCalc } from '@/lib/insurance/knowledgeCalc'
 import { detectLive } from '@/lib/insurance/knowledgeLive'
 import { loadPublished, similarities } from '@/lib/insurance/retrieveKnowledge'
+import { settlePage } from '@/lib/insurance/officialSources'
 
 export interface ArticleForm {
     title: string
@@ -45,10 +46,16 @@ export async function saveArticle(form: ArticleForm, userId: string, id?: string
     }
 
     let unchanged = false
+    let officialPage: string | null = null
     if (id) {
-        const { data: old, error } = await db.from('knowledge_articles').select('content, title, source').eq('id', id).single()
+        const { data: old, error } = await db.from('knowledge_articles').select('content, title, source, official_page_id').eq('id', id).single()
         if (error) return { error: 'Article not found', status: 404 }
         unchanged = old.content === content && old.title === title && (old.source ?? null) === source
+        officialPage = old.official_page_id ?? null
+    }
+    // Written from an official page: a person compares it with the page before agents see it.
+    if (officialPage && status === 'published' && !form.checked) {
+        return { error: 'Compare this with the official page, then tick the "checked" box to publish it.', status: 400 }
     }
     let check: { checked_by?: string | null; checked_on?: string | null } = {}
     if (form.checked) {
@@ -61,11 +68,12 @@ export async function saveArticle(form: ArticleForm, userId: string, id?: string
 
     // Null on failure: an old vector would keep matching the old text.
     const embedding = await embedText(articleEmbedInput(title, content, tags))
-    const row = { title, content, tags, source, status, embedding, ...check }
+    const row = { title, content, tags, source, status, embedding, ...check, ...(status === 'published' && form.checked ? { source_changed_at: null } : {}) }
     const { error } = id
         ? await db.from('knowledge_articles').update({ ...row, updated_at: new Date().toISOString() }).eq('id', id)
         : await db.from('knowledge_articles').insert({ ...row, category: 'General', created_by: userId })
     if (error) return { error: error.message, status: 500 }
+    if (officialPage && status === 'published') await settlePage(officialPage)
 
     if (status === 'published' && form.gapIds.length) {
         const { error: gapErr } = await db.from('knowledge_gaps').update({ status: 'resolved' }).in('id', form.gapIds)

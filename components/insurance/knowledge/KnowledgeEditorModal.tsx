@@ -5,6 +5,7 @@ import { X, Save } from 'lucide-react'
 import { KnowledgeArticle, KnowledgeArticleInput } from '@/lib/types/knowledge'
 import type { TestResult } from '@/lib/insurance/knowledgeAdmin'
 import Spinner from '@/components/shared/Spinner'
+import { officialName } from '@/lib/insurance/officialName'
 
 interface Props {
     initial?: KnowledgeArticle | null
@@ -74,6 +75,17 @@ export default function KnowledgeEditorModal({ initial, gap, onSave, onUseExisti
 
                 <div className="p-6 space-y-5 overflow-y-auto">
                     {gap && <p className="text-sm rounded-lg bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2">Agent asked: {gap.question}</p>}
+                    {initial?.official_page_id && (
+                        <div className={`text-sm rounded-lg border px-3 py-2 ${initial.source_changed_at ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-sky-50 border-sky-200 text-sky-900'}`}>
+                            {initial.source_changed_at
+                                ? <>The {officialName(initial.source) ?? 'official'} page changed on {initial.source_changed_at.slice(0, 10)}, so agents don&apos;t see this until it is checked again.</>
+                                : <>HUB drafted this from the {officialName(initial.source) ?? 'official'} page.</>}
+                            {' '}Open the page, compare every figure and date, then tick the box below and publish.
+                            {initial.source && URL.canParse(initial.source) && (
+                                <a href={initial.source} target="_blank" rel="noopener noreferrer" className="block font-semibold underline mt-1">Open the official page ↗</a>
+                            )}
+                        </div>
+                    )}
 
                     <Field label="Question" hint="One question only. Say HDB or private, buying or refinancing if it matters.">
                         <input value={title} onChange={e => setTitle(e.target.value)} placeholder="What is the clawback period?" className={INPUT} />

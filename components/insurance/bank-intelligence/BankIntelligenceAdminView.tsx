@@ -9,6 +9,7 @@ import InlineAlert from '@/components/shared/InlineAlert'
 import Spinner from '@/components/shared/Spinner'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 // Admin QA console. Discovery + extraction are fully automated via the daily
 // cron (/api/cron/bank-intelligence) + "Check for new reports" here — this
@@ -70,7 +71,7 @@ export default function BankIntelligenceAdminView() {
     }
 
     const handleDelete = async (r: BankIntelligenceReport) => {
-        if (!confirm(`Delete "${r.title}"? This cannot be undone.`)) return
+        if (!(await askConfirm({ title: `Delete "${r.title}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return
         const res = await fetch(`/api/admin/insurance/bank-intelligence?id=${r.id}`, { method: 'DELETE' })
         if (res.ok) { setAlert({ type: 'success', message: 'Report deleted.' }); await load() }
         else setAlert({ type: 'error', message: 'Delete failed.' })

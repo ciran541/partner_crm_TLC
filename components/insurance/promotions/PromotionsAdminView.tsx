@@ -10,6 +10,7 @@ import PromotionIngestionModal from './PromotionIngestionModal'
 import InlineAlert from '@/components/shared/InlineAlert'
 import Skeleton from '@/components/shared/Skeleton'
 import EmptyState from '@/components/shared/EmptyState'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 const fmtDate = (iso: string | null) =>
     iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'UTC' }) : '—'
@@ -110,7 +111,7 @@ export default function PromotionsAdminView() {
     }
 
     const handleDelete = async (p: BankPromotion) => {
-        if (!confirm(`Delete "${p.bank} · ${p.title}"? This cannot be undone.`)) return
+        if (!(await askConfirm({ title: `Delete "${p.bank} · ${p.title}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete', tone: 'danger' }))) return
         const res = await fetch(`/api/admin/insurance/promotions?id=${p.id}`, { method: 'DELETE' })
         if (res.ok) { setAlert({ type: 'success', message: 'Promotion deleted.' }); await load() }
         else setAlert({ type: 'error', message: 'Delete failed.' })

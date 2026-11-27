@@ -197,17 +197,36 @@ export function ratesReply(packages: MortgagePackage[], question: string, sora: 
     }
 }
 
+/**
+ * The SORA figures a question asks for: "3M SORA" gets only 3M, "1M or 3M SORA"
+ * both, plain "SORA" all three. Answer what was asked, not everything we have.
+ */
+export function soraReply(s: SoraRates, question: string): LiveReply {
+    const q = question.toLowerCase()
+    const p = (n: number | null) => n == null ? '–' : `${n.toFixed(4)}%`
+    const all = [
+        { key: '1m', ask: /\b(1|one)[\s-]?m(th|onth)?s?\b/, short: '1M SORA', label: '1-month compounded', value: p(s.comp_sora_1m) },
+        { key: '3m', ask: /\b(3|three)[\s-]?m(th|onth)?s?\b/, short: '3M SORA', label: '3-month compounded', value: p(s.comp_sora_3m) },
+        { key: 'daily', ask: /\b(daily|overnight|o\/n)\b/, short: 'Daily SORA', label: 'Daily', value: p(s.sora) },
+        // Rarely used for home loans: shown only when asked for.
+        { key: '6m', ask: /\b(6|six)[\s-]?m(th|onth)?s?\b/, short: '6M SORA', label: '6-month compounded', value: p(s.comp_sora_6m), onlyIfAsked: true },
+    ]
+    // "1M/3M SORA" names both, so "1m/3m" is split before matching.
+    const asked = all.filter(x => x.ask.test(q.replace(/\//g, ' ')))
+    const shown = asked.length ? asked : all.filter(x => !('onlyIfAsked' in x))
+    return {
+        kind: 'sora', title: asked.length === 1 ? asked[0].short : 'SORA', asOf: niceDate(s.value_date),
+        href: '/insurance/dashboard/rates', hrefLabel: asked.length ? 'All SORA rates' : 'Open Rates',
+        stats: shown.map(({ label, value }) => ({ label, value })),
+        warning: isSoraStale(s.value_date) ? 'This figure is more than 5 days old. Check MAS before quoting.' : null,
+        notes: ['Source: MAS.'],
+    }
+}
+
 export async function runLive(kind: LiveKind, question: string): Promise<LiveReply | null> {
     if (kind === 'sora') {
         const s = await getCurrentSora()
-        if (!s) return null
-        const p = (n: number | null) => n == null ? '–' : `${n.toFixed(4)}%`
-        return {
-            kind, title: 'SORA', asOf: niceDate(s.value_date), href: '/insurance/dashboard/rates', hrefLabel: 'Open Rates',
-            stats: [{ label: '1-month compounded', value: p(s.comp_sora_1m) }, { label: '3-month compounded', value: p(s.comp_sora_3m) }, { label: 'Daily', value: p(s.sora) }],
-            warning: isSoraStale(s.value_date) ? 'This figure is more than 5 days old. Check MAS before quoting.' : null,
-            notes: ['Source: MAS.'],
-        }
+        return s ? soraReply(s, question) : null
     }
     if (kind === 'rates') {
         const [packages, sora, marks] = await Promise.all([loadPackages(), getCurrentSora(), getAllBenchmarks()])

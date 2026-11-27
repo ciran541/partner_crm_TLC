@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Modal from '@/components/shared/Modal'
 import { FIELD, day, money, postJson, useGet } from '@/components/admin/ui'
 import { todaySgt } from '@/lib/insurance/promotions'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 interface Row { id: string; kind: string; amount: number; bank: string | null; received_on: string; reverses: string | null; reversed: boolean; bank_transfers: { reference: string | null } | null }
 
@@ -50,7 +51,7 @@ export default function BankReceiptsCard({ caseId, expected, canReceive, onChang
                     <span className="flex-1 text-slate-600">{[r.kind === 'receipt' ? r.bank : r.kind === 'clawback' ? 'Clawback' : 'Reversal', r.bank_transfers?.reference].filter(Boolean).join(' · ')}</span>
                     <b className={Number(r.amount) < 0 ? 'text-red-600' : r.reversed ? 'text-slate-400 line-through' : ''}>{money(Number(r.amount))}</b>
                     {!r.reverses && !r.reversed && <button type="button" disabled={busy} className="min-h-[44px] px-2 text-xs font-semibold text-slate-500 hover:text-red-600"
-                        onClick={() => { if (window.confirm('Reverse this record? The original stays on record.')) save({ reverses: r.id }) }}>Reverse</button>}
+                        onClick={async () => { if (await askConfirm({ title: 'Reverse this record?', message: 'The original stays on record.', confirmLabel: 'Reverse', tone: 'danger' })) save({ reverses: r.id }) }}>Reverse</button>}
                 </div>
             ))}
             <div className="flex gap-2 flex-wrap">

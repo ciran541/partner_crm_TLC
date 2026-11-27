@@ -15,6 +15,7 @@ import { workflowCaseFields, type AnyWorkflow } from '@/lib/insurance/workflowFi
 import { getDecoupleWorkflow, getEquityLoanWorkflow, getPurchaseWorkflow, getRefinancingWorkflow, type DecoupleWorkflow, type EquityLoanWorkflow, type PurchaseWorkflow, type RefinancingWorkflow } from '@/lib/types/workflow'
 import { invalidateCaseData } from '@/lib/insurance/caseCache'
 import type { Case } from '@/lib/types'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 /**
  * Admin corrects workflow answers. The agent's own panels, but nothing autosaves:
@@ -55,7 +56,7 @@ export default function AdminWorkflowPage() {
     }, [dirty])
 
     const back = `/admin/insurance/cases/${id}`
-    const leave = () => { if (!dirty || window.confirm('Discard your changes?')) router.push(back) }
+    const leave = async () => { if (!dirty || await askConfirm({ title: 'Discard your changes?', confirmLabel: 'Discard', tone: 'warn' })) router.push(back) }
     const onChange = (next: AnyWorkflow) => { setWf(next); setDirty(true) }
 
     const save = async () => {

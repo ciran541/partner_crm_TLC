@@ -15,6 +15,7 @@ import { LEAD_SOURCES } from '@/lib/insurance/leadSources'
 import { INACTIVE_STAGE, OPEN_STAGES, stageLabel } from '@/lib/insurance/stages'
 import type { Case, CaseType, ClosedLoanKind, LoDocument } from '@/lib/types'
 import type { RateScheduleEntry } from '@/lib/types/rates'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 const TYPES: CaseType[] = ['Purchase', 'Refinancing', 'Decouple', 'Equity Loan', 'Divorce']
 const MINOR = ['client_name', 'client_mobile', 'client_email', 'lead_source', 'lead_source_other', 'referred_bankers', 'follow_up_date', 'follow_up_remark', 'remarks']
@@ -122,7 +123,7 @@ export default function EditCaseModal({ c, onClose, onSaved }: { c: Case; onClos
     const H = ({ children }: { children: React.ReactNode }) => <p className="text-xs font-bold text-slate-500 uppercase tracking-wide pt-2">{children}</p>
 
     return (
-        <Modal title={`Edit case · ${c.client_name || 'Unnamed'}`} size="lg" onClose={() => { if (!busy && (!dirty || window.confirm('Discard your changes?'))) onClose() }}>
+        <Modal title={`Edit case · ${c.client_name || 'Unnamed'}`} size="lg" onClose={async () => { if (busy) return; if (!dirty || await askConfirm({ title: 'Discard your changes?', confirmLabel: 'Discard', tone: 'warn' })) onClose() }}>
             <div className="space-y-3">
                 {H({ children: 'Client' })}
                 <div className="grid sm:grid-cols-2 gap-3">

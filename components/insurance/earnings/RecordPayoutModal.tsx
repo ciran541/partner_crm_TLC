@@ -5,6 +5,7 @@ import { X, Undo2, Check } from 'lucide-react'
 import Spinner from '@/components/shared/Spinner'
 import { todaySgt } from '@/lib/insurance/promotions'
 import { money } from '@/components/insurance/earnings/EarningsOverview'
+import { askConfirm } from '@/components/shared/ConfirmDialog'
 
 /**
  * Admin: record a commission payout (or reverse one) for a Closed Won case.
@@ -126,7 +127,7 @@ export default function RecordPayoutModal({ caseId, clientName, owed, warning, o
                                             </div>
                                             {!isReversal && !reversed && (
                                                 <button type="button" disabled={busy}
-                                                    onClick={() => { if (window.confirm(`Reverse the ${money(Number(p.amount))} payout of ${dmy(p.paid_on)}? The original stays on record.`)) post({ reverses: p.id }) }}
+                                                    onClick={async () => { if (await askConfirm({ title: `Reverse the ${money(Number(p.amount))} payout of ${dmy(p.paid_on)}?`, message: 'The original stays on record.', confirmLabel: 'Reverse', tone: 'danger' })) post({ reverses: p.id }) }}
                                                     className="text-xs font-semibold text-slate-500 hover:text-red-600 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50">
                                                     <Undo2 size={12} /> Reverse
                                                 </button>
