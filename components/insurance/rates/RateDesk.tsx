@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowLeft, ChevronRight, History, Plus, RotateCcw, Save, Table2, Trash2, Wand2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ChevronRight, Eye, History, Pencil, Plus, RefreshCcw, RotateCcw, Save, Table2, Trash2, Wand2 } from 'lucide-react'
+import { isSoraStale, soraAgeDays } from '@/lib/insurance/rateSchedule'
+import type { BankBenchmark, SoraRates } from '@/lib/insurance/sora'
 import InlineAlert from '@/components/shared/InlineAlert'
 import LoadFailed from '@/components/shared/LoadFailed'
 import Modal from '@/components/shared/Modal'
@@ -30,6 +32,8 @@ export default function RateDesk() {
     const [overviewFailed, setOverviewFailed] = useState(false)
     const [allChecked, setAllChecked] = useState<Set<string>>(new Set())
     const [noteOpen, setNoteOpen] = useState(false)
+    // Features are folded on the Packages tab: rates are what an admin scans for.
+    const [showFeatures, setShowFeatures] = useState(false)
     const [bank, setBank] = useState('')
     const [tab, setTab] = useState<Tab>('packages')
     const [data, setData] = useState<BankData | null>(null)
@@ -169,12 +173,18 @@ export default function RateDesk() {
         <div>
             {!bank ? (
                 <>
-                    <Link href="/admin/insurance/rates" className="text-sm text-slate-500 hover:text-[#03a9e7] inline-flex items-center gap-1 mb-2 py-1"><ArrowLeft size={14} /> All packages</Link>
-                    <h1 className="ios-page-title">Update rates</h1>
-                    <p className="page-subtitle mb-5">Open a bank to edit its rates or paste what the banker sent. Nothing changes for agents until you publish.</p>
+                    <div className="flex items-start justify-between gap-3 flex-wrap mb-5">
+                        <div>
+                            <h1 className="ios-page-title">Rates</h1>
+                            <p className="page-subtitle">Open a bank to edit its rates or paste what the banker sent. Nothing changes for agents until you publish.</p>
+                        </div>
+                        <Link href="/admin/insurance/rates/preview" className="btn-ghost px-4 py-2.5 text-sm border border-slate-200 bg-white inline-flex items-center gap-1.5"><Eye size={15} /> View as agent</Link>
+                    </div>
                     {alert && <div className="mb-4"><InlineAlert type={alert.type} message={alert.message} onDismiss={() => setAlert(null)} /></div>}
+                    <div className="max-w-3xl space-y-4">
+                    <Benchmarks onMessage={setAlert} />
                     {overviewFailed ? <LoadFailed message="Couldn't load the banks." onRetry={loadOverview} /> : !overview ? <Spinner size="sm" color="#03a9e7" label="Loading banks…" /> : (
-                        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden max-w-3xl">
+                        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
                             <div className="grid grid-cols-[1fr_auto_auto_28px] gap-4 px-4 py-2.5 text-[11px] font-semibold uppercase text-slate-400 border-b border-slate-100">
                                 <span>Bank</span><span className="w-28">To check</span><span className="w-40">Last confirmed</span><span />
                             </div>
@@ -196,6 +206,7 @@ export default function RateDesk() {
                             </div>
                         </div>
                     )}
+                    </div>
                 </>
             ) : (
                 <>
@@ -239,7 +250,7 @@ export default function RateDesk() {
                                     ) : <p className="text-sm text-slate-700 mt-1 whitespace-pre-line">{data.note}</p>}
                                 </div>
                             )}
-                            <LadderGrid packages={work} original={data.packages} today={today} checkedOk={checkedOk} onCheckOk={markChecked}
+                            <LadderGrid jumpBar showFeatures={showFeatures} onShowFeatures={setShowFeatures} packages={work} original={data.packages} today={today} checkedOk={checkedOk} onCheckOk={markChecked}
                                 onChange={p => setWork(ps => ps.map(x => x.id === p.id ? p : x))}
                                 onEdit={setEditing}
                                 onAddStep={p => setEditing({ ...p, id: crypto.randomUUID(), min_loan_size: 0, priority_min_loan: null, confirmed_on: today })}
@@ -367,6 +378,104 @@ function ReviewPage({ bank, before, after, changes, today, errors, warnings, che
 }
 
 const fmtDay = (d?: string | null) => d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' }) : '–'
+
+/**
+ * The figures floating rates are priced from: SORA from MAS (daily cron; refresh here if
+ * it fails) and banks' own rates such as FHR6, which only an admin can keep current.
+ */
+function Benchmarks({ onMessage }: { onMessage: (m: { type: 'success' | 'error'; message: string }) => void }) {
+    const [sora, setSora] = useState<SoraRates | null>(null)
+    const [banks, setBanks] = useState<BankBenchmark[] | null>(null)
+    const [failed, setFailed] = useState(false)
+    const [busy, setBusy] = useState(false)
+    const [editing, setEditing] = useState<string | null>(null)
+    const [value, setValue] = useState('')
+
+    const load = useCallback(async () => {
+        setFailed(false)
+        try {
+            const res = await fetch('/api/admin/rates/sora')
+            if (!res.ok) throw new Error()
+            const json = await res.json()
+            setSora(json.sora ?? null); setBanks(Array.isArray(json.benchmarks) ? json.benchmarks : [])
+        } catch { setFailed(true) }
+    }, [])
+    useEffect(() => { load() }, [load])
+
+    const refresh = async () => {
+        setBusy(true)
+        try {
+            const res = await fetch('/api/admin/rates/sora', { method: 'POST' })
+            const json = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(json.error || 'Refresh failed')
+            setSora(json.sora)
+            onMessage({ type: 'success', message: `SORA updated: 1M ${json.sora.comp_sora_1m}% · 3M ${json.sora.comp_sora_3m}%` })
+        } catch (e) { onMessage({ type: 'error', message: e instanceof Error ? e.message : 'Refresh failed' }) } finally { setBusy(false) }
+    }
+    const save = async (key: string) => {
+        const v = Number(value)
+        if (!value.trim() || !Number.isFinite(v) || v < 0 || v > 20) { onMessage({ type: 'error', message: 'Enter a rate between 0 and 20%.' }); return }
+        setBusy(true)
+        try {
+            const res = await fetch('/api/admin/rates/sora', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value: v }) })
+            const json = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(json.error || 'Save failed')
+            setBanks(bs => bs?.map(b => b.key === key ? { ...b, value: v, updated_at: new Date().toISOString() } : b) ?? null)
+            setEditing(null)
+            onMessage({ type: 'success', message: `${key} is now ${v.toFixed(4)}%. Floating rates using it are repriced.` })
+        } catch (e) { onMessage({ type: 'error', message: e instanceof Error ? e.message : 'Save failed' }) } finally { setBusy(false) }
+    }
+
+    const stale = sora && isSoraStale(sora.value_date)
+    const tile = 'rounded-xl border border-slate-200 px-4 py-3 min-w-[150px] flex-1'
+    return (
+        <section className="bg-white rounded-2xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                    <h2 className="font-bold text-[#052d4a]">Benchmarks</h2>
+                    <p className="text-xs text-slate-500">Floating rates are priced from these.</p>
+                </div>
+                <button type="button" onClick={refresh} disabled={busy} className="btn-ghost px-3 py-2 text-sm border border-slate-200 inline-flex items-center gap-1.5 disabled:opacity-50">
+                    <RefreshCcw size={14} className={busy ? 'animate-spin' : ''} /> Refresh SORA
+                </button>
+            </div>
+            {failed ? <LoadFailed message="Couldn't load the benchmarks." onRetry={load} /> : !banks ? <Spinner size="sm" color="#03a9e7" label="Loading…" /> : (
+                <div className="flex flex-wrap gap-3">
+                    {([['1M SORA', sora?.comp_sora_1m], ['3M SORA', sora?.comp_sora_3m]] as const).map(([label, v]) => (
+                        <div key={label} className={`${tile} ${stale ? 'border-amber-300 bg-amber-50' : ''}`}>
+                            <p className="text-[11px] font-semibold uppercase text-slate-400">{label}</p>
+                            <p className="text-xl font-bold text-[#052d4a] tabular-nums">{v != null ? `${v.toFixed(4)}%` : '–'}</p>
+                            <p className={`text-xs ${stale ? 'text-amber-800 font-semibold' : 'text-slate-500'}`}>
+                                {sora ? `MAS, ${fmtDay(sora.published_date ?? sora.value_date)}` : 'Not fetched yet'}{stale ? ` · ${soraAgeDays(sora!.value_date)} days old` : ''}
+                            </p>
+                        </div>
+                    ))}
+                    {banks.map(b => (
+                        <div key={b.key} className={tile}>
+                            <p className="text-[11px] font-semibold uppercase text-slate-400">{b.label || b.key} <span className="normal-case font-normal">(set by the bank)</span></p>
+                            {editing === b.key ? (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                    <input autoFocus inputMode="decimal" value={value} onChange={e => setValue(e.target.value)} aria-label={`${b.key} rate`}
+                                        onKeyDown={e => { if (e.key === 'Enter') save(b.key); if (e.key === 'Escape') setEditing(null) }}
+                                        className="w-24 px-2 py-1.5 rounded-md border border-[#03a9e7] text-sm outline-none" />
+                                    <span className="text-sm text-slate-400">%</span>
+                                    <button type="button" disabled={busy} onClick={() => save(b.key)} className="btn-primary px-3 py-1.5 text-xs">Save</button>
+                                    <button type="button" onClick={() => setEditing(null)} className="px-2 py-1.5 text-xs text-slate-500">Cancel</button>
+                                </div>
+                            ) : (
+                                <div className="flex items-center gap-2">
+                                    <p className="text-xl font-bold text-[#052d4a] tabular-nums">{b.value.toFixed(4)}%</p>
+                                    <button type="button" aria-label={`Edit ${b.key}`} onClick={() => { setEditing(b.key); setValue(String(b.value)) }} className="p-2 text-slate-400 hover:text-[#03a9e7]"><Pencil size={14} /></button>
+                                </div>
+                            )}
+                            <p className="text-xs text-slate-500">Updated {fmtDay(b.updated_at?.slice(0, 10))}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </section>
+    )
+}
 
 function Box({ tone, title, children }: { tone: 'red' | 'amber' | 'sky'; title: string; children: React.ReactNode }) {
     const cls = { red: 'bg-red-50 border-red-200 text-red-800', amber: 'bg-amber-50 border-amber-200 text-amber-900', sky: 'bg-sky-50 border-sky-200 text-sky-900' }[tone]

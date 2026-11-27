@@ -1,9 +1,7 @@
-'use client'
+import RateDesk from '@/components/insurance/rates/RateDesk'
 
-import RatesView from '@/components/insurance/rates/RatesView'
-
-// Admin console: full package authoring (create / edit / duplicate / delete /
-// publish / import-from-sheet / SORA + benchmarks).
-export default function AdminInsuranceRatesPage() {
-    return <RatesView />
+// Admin console: every rate change happens here (bank list → edit or paste a
+// banker's message → review → publish, with history). Agents' page is read-only.
+export default function AdminRatesPage() {
+    return <RateDesk />
 }

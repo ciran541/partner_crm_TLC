@@ -1,5 +1,6 @@
-import RateDesk from '@/components/insurance/rates/RateDesk'
+import { redirect } from 'next/navigation'
 
+// Old address of the rates desk; Admin → Rates is the desk now.
 export default function RateUpdatePage() {
-    return <RateDesk />
+    redirect('/admin/insurance/rates')
 }

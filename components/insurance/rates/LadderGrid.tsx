@@ -19,19 +19,40 @@ interface Props {
     onEdit?: (p: MortgagePackage) => void
     onAddStep?: (from: MortgagePackage) => void
     onRemove?: (p: MortgagePackage) => void
+    /** Sticky Fixed · Floating · BUC / BTO buttons on top (the bank's Packages tab). */
+    jumpBar?: boolean
+    /** false = features folded away, with a switch per product (the bank's Packages tab). */
+    showFeatures?: boolean
+    onShowFeatures?: (show: boolean) => void
 }
 
 /** The bank's rates as a sheet: one card per product, loan sizes across, years down. */
 export default function LadderGrid(props: Props) {
     const ladders = buildLadders(props.packages, props.today)
     if (!ladders.length) return <p className="py-12 text-center text-sm text-slate-400">No packages for this bank yet.</p>
+    const cats = Object.keys(CATEGORY_LABEL).map(c => ({ c, products: ladders.filter(l => l.category === c).length, packages: props.packages.filter(p => p.category === c).length }))
     return (
         <div className="space-y-4">
+            {props.jumpBar && (
+                <nav aria-label="Go to" className="sticky top-0 z-20 -mx-1 px-1 py-2 bg-[var(--bg-page)] flex flex-wrap gap-2">
+                    {cats.map(({ c, products, packages }) => (
+                        <button key={c} type="button" disabled={!products} onClick={() => document.getElementById(`grid-${c}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                            className="px-4 py-2 rounded-full border border-slate-200 bg-white text-sm font-semibold text-[#052d4a] hover:border-[#03a9e7] disabled:opacity-40 disabled:cursor-default">
+                            {CATEGORY_LABEL[c]} <span className="font-normal text-slate-400">{packages}</span>
+                        </button>
+                    ))}
+                    {props.onShowFeatures && (
+                        <button type="button" onClick={() => props.onShowFeatures!(!props.showFeatures)} className="ml-auto px-4 py-2 rounded-full border border-slate-200 bg-white text-sm text-slate-600 hover:border-[#03a9e7]">
+                            {props.showFeatures ? 'Hide features' : 'Show features'}
+                        </button>
+                    )}
+                </nav>
+            )}
             {ladders.map((l, i) => (
                 <div key={l.key} className="space-y-4">
                     {/* A heading where each category starts: Fixed, Floating, BUC / BTO. */}
                     {l.category !== ladders[i - 1]?.category && (
-                        <h2 className={`text-xl font-bold text-[#052d4a] border-b-2 border-[#03a9e7] pb-1.5 ${i ? 'pt-4' : ''}`}>{CATEGORY_LABEL[l.category] ?? l.category}</h2>
+                        <h2 id={props.jumpBar ? `grid-${l.category}` : undefined} className={`scroll-mt-16 text-xl font-bold text-[#052d4a] border-b-2 border-[#03a9e7] pb-1.5 ${i ? 'pt-4' : ''}`}>{CATEGORY_LABEL[l.category] ?? l.category}</h2>
                     )}
                     <LadderCard l={l} {...props} />
                 </div>
@@ -44,7 +65,7 @@ const CATEGORY_LABEL: Record<string, string> = { Fixed: 'Fixed', 'Floating (Comp
 
 const day = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' })
 
-function LadderCard({ l, original, today, checkedOk, onCheckOk, onChange, onEdit, onAddStep, onRemove }: Props & { l: RateLadder }) {
+function LadderCard({ l, original, today, checkedOk, onCheckOk, onChange, onEdit, onAddStep, onRemove, showFeatures = true }: Props & { l: RateLadder }) {
     const [editing, setEditing] = useState(false)
     const [showChecked, setShowChecked] = useState(false)
     const canEdit = !!onChange
@@ -54,6 +75,15 @@ function LadderCard({ l, original, today, checkedOk, onCheckOk, onChange, onEdit
     const checks = l.issues.filter(i => i.level === 'check')
     const open = checks.filter(i => !checkedOk?.has(issueKey(i)))
     const done = checks.filter(i => checkedOk?.has(issueKey(i)))
+    const hasFeatures = l.steps.some(p => p.features.length || (old.get(p.id)?.features ?? []).length)
+    // A product whose features changed always shows them, so a change is never hidden.
+    const featuresChanged = l.steps.some(p => { const was = old.get(p.id)?.features; return !!was && (was.length !== p.features.length || was.some(f => !p.features.includes(f))) })
+    const [featuresOpen, setFeaturesOpen] = useState(showFeatures)
+    // The page-wide switch overrides each product's own choice when it changes.
+    const [lastSwitch, setLastSwitch] = useState(showFeatures)
+    if (lastSwitch !== showFeatures) { setLastSwitch(showFeatures); setFeaturesOpen(showFeatures) }
+    const featuresShown = featuresOpen || featuresChanged || editing
+    const featureCount = new Set(l.steps.flatMap(p => p.features)).size
     const confirmed = l.steps.map(s => s.confirmed_on ?? s.last_updated).sort()[0]
     const age = confirmed ? Math.floor((Date.parse(today) - Date.parse(confirmed)) / 86_400_000) : null
 
@@ -144,25 +174,37 @@ function LadderCard({ l, original, today, checkedOk, onCheckOk, onChange, onEdit
                                 })}
                             </tr>
                         ))}
+                        {featuresShown && (hasFeatures || editing) && (
                         <tr className="border-t border-slate-100 align-top">
                             <td className="px-3 py-2 text-xs text-slate-400">Features</td>
                             {l.steps.map(p => {
                                 const was = old.get(p.id)?.features
+                                const own = p.features
+                                const gone = was?.filter(f => !p.features.includes(f)) ?? []
                                 return (
                                     <td key={p.id} className="px-3 py-2">
                                         <ul className="space-y-1 text-xs">
-                                            {p.features.map(f => <li key={f} className={`flex gap-1.5 ${was && !was.includes(f) ? 'text-emerald-700 font-bold' : 'text-slate-600'}`}><span className="text-slate-300">•</span>{f}</li>)}
-                                            {was?.filter(f => !p.features.includes(f)).map(f => <li key={f} className="flex gap-1.5 text-red-600 line-through"><span className="text-slate-300">•</span>{f}</li>)}
-                                            {!p.features.length && !was?.length && <li className="text-slate-300">None</li>}
+                                            {own.map(f => <li key={f} className={`flex gap-1.5 ${was && !was.includes(f) ? 'text-emerald-700 font-bold' : 'text-slate-600'}`}><span className="text-slate-300">•</span>{f}</li>)}
+                                            {gone.map(f => <li key={f} className="flex gap-1.5 text-red-600 line-through"><span className="text-slate-300">•</span>{f}</li>)}
+                                            {!own.length && !gone.length && <li className="text-slate-300">–</li>}
                                         </ul>
                                         {editing && <button type="button" onClick={() => onEdit?.(p)} className="mt-1.5 text-xs font-medium text-[#0277a8] py-1">Edit features</button>}
                                     </td>
                                 )
                             })}
                         </tr>
+                        )}
                     </tbody>
                 </table>
             </div>
+            {!featuresShown && featureCount > 0 && (
+                <button type="button" onClick={() => setFeaturesOpen(true)} className="mx-4 mb-3 text-sm font-medium text-[#0277a8] py-1.5">
+                    Show features ({featureCount})
+                </button>
+            )}
+            {featuresShown && featuresOpen && !featuresChanged && !editing && !showFeatures && (
+                <button type="button" onClick={() => setFeaturesOpen(false)} className="mx-4 mb-1 text-sm font-medium text-[#0277a8] py-1.5">Hide features</button>
+            )}
         </section>
     )
 }
